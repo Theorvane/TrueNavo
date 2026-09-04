@@ -9,6 +9,7 @@ TrueDash is currently in the planning and API-research phase. The application ha
 - [Product plan](docs/planning/TRUEDASH_PRODUCT_PLAN.md)
 - [Capability parity matrix](docs/planning/TRUEDASH_CAPABILITY_MATRIX.csv)
 - [TrueNAS API research](docs/research/TRUENAS_API_RESEARCH.md)
+- [NASDeck competitor research](docs/research/NASDECK_COMPETITIVE_RESEARCH.md)
 
 ## Current baseline
 
@@ -16,6 +17,7 @@ TrueDash is currently in the planning and API-research phase. The application ha
 - Compatibility target: TrueNAS 25.04 and later through version/capability adapters
 - Planned platforms: Android, iOS, macOS, Windows, and Linux
 - Planned stack: Flutter with modular Dart packages
+- Planned business model: privacy-first Free / Pro Local (one-time) / optional Plus Cloud; no ads
 
 ## Status
 

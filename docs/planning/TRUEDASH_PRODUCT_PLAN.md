@@ -2,7 +2,7 @@
 
 > 검토 기준일: 2026-09-05 (KST)
 >
-> 상태: Draft v0.1 — 구현 전 제품·기술 기준선
+> 상태: Draft v0.2 — 구현 전 제품·기술·상용화 기준선
 >
 > 연계 문서: [`TRUEDASH_CAPABILITY_MATRIX.csv`](./TRUEDASH_CAPABILITY_MATRIX.csv)
 
@@ -20,10 +20,25 @@
 - API는 25.04부터 도입된 버전형 **JSON-RPC 2.0 over WebSocket**을 기본 통신로로 삼는다.[1][2][3]
 - REST 관리 API는 25.04에서 deprecated되었고 26에서 제거되므로 신규 기능 구현에 사용하지 않는다.[2][21]
 - v1 플랫폼은 **Android, iOS, macOS, Windows, Linux** 네이티브 앱이다. 브라우저/PWA는 인증서·브라우저 보안 제약 때문에 v1 릴리스 게이트에서 제외한다.
-- 앱은 기본적으로 TrueNAS 장비와 직접 통신한다. TrueDash 계정이나 중계 서버는 두지 않는다. 원격 접속은 사용자가 구성한 VPN/Tailscale/정식 TLS 경로를 사용한다.
+- 앱은 기본적으로 TrueNAS 장비와 직접 통신한다. Free와 Pro Local에는 TrueDash 계정이 필요 없으며, 원격 접속은 사용자가 구성한 VPN/Tailscale/정식 TLS 경로를 사용한다. 선택형 Plus Cloud만 알림 relay·설정 동기화용 계정을 사용한다.
 - “전체 기능 동작”은 화면 수가 아니라 **기능 패리티 원장 + 실제 TrueNAS 인스턴스 E2E 증거**로 판정한다.
+- 적용 가능한 모든 TrueNAS WebUI capability는 구현하고 E2E로 시험한다. 구현 패리티와 어느 플랜이 해당 작업 실행을 허용하는지는 서로 다른 결정이다.
 - LabFox의 코드를 포크하거나 상표·아이콘을 재사용하지 않는다. 폭 기반 적응형 구조, 정보 밀도, 상태 표현, 디자인 토큰 원칙만 참고한다. LabFox 소스는 Apache-2.0이지만 이름과 로고의 상표 권리는 별도다.[11][15]
 - TrueNAS WebUI 소스는 GPL-3.0이므로 코드·컴포넌트 복사 없이 공개 API와 관찰된 동작을 기준으로 독립 구현한다.[16]
+
+### 2.1 상용화 결정: privacy-first 3단계
+
+상용화는 미결정 사항이 아니라 v1 제품 결정이다. NASDeck은 Android용 직접 연결 TrueNAS 관리 앱과 일회성/구독형 상품을 공개적으로 제시하는 시장 참고 사례다. TrueDash는 이를 참고하되 브랜드·UI·문구·코드를 복제하지 않으며, 비공식 독립 제품으로 개발한다.[23]
+
+| 단계 | 제안 권한 | 제안 가격·계정 |
+|---|---|---|
+| **Free** | 광고 없이 로컬 서버 1대, 전체 monitoring/read-only surface, alerts/jobs, 기본 저위험 제어와 복구 핵심 접근 | 무료, 계정 불필요 |
+| **Pro Local** | 모든 로컬 direct-connect TrueNAS 관리 capability, 저장 서버 무제한, 고급 storage/data-protection/compute/system action, terminal/console, 고급 dashboard와 local automation | 일회성 구매. 출시 제안가 USD 19.99, 정가 목표 USD 29.99; 모두 **잠정값**이며 willingness-to-pay 실험으로 검증한다. 계정 불필요 |
+| **Plus Cloud** | Pro Local 전체 + 관리형 push relay, E2E 암호화된 기기간 비밀 제외 설정 동기화, 암호화된 알림 routing metadata, compatibility monitoring, 우선 지원 | 선택형 구독: USD 2.99/월 또는 USD 24.99/년 **제안가**. Plus sync/cloud에만 계정 필요 |
+
+Free에서는 다음을 절대 유료화하지 않는다: 중요한 alert 열람, 자신의 TrueNAS configuration 내보내기·복원, certificate/security warning, 진행 중인 위험 작업의 중지. Plus Cloud는 TrueNAS API key나 임의 NAS 데이터를 relay·저장하지 않는다. Pro Local에는 self-hosted relay 경로를 제공하므로 구독은 편의성의 선택이지 강제 원격 접근이 아니다. Team tier는 v1 약속이 아닌 출시 후 discovery 항목이다.
+
+`TRUEDASH_CAPABILITY_MATRIX.csv`의 88행은 구현·증거 원장으로 유지한다. 플랜별 허용 여부는 별도의 버전 관리 **entitlement catalog**에서 capability ID에 매핑한다. 따라서 paywall로 E2E 패리티 미구현을 숨길 수 없고, 가격 같은 변동 정보를 CSV에 넣지 않는다.
 
 ## 3. 문제 정의
 
@@ -54,6 +69,7 @@ TrueNAS 웹 콘솔은 기능이 강력하지만 다음 상황에서 운영 동�
 - TrueNAS 자체 기능을 앱 내부에서 재구현하지 않는다.
 - 파일 동기화, 사진 백업, 미디어 플레이어를 v1 핵심 범위에 포함하지 않는다.
 - TrueDash 자체 클라우드 중계·계정·텔레메트리를 필수화하지 않는다.
+- 광고, 광고 SDK, 기본 활성화된 tracking/analytics를 v1 수익 모델에 넣지 않는다.
 - 지원하지 않는 API를 SSH 명령 실행으로 우회해 정상 기능처럼 제공하지 않는다.
 - TrueNAS 또는 LabFox의 공식 제품으로 오인시키는 브랜드 표현을 사용하지 않는다.
 - `filesystem` API가 파일 조회·목록·업로드 기능을 제공하더라도 범용 파일 관리자는 WebUI 패리티가 아닌 후속 value-add로 분리한다.[18]
@@ -307,6 +323,10 @@ graph TD
   T --> TN
   F --> V[Secure Credential Vault]
   F --> L[Local Non-secret Cache]
+  F --> E[Entitlement Catalog + Offline Signed Cache]
+  E --> B[Receipt Verification Backend]
+  B --> A[Apple / Google / Direct Desktop]
+  F --> P[Optional Plus Relay / Settings Sync]
 ```
 
 ### 9.2 권장 모노레포
@@ -363,6 +383,32 @@ TrueDash/
 - storage/network/auth mutation은 서버 응답 또는 job 성공 전까지 완료로 표시하지 않음
 - 앱 background 복귀 시 critical collection resync
 
+### 9.6 상용화 아키텍처와 entitlement
+
+상용 권한은 Apple·Google·직접 배포 desktop의 상품 ID에 종속되지 않는 canonical ID로 표현한다. 예: `truedash.pro_local`, `truedash.plus_cloud.monthly`, `truedash.plus_cloud.annual`. 스토어 SKU와 지역 가격은 별도 catalog version에만 매핑한다. Apple의 App Store Server Notifications와 Google Play의 server-side purchase verification·보안 지침에 맞춰, 영수증/구매 토큰 검증은 서버에서 수행한다.[24][27][28][30]
+
+- Apple, Google, direct desktop의 영수증을 서버에서 검증하고, restore purchase·refund·revocation·subscription grace period를 같은 entitlement 상태 모델로 수렴시킨다. Apple은 복원 흐름을 적극 제공하도록 안내한다.[25] Google은 backend 검증과 purchase lifecycle 처리를 문서화한다.[27][28][29]
+- 서명된 offline entitlement cache를 기기에 저장한다. 네트워크·billing backend 장애가 Free read/alert/recovery 접근을 빼앗지 않게 한다.
+- 계정은 Free/Pro Local에 선택 사항이며 Plus의 sync/cloud에만 필요하다. 구매 연결(support-assisted linking)은 중복 청구 방지용 최소 식별자와 검증된 store transaction만 사용하고 NAS credential은 저장하지 않는다.
+- store policy, regional price·세금, App Store/Play/direct desktop의 entitlement parity를 출시 게이트로 검토한다. family sharing은 별도 정책 결정으로 유보한다.[26]
+- crash reporting과 product telemetry는 opt-in이며, 비밀·NAS payload·임의 로그를 수집하지 않는다. 광고는 없다. 데이터 최소화·보존기간·삭제 흐름은 privacy notice와 terms에 명시한다.
+
+#### 장애 시 권한 정책
+
+| 상황 | 정책 | 안전성 이유 |
+|---|---|---|
+| Free 또는 Pro Local의 billing 검증 불가 | **Fail-open**: 기존 로컬 권한과 Free 안전/복구 접근을 유지 | 결제 장애가 NAS 복구를 막지 않음 |
+| Plus 갱신 검증 지연/grace period | **Fail-open (기간 한정)**: 구독 상태와 유예를 표시하고 cloud 편의를 잠정 유지 | 잘못된 즉시 차단을 피함 |
+| Plus 만료·환불·revocation 확인 | **Fail-closed for cloud only**: relay/sync/priority entitlement만 중지, Pro Local과 안전/복구 접근은 유지 | 유료 cloud 원가를 통제하면서 로컬 관리권을 보존 |
+| receipt 서명/상품/계정 연결 불일치 | **Fail-closed for paid uplift**, Free와 이미 검증된 비구독 local 권한은 유지 | 권한 위조·이중 부여 방지 |
+| backend 또는 relay 보안 사고 | **Fail-closed for affected cloud path**, 로컬 direct connection은 독립적으로 유지 | 원격 경계를 격리 |
+
+#### Paywall과 실험 원칙
+
+- upgrade prompt는 사용자가 Pro/Plus 전용 작업을 선택한 **intent moment**에만, 해당 작업·로컬 대안·가격/갱신 조건을 명확히 하여 표시한다.
+- critical alert, emergency recovery, certificate/security warning, 위험 작업 중단 흐름에는 modal paywall을 띄우지 않는다. 위험도를 높이는 행동이나 불필요한 mutation을 conversion 이벤트로 최적화하지 않는다.
+- Pro Local trial, Plus trial 및 refund window는 스토어 정책과 비용을 고려한 **잠정 실험**이다. 실험 전 사전 등록한 안전 guardrail과 지원 비용을 포함해 평가하며, 사용자에게 조건을 명확히 고지한다.
+
 ## 10. 인증·보안 원칙
 
 1. **WSS 기본:** 25.04/25.10의 PLAIN API-key 인증은 검증된 TLS에서만 허용.
@@ -407,6 +453,11 @@ Operation
 - localOperationId, serverId, method, resourceRef
 - riskLevel, startedAt, rpcId, jobId
 - state, progress, error, auditReference
+
+Entitlement
+- canonicalId, sourceStore, sourceTransactionRef (non-secret), state, validUntil
+- catalogVersion, lastVerifiedAt, signedOfflineCacheRef
+- accountLinkRef (optional; never a NAS credential)
 ```
 
 ## 13. 오류·오프라인 전략
@@ -441,6 +492,7 @@ Operation
 6. **Chaos tests:** network flap, server reboot, certificate rotation, job event loss, HA failover.
 7. **Security tests:** secret leakage, TLS downgrade, pin mismatch, role denial, malicious field/log text.
 8. **Release artifact tests:** signed packages, clean install, upgrade, secure-vault migration.
+9. **Commercial tests:** Apple/Google/direct-desktop sandbox purchase, server verification, restore, refund/revocation, grace period, offline cache, linking, and every fail-open/fail-closed row.
 
 ### 14.3 A/E/X 규칙
 
@@ -461,14 +513,15 @@ Operation
 - Android/iOS/macOS/Windows/Linux의 설치·로그인·핵심 E2E 통과.
 - 접근성, 한국어/영어, light/dark 검증 통과.
 - 비밀이 log/crash report/analytics에 포함되지 않음.
+- commercial catalog/version, receipt verification threat model, sandbox billing, restore/refund/revocation, privacy/terms, store-policy review 및 cloud cost budget gate 통과.
 
 ## 15. 개발 로드맵
 
-> 가정: Flutter 3명, API/인프라 1명, QA 자동화 1명, 제품·디자인 1명 수준의 전담 팀. 30주는 계산상 약 6.9개월이며 Enterprise 실장비 확보와 앱스토어 심사는 별도 변동 요인이다.
+> 가정: Flutter 3명, API/인프라 1명, QA 자동화 1명, 제품·디자인 1명 수준의 전담 팀. 기존 30주 프레임에 상용화 기반·검증을 2주 추가해 **32주(약 7.4개월)**로 조정한다. 이는 billing/privacy/receipt backend/cloud 원가 작업을 기능 개발의 공짜 부수 작업으로 취급하지 않기 위함이며, Enterprise 실장비 확보와 앱스토어 심사는 별도 변동 요인이다.
 
 | 단계 | 기간 | 산출물 | Exit gate |
 |---|---:|---|---|
-| M0 계약·랩 | 2주 | repo, CI, TrueNAS VM matrix, schema snapshot, parity ledger | 3개 버전 연결·schema diff |
+| M0 계약·랩·상용 기반 | 3주 | repo, CI, TrueNAS VM matrix, schema snapshot, parity ledger, product catalog/entitlement abstraction, Apple/Google/direct sandbox billing, privacy/terms 초안, receipt backend threat model, cloud·support cost budget | 3개 버전 연결·schema diff, canonical entitlement 계약, sandbox 결제 왕복과 위협모델 승인 |
 | M1 기반 | 3주 | adaptive shell, multi-server, TLS pinning, auth/2FA/RBAC | 재연결·인증 보안 테스트 |
 | M2 관측 | 4주 | dashboard, alerts, jobs, reporting, global search | 실시간 event/job recovery |
 | M3 데이터 | 4주 | storage, disks, VDEVs, datasets, snapshots, ACL | disposable pool destructive E2E |
@@ -476,7 +529,7 @@ Operation
 | M5 보호 | 4주 | snapshot tasks, replication, cloud sync/backup, rsync, VMware | 실제 원격 전송·복구 E2E |
 | M6 컴퓨트 | 4주 | Apps, Docker, Containers, VMs, logs/shell/console | lifecycle·stream·device E2E |
 | M7 시스템·Enterprise | 3주 | update/network/boot/audit/support/HA/Enclosure/KMIP/FC/IPMI | 하드웨어별 evidence 또는 blocker |
-| M8 패리티 하드닝 | 2주 | 전체 ledger closure, security/accessibility/store artifacts | DoD 전 항목 통과 |
+| M8 패리티·상용 하드닝 | 3주 | 전체 ledger closure, security/accessibility/store artifacts, restore/refund/revocation/offline cache, regional price·tax와 policy review, commercial release gate | DoD 전 항목 및 상용·안전 gate 통과 |
 
 M2 이후 내부 alpha, M5 이후 제한 beta는 가능하지만 **“full-function v1” 표기는 M8 패리티 게이트 통과 후에만** 사용한다.
 
@@ -502,6 +555,8 @@ M2 이후 내부 alpha, M5 이후 제한 beta는 가능하지만 **“full-funct
 18. E18 Accessibility/Localization
 19. E19 Security/Chaos/Parity Closure
 20. E20 Packaging/Signing/Store Release
+21. E21 Product Catalog/Entitlements/Receipt Backend
+22. E22 Privacy/Terms/Cloud Cost and Commercial Operations
 
 각 에픽은 capability matrix row를 acceptance criteria로 연결하고, 구현 PR은 해당 row의 자동화 evidence를 포함해야 한다.
 
@@ -520,8 +575,12 @@ M2 이후 내부 alpha, M5 이후 제한 beta는 가능하지만 **“full-funct
 - crash-free sessions
 - R3/R4 취소·오작동·unknown outcome 비율
 - 서버별 주간 활성 운영자
+- activation: 첫 서버 연결 후 alerts/jobs/dashboard를 정상 표시한 비율
+- Pro conversion, Plus attach와 churn (opt-in·집계 데이터로만 측정)
+- restore purchase 성공률, entitlement mismatch율, paywall dismissal율
+- 수수료·환불·지원·cloud 비용을 뺀 net revenue와 Plus 단위 economics
 
-단순 화면 조회 수나 설치 수는 핵심 성공 지표로 사용하지 않는다.
+단순 화면 조회 수나 설치 수는 핵심 성공 지표로 사용하지 않는다. conversion 지표는 critical alert 중단, recovery 성공 저하, 위험 mutation 증가를 동반하면 실패로 판정한다.
 
 ## 18. 주요 위험과 대응
 
@@ -536,15 +595,18 @@ M2 이후 내부 alpha, M5 이후 제한 beta는 가능하지만 **“full-funct
 | GPL 코드 오염 | 배포 라이선스 위험 | clean-room API implementation, source-copy 금지, provenance review |
 | 너무 큰 범위 | 품질·일정 붕괴 | capability row 단위 완료, milestone exit gate, 미완료 기능 숨김이 아니라 명확한 beta 분리 |
 | 앱스토어 정책 | shell 기능 제한 가능 | 플랫폼별 정책 검토, desktop full shell, mobile entitlement/description 사전 검증 |
+| 결제/권한 불일치 | 이중 청구·정당한 접근 상실 | canonical ID, 서버 검증, restore/refund/revocation, offline signed cache, support linking |
+| cloud relay 비용·메타데이터 노출 | 수익성 악화·privacy 손상 | API key/NAS data 비저장, E2E 설정 동기화, 최소 routing metadata, 비용 budget·kill switch |
+| paywall이 긴급 조치를 방해 | 데이터 손실·신뢰 훼손 | safety/recovery fail-open matrix, critical flow modal 금지, release E2E |
 
 ## 19. 오픈 결정 사항
 
 구현 시작 전에 다음을 확정한다.
 
 1. v1 공개 라이선스: Apache-2.0 권장 여부.
-2. 상용화: 완전 무료, 후원, 또는 모바일 유료 기능 여부.
+2. family sharing의 포함 여부와 direct desktop 구매의 가격/이전 정책.
 3. Linux를 공식 스토어/패키지 릴리스 게이트에 포함할지 여부.
-4. 원격 알림을 위해 선택형 자체 호스팅 push relay를 후속 버전에서 허용할지 여부.
+4. Pro/Plus의 잠정 가격, trial/refund window, 지역별 가격을 willingness-to-pay·원가 실험 후 확정할지 여부.
 5. Enterprise 실장비와 TrueNAS 상표 검토 경로 확보 여부.
 6. 브랜드 accent와 아이콘. “TrueDash”가 TrueNAS 공식 앱으로 오인되지 않도록 **Unofficial client for TrueNAS** 문구 필요.
 
@@ -556,11 +618,11 @@ M2 이후 내부 alpha, M5 이후 제한 beta는 가능하지만 **“full-funct
 4. capability matrix의 `gate`를 기계 판정 가능한 manifest로 변환.
 5. TrueDash 디자인 시스템과 3개 폭 shell의 검증 가능한 prototype 제작.
 6. 연결→TLS→로그인→Dashboard→Alerts→Jobs vertical slice 구현.
-7. M2 gate 통과 후 Storage부터 capability row 순으로 확장.
+7. M2 gate 통과 후 Storage부터 capability row 순으로 확장하며, entitlement catalog mapping은 parity evidence와 별도 review한다.
 
 ## 21. 최종 권고
 
-TrueDash는 “예쁜 모바일 모니터”가 아니라 **TrueNAS의 버전·권한·작업 모델을 이해하는 운영 클라이언트**로 설계해야 한다. UI는 LabFox처럼 작업 중심으로 재구성하되, 완전성은 서버 capability에서 생성되는 패리티 원장으로 증명한다. v1을 25.10.7에 고정하고 25.04/26을 adapter로 분리해야 범위가 통제되며, Enterprise 기능은 실장비 evidence 없이는 완료로 선언하지 않는다.
+TrueDash는 “예쁜 모바일 모니터”가 아니라 **TrueNAS의 버전·권한·작업 모델을 이해하는 운영 클라이언트**로 설계해야 한다. UI는 작업 중심으로 재구성하되, 완전성은 서버 capability에서 생성되는 패리티 원장과 실제 E2E로 증명한다. 수익화는 광고 없는 Free / 일회성 Pro Local / 선택형 Plus Cloud로 처음부터 설계하고, 직접 연결과 안전·복구 접근을 결제 상태로부터 분리한다. NASDeck은 시장 참고일 뿐 복제 대상이 아니다.[23] v1을 25.10.7에 고정하고 25.04/26을 adapter로 분리해야 범위가 통제되며, Enterprise 기능은 실장비 evidence 없이는 완료로 선언하지 않는다.
 
 ## Sources
 
@@ -586,3 +648,11 @@ TrueDash는 “예쁜 모바일 모니터”가 아니라 **TrueNAS의 버전·�
 [20] https://github.com/Michael-128/TrueControl
 [21] https://www.truenas.com/docs/scale/25.10/gettingstarted/versionnotes
 [22] https://forums.truenas.com/t/truenas-25-10-7-is-now-available/67740
+[23] [NASDeck - for TrueNAS, Google Play](https://play.google.com/store/apps/details?id=com.strtechllc.nasdeck&hl=en_US)
+[24] [App Store Server Notifications](https://developer.apple.com/documentation/appstoreservernotifications)
+[25] [Implement proactive in-app purchase restore (WWDC22)](https://developer.apple.com/videos/play/wwdc2022/110404/)
+[26] [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
+[27] [Google Play Billing](https://developer.android.com/google/play/billing)
+[28] [Google Play Billing: backend integration](https://developer.android.com/google/play/billing/backend)
+[29] [Google Play Billing: subscription lifecycle](https://developer.android.com/google/play/billing/lifecycle/subscriptions)
+[30] [Google Play Billing: fight fraud and abuse](https://developer.android.com/google/play/billing/security)
