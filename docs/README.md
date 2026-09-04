@@ -5,7 +5,7 @@
 - [`planning/TRUEDASH_PRODUCT_PLAN.md`](planning/TRUEDASH_PRODUCT_PLAN.md) — product scope, UX, architecture, security, testing, and roadmap
 - [`planning/TRUEDASH_CAPABILITY_MATRIX.csv`](planning/TRUEDASH_CAPABILITY_MATRIX.csv) — 88-item full-function parity ledger
 
-The product plan adopts a proposed privacy-first **Free / Pro Local / Plus Cloud** model. The ledger remains implementation/evidence-focused; it is not a pricing catalog.
+The product plan adopts the decided privacy-first **Free / TrueDash Pro** v1 model: Free contains bounded, explicitly labeled advertising and TrueDash Pro costs USD 2.99/month and is ad-free. The ledger remains implementation/evidence-focused; it is not a pricing catalog.
 
 ## Research
 

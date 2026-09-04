@@ -39,7 +39,7 @@ NASDeck은 STRTech LLC의 **Android 전용** TrueNAS 관리 앱으로 공개된 
 1. **직접 연결을 기본값으로 유지한다.** NAS 관리의 비밀·데이터 경로와 원격 알림 경로를 분리하고, 관리형 relay는 선택 편의 기능이어야 한다.
 2. **구현 패리티와 판매 권한을 분리한다.** TrueDash는 적용 가능한 모든 TrueNAS WebUI capability를 구현하고 실제 E2E로 증명한다. 어떤 플랜에서 그 capability를 실행할지는 별도의 버전 관리 entitlement catalog가 결정한다.
 3. **안전·복구는 결제보다 우선한다.** 중요한 경보 열람, 자신의 구성 내보내기·복원, 인증서/보안 경고, 진행 중인 위험 작업 중지는 유료 벽 뒤에 두지 않는다.
-4. **광고를 채택하지 않는다.** 관리 화면의 신뢰·집중·안전성과 광고 수익 모델은 맞지 않는다.
+4. **광고는 엄격히 경계한다.** 관리 화면의 신뢰·집중·안전성을 우선해, Free의 광고는 명시적으로 표시된 저위험 read-only surface에만 제한한다. critical alert, 복구, 인증, mutation, active job, terminal/console, 비밀, 파괴적 작업에는 광고를 표시하지 않으며, NAS metadata·hostname·address·alert·job·credential·운영 문맥을 광고망에 제공하지 않는다. 필요한 consent를 처리하고 allowlist/blocklist·remote kill switch를 운영하며, consent 거부 또는 ad load 실패에도 빈 reserved slot으로 핵심 기능을 계속 제공한다. Pro는 모든 광고를 제거한다.
 5. **참조하되 복제하지 않는다.** NASDeck은 시장·문제·사용자 기대를 이해하기 위한 참고 제품일 뿐, TrueDash의 이름, 시각 디자인, 상호작용, 카피, 코드에 대한 라이선스를 주지 않는다.
 
 ## 출처

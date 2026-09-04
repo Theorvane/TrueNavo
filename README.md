@@ -17,7 +17,7 @@ TrueDash is currently in the planning and API-research phase. The application ha
 - Compatibility target: TrueNAS 25.04 and later through version/capability adapters
 - Planned platforms: Android, iOS, macOS, Windows, and Linux
 - Planned stack: Flutter with modular Dart packages
-- Planned business model: privacy-first Free / Pro Local (one-time) / optional Plus Cloud; no ads
+- Planned business model: privacy-first Free (advertising) / TrueDash Pro (USD 2.99/month, ad-free)
 
 ## Status
 
