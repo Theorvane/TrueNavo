@@ -4,8 +4,11 @@
 
 - [`planning/TRUEDASH_PRODUCT_PLAN.md`](planning/TRUEDASH_PRODUCT_PLAN.md) — product scope, UX, architecture, security, testing, and roadmap
 - [`planning/TRUEDASH_CAPABILITY_MATRIX.csv`](planning/TRUEDASH_CAPABILITY_MATRIX.csv) — 88-item full-function parity ledger
+- [`planning/M0_FOUNDATION_DESIGN.md`](planning/M0_FOUNDATION_DESIGN.md) — approved M0 secure connection boundary
+- [`planning/M0_FOUNDATION_IMPLEMENTATION.md`](planning/M0_FOUNDATION_IMPLEMENTATION.md) — M0 implementation and verification plan
+- [`planning/M0_IMPLEMENTATION_EVIDENCE.md`](planning/M0_IMPLEMENTATION_EVIDENCE.md) — command evidence from this isolated implementation
 
-The product plan adopts the decided privacy-first **Free / TrueDash Pro** v1 model: Free contains bounded, explicitly labeled advertising and TrueDash Pro costs USD 2.99/month and is ad-free. The ledger remains implementation/evidence-focused; it is not a pricing catalog.
+The M0 implementation deliberately does not include the product plan's future billing, advertising, analytics, or full-function capability scope. It has no live TrueNAS compatibility claim until real-server evidence exists.
 
 ## Research
 
