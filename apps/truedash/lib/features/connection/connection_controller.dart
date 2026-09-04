@@ -5,10 +5,32 @@ import 'package:truenas_api/truenas_api.dart';
 
 import 'connection_state.dart';
 
+final rpcConnectorProvider = Provider<RpcConnector>(
+  (ref) => const WebSocketRpcConnector(),
+);
+
+final credentialVaultProvider = Provider<CredentialVault>(
+  (ref) => const NoopCredentialVault(),
+);
+
+typedef SessionRepositoryFactory = SessionRepository Function({
+  required RpcConnector connector,
+  required CredentialVault credentialVault,
+});
+
+final sessionRepositoryFactoryProvider = Provider<SessionRepositoryFactory>(
+  (ref) =>
+      ({required connector, required credentialVault}) =>
+          TrueNasSessionRepository(
+            connector: connector,
+            credentialVault: credentialVault,
+          ),
+);
+
 final sessionRepositoryProvider = Provider<SessionRepository>(
-  (ref) => TrueNasSessionRepository(
-    connector: const WebSocketRpcConnector(),
-    credentialVault: const NoopCredentialVault(),
+  (ref) => ref.watch(sessionRepositoryFactoryProvider)(
+    connector: ref.watch(rpcConnectorProvider),
+    credentialVault: ref.watch(credentialVaultProvider),
   ),
 );
 

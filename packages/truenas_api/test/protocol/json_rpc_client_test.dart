@@ -34,6 +34,53 @@ void main() {
     },
   );
 
+  test('only valid request notifications are delivered', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final notifications = <Map<String, Object?>>[];
+    final subscription = client.notifications.listen(notifications.add);
+    final pending = client.call('a', id: 'pending');
+
+    transport.add('{"jsonrpc":"2.0","method":"collection_update","params":{}}');
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, hasLength(1));
+    transport.add('{"jsonrpc":"2.0","id":"pending","result":true}');
+    await pending;
+    await subscription.cancel();
+    await client.close();
+  });
+
+  for (final frame in [
+    '{"jsonrpc":"2.0","result":{}}',
+    '{"jsonrpc":"2.0","error":{"code":-1,"message":"bad"}}',
+    '{"jsonrpc":"2.0","method":""}',
+    '{"jsonrpc":"2.0","method":42}',
+    '{"jsonrpc":"1.0","method":"collection_update"}',
+    '{"jsonrpc":"2.0","method":"collection_update","result":{}}',
+  ]) {
+    test(
+      'invalid id-less object reports an error without settling pending: $frame',
+      () async {
+        final transport = InMemoryTransport();
+        final client = JsonRpcClient(transport);
+        final notifications = <Map<String, Object?>>[];
+        final subscription = client.notifications.listen(notifications.add);
+        final pending = client.call('a', id: 'pending');
+        final protocolError = client.protocolErrors.first;
+
+        transport.add(frame);
+
+        await expectLater(protocolError, completes);
+        await Future<void>.delayed(Duration.zero);
+        expect(notifications, isEmpty);
+        transport.add('{"jsonrpc":"2.0","id":"pending","result":true}');
+        expect(await pending, isTrue);
+        await subscription.cancel();
+        await client.close();
+      },
+    );
+  }
+
   test('preserves remote errors', () async {
     final transport = InMemoryTransport();
     final client = JsonRpcClient(transport);

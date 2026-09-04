@@ -41,10 +41,14 @@ void main() {
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
       expect(find.text('Connected'), findsOneWidget);
+      expect(find.text('Original host: https://nas.example'), findsOneWidget);
       expect(
-        find.textContaining('wss://nas.example/api/current'),
+        find.text('Secure endpoint: wss://nas.example/api/current'),
         findsOneWidget,
       );
+      expect(find.text('Identity: admin'), findsOneWidget);
+      expect(find.text('Version: 25.10'), findsOneWidget);
+      expect(find.text('Methods: 2'), findsOneWidget);
       expect(_visibleTextContains(sentinel), findsNothing);
     },
   );
@@ -99,6 +103,106 @@ void main() {
     repository.complete();
     await tester.pumpAndSettle();
   });
+
+  for (final failure in <_FailureCase>[
+    _FailureCase(
+      const EndpointValidationException(
+        'Enter a secure server URL with a host.',
+      ),
+      'Enter a secure server URL with a host.',
+    ),
+    _FailureCase(
+      const TlsCertificateException(),
+      'A trusted TLS certificate is required in this M0 slice. Certificate trust settings are not available yet.',
+    ),
+    _FailureCase(
+      const JsonRpcRemoteException(code: -32000, message: 'private'),
+      'The server returned an RPC error. Check access and try again.',
+    ),
+    _FailureCase(
+      const RpcTransportClosedException(),
+      'The secure connection closed before setup finished.',
+    ),
+    _FailureCase(
+      const JsonRpcProtocolException('private'),
+      'The server sent an invalid RPC response.',
+    ),
+    _FailureCase(
+      const AuthenticationStateException(AuthenticationState.otpRequired),
+      'This server requires an OTP flow, which M0 does not support yet.',
+    ),
+    _FailureCase(
+      const AuthenticationStateException(AuthenticationState.expired),
+      'The API key has expired.',
+    ),
+    _FailureCase(
+      const AuthenticationStateException(AuthenticationState.redirect),
+      'This server requested a redirect, which M0 does not support yet.',
+    ),
+    _FailureCase(
+      StateError('private'),
+      'Unable to reach the server over a secure connection.',
+    ),
+  ]) {
+    testWidgets('maps ${failure.label} to a safe message', (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionRepositoryProvider.overrideWithValue(
+              _ThrowingRepository(failure.error),
+            ),
+          ],
+          child: const TrueDashApp(),
+        ),
+      );
+      await tester.enterText(
+        find.byKey(const Key('server-url-field')),
+        'wss://nas.example',
+      );
+      await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+      await tester.tap(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text(failure.expectedMessage), findsOneWidget);
+      expect(_visibleTextContains(sentinel), findsNothing);
+    });
+  }
+
+  test('repository provider composes independently overrideable seams', () {
+    final connector = _UnusedConnector();
+    final vault = _TrackingVault();
+    late RpcConnector usedConnector;
+    late CredentialVault usedVault;
+    final container = ProviderContainer(
+      overrides: [
+        rpcConnectorProvider.overrideWithValue(connector),
+        credentialVaultProvider.overrideWithValue(vault),
+        sessionRepositoryFactoryProvider.overrideWithValue(({
+          required connector,
+          required credentialVault,
+        }) {
+          usedConnector = connector;
+          usedVault = credentialVault;
+          return _SuccessRepository();
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    expect(
+      container.read(sessionRepositoryProvider),
+      isA<_SuccessRepository>(),
+    );
+    expect(usedConnector, same(connector));
+    expect(usedVault, same(vault));
+  });
+}
+
+final class _FailureCase {
+  const _FailureCase(this.error, this.expectedMessage);
+  final Object error;
+  final String expectedMessage;
+  String get label => error.runtimeType.toString();
 }
 
 Finder _visibleTextContains(String value) => find.byWidgetPredicate(
@@ -151,4 +255,30 @@ final class _PendingRepository implements SessionRepository {
       availableMethodNames: const {},
     ),
   );
+}
+
+final class _ThrowingRepository implements SessionRepository {
+  const _ThrowingRepository(this.error);
+  final Object error;
+  @override
+  Future<void> close() async {}
+  @override
+  Future<ServerSummary> connect({
+    required String serverInput,
+    required String apiKey,
+  }) => Future<ServerSummary>.error(error);
+}
+
+final class _UnusedConnector implements RpcConnector {
+  @override
+  Future<RpcTransport> connect(Uri endpoint) => throw UnimplementedError();
+}
+
+final class _TrackingVault implements CredentialVault {
+  @override
+  Future<void> deleteApiKey(String serverDisplayInput) async {}
+  @override
+  Future<String?> readApiKey(String serverDisplayInput) async => null;
+  @override
+  Future<void> writeApiKey(String serverDisplayInput, String apiKey) async {}
 }

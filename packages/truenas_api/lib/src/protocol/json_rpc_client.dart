@@ -65,10 +65,27 @@ final class JsonRpcClient {
     }
     final message = Map<String, Object?>.from(decoded);
     if (message['jsonrpc'] != '2.0') {
+      if (!message.containsKey('id')) {
+        _reportProtocolFailure('Received an unsupported JSON-RPC version.');
+        return;
+      }
       _protocolFailure('Received an unsupported JSON-RPC version.');
       return;
     }
     if (!message.containsKey('id')) {
+      final method = message['method'];
+      if (method is! String || method.isEmpty) {
+        _reportProtocolFailure(
+          'A notification must contain a non-empty string method.',
+        );
+        return;
+      }
+      if (message.containsKey('result') || message.containsKey('error')) {
+        _reportProtocolFailure(
+          'A notification cannot contain a result or error.',
+        );
+        return;
+      }
       _notifications.add(message);
       return;
     }
@@ -131,6 +148,10 @@ final class JsonRpcClient {
     final error = JsonRpcProtocolException(message);
     _protocolErrors.add(error);
     _failAll(error, StackTrace.current);
+  }
+
+  void _reportProtocolFailure(String message) {
+    _protocolErrors.add(JsonRpcProtocolException(message));
   }
 
   void _failAll(Object error, StackTrace stackTrace) {
