@@ -86,6 +86,14 @@ final class JsonRpcClient {
         );
         return;
       }
+      if (message.containsKey('params') &&
+          message['params'] is! Map &&
+          message['params'] is! List) {
+        _reportProtocolFailure(
+          'A notification params member must be an object or array.',
+        );
+        return;
+      }
       _notifications.add(message);
       return;
     }

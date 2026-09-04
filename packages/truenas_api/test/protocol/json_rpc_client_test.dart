@@ -51,6 +51,64 @@ void main() {
   });
 
   for (final frame in [
+    '{"jsonrpc":"2.0","method":"collection_update"}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":{}}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":[]}',
+  ]) {
+    test('valid notification is delivered: $frame', () async {
+      final transport = InMemoryTransport();
+      final client = JsonRpcClient(transport);
+      final notifications = <Map<String, Object?>>[];
+      final subscription = client.notifications.listen(notifications.add);
+
+      transport.add(frame);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(notifications, hasLength(1));
+      await subscription.cancel();
+      await client.close();
+    });
+  }
+
+  for (final frame in [
+    '{"jsonrpc":"2.0","method":"collection_update","params":null}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":1}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":"bad"}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":true}',
+  ]) {
+    test(
+      'invalid notification params are reported without settling pending: $frame',
+      () async {
+        final transport = InMemoryTransport();
+        final client = JsonRpcClient(transport);
+        final notifications = <Map<String, Object?>>[];
+        final subscription = client.notifications.listen(notifications.add);
+        final pending = client.call('a', id: 'pending');
+        var pendingSettled = false;
+        pending.then<void>(
+          (_) => pendingSettled = true,
+          onError: (_, _) => pendingSettled = true,
+        );
+        final protocolError = client.protocolErrors.first;
+
+        transport.add(frame);
+
+        await expectLater(
+          protocolError.timeout(const Duration(milliseconds: 100)),
+          completion(isA<JsonRpcProtocolException>()),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(notifications, isEmpty);
+        expect(pendingSettled, isFalse);
+        transport.add('{"jsonrpc":"2.0","id":"pending","result":true}');
+        expect(await pending, isTrue);
+        await subscription.cancel();
+        await client.close();
+      },
+    );
+  }
+
+  for (final frame in [
     '{"jsonrpc":"2.0","result":{}}',
     '{"jsonrpc":"2.0","error":{"code":-1,"message":"bad"}}',
     '{"jsonrpc":"2.0","method":""}',

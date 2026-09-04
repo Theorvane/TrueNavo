@@ -41,9 +41,10 @@ API key fixture는 비밀이 아닌 고정 sentinel만 사용하며, 결과 객�
 ### 후속 독립 검토 수정 (2026-09-05)
 
 1. id 없는 JSON object가 `jsonrpc: '2.0'`, 비어 있지 않은 string `method`, result/error 부재를 모두 만족할 때만 notification으로 전달되도록 RED 회귀 테스트를 추가했다. `result`만 있는 object와 malformed notification은 protocol error stream으로 보고되고, 이미 pending인 요청은 일치 response 또는 close 전까지 유지되는지 검증한다.
-2. Riverpod connector, credential vault, repository factory seam을 각각 override하는 provider-composition test를 추가했다. live socket과 platform storage를 사용하지 않는다.
-3. widget test를 table-driven으로 확장해 endpoint validation, TLS certificate, remote RPC, transport close, protocol, OTP_REQUIRED, EXPIRED, REDIRECT, generic failure의 안전한 message mapping과 sentinel 비노출을 검증한다. 성공 요약은 원래 입력, 정규화 endpoint, identity, version, method count를 모두 검증한다.
-4. Android release INTERNET permission, macOS client-network entitlements, iOS local-network purpose text는 source-text test가 아닌 manifest/plist static inspection으로 확인했다. Bonjour service declaration은 추가하지 않았다.
+2. notification의 `params`는 없거나 JSON object/array일 때만 전달되도록 추가 검증했다. `null`, number, string, boolean은 protocol error stream으로 보고되고 notification으로 전달되지 않으며, 이미 pending인 요청은 이후 일치 response로 완료되는지 검증한다.
+3. Riverpod connector, credential vault, repository factory seam을 각각 override하는 provider-composition test를 추가했다. live socket과 platform storage를 사용하지 않는다.
+4. widget test를 table-driven으로 확장해 endpoint validation, TLS certificate, remote RPC, transport close, protocol, OTP_REQUIRED, EXPIRED, REDIRECT, generic failure의 안전한 message mapping과 sentinel 비노출을 검증한다. 성공 요약은 원래 입력, 정규화 endpoint, identity, version, method count를 모두 검증한다.
+5. Android release INTERNET permission, macOS client-network entitlements, iOS local-network purpose text는 source-text test가 아닌 manifest/plist static inspection으로 확인했다. Bonjour service declaration은 추가하지 않았다.
 
 ## 4. 현재 자동 검증
 
@@ -61,7 +62,7 @@ git diff --check
 
 결과:
 
-- Dart protocol/session/endpoint 테스트: **38 passed**
+- Dart protocol/session/endpoint 테스트: **45 passed**
 - Flutter widget/provider 테스트: **13 passed**
 - Flutter analyzer: **No issues found**
 - formatter 및 `git diff --check`: 통과
