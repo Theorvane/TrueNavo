@@ -49,6 +49,45 @@ void main() {
     });
 
     test(
+      'canonicalizes equivalent IPv6 literals to one authority and pin key',
+      () {
+        final compressed = NormalizedAuthority.parse('https://[2001:db8::1]');
+        final expanded = NormalizedAuthority.parse(
+          'https://[2001:0DB8:0:0:0:0:0:1]',
+        );
+        final mixedCase = NormalizedAuthority.parse('https://[2001:Db8::1]');
+
+        expect(compressed.host, '2001:db8::1');
+        expect(compressed, expanded);
+        expect(compressed, mixedCase);
+        expect(compressed.pinKey, expanded.pinKey);
+        expect(compressed.pinKey, mixedCase.pinKey);
+        expect(compressed.pinKey, 'https://[2001:db8::1]:443');
+      },
+    );
+
+    test('keeps distinct IPv6 literals distinct', () {
+      expect(
+        NormalizedAuthority.parse('https://[2001:db8::1]'),
+        isNot(NormalizedAuthority.parse('https://[2001:db8::2]')),
+      );
+    });
+
+    test('canonicalizes accepted IPv4-tail IPv6 literals', () {
+      final ipv4Tail = NormalizedAuthority.parse(
+        'https://[::ffff:192.0.2.128]',
+      );
+      final hexadecimalTail = NormalizedAuthority.parse(
+        'https://[0:0:0:0:0:FFFF:C000:0280]',
+      );
+
+      expect(ipv4Tail.host, '::ffff:c000:280');
+      expect(ipv4Tail, hexadecimalTail);
+      expect(ipv4Tail.pinKey, hexadecimalTail.pinKey);
+      expect(ipv4Tail.pinKey, 'https://[::ffff:c000:280]:443');
+    });
+
+    test(
       'fails closed for non-ASCII hosts without a UTS-46 implementation',
       () {
         expect(
@@ -80,6 +119,11 @@ void main() {
       'https://:443',
       'https://nas.example:invalid',
       'https://nas.example:0',
+      'https://nas.example:00',
+      'https://nas.example:000',
+      'https://[2001:db8::1]:0',
+      'https://[2001:db8::1]:00',
+      'https://[2001:db8::1]:000',
       'https://nas.example:65536',
       'https://nas.example:443:444',
       'https://[not-an-ipv6]',
@@ -166,6 +210,12 @@ void main() {
       <String, Object>{},
       <String, Object>{
         'version': 2,
+        'leafDerSha256': digest,
+        'fingerprintFormat': 'SHA-256/DER',
+        'createdAt': '2026-09-06T12:30:00.000Z',
+      },
+      <String, Object>{
+        'version': 1.0,
         'leafDerSha256': digest,
         'fingerprintFormat': 'SHA-256/DER',
         'createdAt': '2026-09-06T12:30:00.000Z',

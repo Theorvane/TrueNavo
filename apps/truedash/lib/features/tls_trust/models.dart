@@ -33,7 +33,8 @@ final class NormalizedAuthority {
         'Credentials, queries, and fragments are not allowed.',
       );
     }
-    if (!_isValidHost(uri)) {
+    final normalizedHost = _normalizedHost(uri);
+    if (normalizedHost == null) {
       throw const AuthorityValidationException(
         'The host is not a valid ASCII DNS name or IP address.',
       );
@@ -60,7 +61,7 @@ final class NormalizedAuthority {
     }
     return NormalizedAuthority._(
       scheme: uri.scheme,
-      host: uri.host.toLowerCase(),
+      host: normalizedHost,
       port: explicitPort == 0 ? 443 : explicitPort,
       rpcConnectionUri: endpoint.connectionUri,
     );
@@ -101,18 +102,18 @@ final class NormalizedAuthority {
   static bool _isAscii(String value) =>
       value.codeUnits.every((unit) => unit <= 0x7f);
 
-  static bool _isValidHost(Uri uri) {
+  static String? _normalizedHost(Uri uri) {
     final host = uri.host;
     if (!_isAscii(host) || host.contains('%')) {
-      return false;
+      return null;
     }
     if (host.contains(':')) {
-      return _isBracketedIpv6(uri) && _isValidIpv6(host);
+      return _isBracketedIpv6(uri) ? _canonicalizeIpv6(host) : null;
     }
     if (host.contains(RegExp(r'^[0-9.]+$'))) {
-      return _isValidIpv4(host);
+      return _isValidIpv4(host) ? host : null;
     }
-    return _isValidDnsName(host);
+    return _isValidDnsName(host) ? host.toLowerCase() : null;
   }
 
   static bool _isBracketedIpv6(Uri uri) =>
@@ -145,31 +146,80 @@ final class NormalizedAuthority {
         });
   }
 
-  static bool _isValidIpv6(String host) {
+  static String? _canonicalizeIpv6(String host) {
     final compressionIndex = host.indexOf('::');
     if (compressionIndex != host.lastIndexOf('::')) {
-      return false;
+      return null;
     }
     final hasCompression = compressionIndex >= 0;
-    final parts = host.split(':');
-    var groupCount = 0;
+    final beforeCompression = hasCompression && compressionIndex > 0
+        ? host.substring(0, compressionIndex).split(':')
+        : const <String>[];
+    final afterCompression =
+        hasCompression && compressionIndex + 2 < host.length
+        ? host.substring(compressionIndex + 2).split(':')
+        : const <String>[];
+    final parts = hasCompression
+        ? <String>[...beforeCompression, ...afterCompression]
+        : host.split(':');
+    final groups = <int>[];
     for (var index = 0; index < parts.length; index++) {
       final part = parts[index];
       if (part.isEmpty) {
-        continue;
+        return null;
       }
       if (part.contains('.')) {
         if (index != parts.length - 1 || !_isValidIpv4(part)) {
-          return false;
+          return null;
         }
-        groupCount += 2;
+        final octets = part.split('.').map(int.parse).toList();
+        groups
+          ..add((octets[0] << 8) | octets[1])
+          ..add((octets[2] << 8) | octets[3]);
       } else if (!RegExp(r'^[0-9a-fA-F]{1,4}$').hasMatch(part)) {
-        return false;
+        return null;
       } else {
-        groupCount++;
+        groups.add(int.parse(part, radix: 16));
       }
     }
-    return hasCompression ? groupCount < 8 : groupCount == 8;
+    if (hasCompression) {
+      if (groups.length >= 8) {
+        return null;
+      }
+      groups.insertAll(
+        beforeCompression.length,
+        List<int>.filled(8 - groups.length, 0),
+      );
+    } else if (groups.length != 8) {
+      return null;
+    }
+
+    var zeroRunStart = -1;
+    var zeroRunLength = 0;
+    for (var index = 0; index < groups.length;) {
+      if (groups[index] != 0) {
+        index++;
+        continue;
+      }
+      final start = index;
+      while (index < groups.length && groups[index] == 0) {
+        index++;
+      }
+      final length = index - start;
+      if (length > zeroRunLength && length >= 2) {
+        zeroRunStart = start;
+        zeroRunLength = length;
+      }
+    }
+    final textGroups = groups.map((group) => group.toRadixString(16)).toList();
+    if (zeroRunStart < 0) {
+      return textGroups.join(':');
+    }
+    final before = textGroups.take(zeroRunStart).join(':');
+    final after = textGroups.skip(zeroRunStart + zeroRunLength).join(':');
+    if (before.isEmpty) return '::$after';
+    if (after.isEmpty) return '$before::';
+    return '$before::$after';
   }
 
   static final RegExp _dnsLabelExpression = RegExp(
@@ -185,7 +235,7 @@ final class NormalizedAuthority {
     final portPart = closingBracket >= 0
         ? authority.substring(closingBracket + 1)
         : authority.substring(authority.lastIndexOf(':'));
-    return portPart == ':0';
+    return RegExp(r'^:0+$').hasMatch(portPart);
   }
 
   static String _pinKeyHost(String value) =>
@@ -229,7 +279,8 @@ final class PinRecord {
     final digest = json['leafDerSha256'];
     final format = json['fingerprintFormat'];
     final createdAt = json['createdAt'];
-    if (version != 1 ||
+    if (version is! int ||
+        version != currentVersion ||
         digest is! String ||
         format != fingerprintFormatValue ||
         createdAt is! String ||
