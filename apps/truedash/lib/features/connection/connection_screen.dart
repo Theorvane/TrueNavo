@@ -6,7 +6,10 @@ import 'connection_controller.dart';
 import 'connection_state.dart';
 
 class ConnectionScreen extends ConsumerStatefulWidget {
-  const ConnectionScreen({super.key});
+  const ConnectionScreen({super.key, this.onConnectionSucceeded});
+
+  final VoidCallback? onConnectionSucceeded;
+
   @override
   ConsumerState<ConnectionScreen> createState() => _ConnectionScreenState();
 }
@@ -25,6 +28,13 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<ConnectionState>(connectionControllerProvider, (_, next) {
+      if (next is ConnectionSucceeded && widget.onConnectionSucceeded != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onConnectionSucceeded!();
+        });
+      }
+    });
     final state = ref.watch(connectionControllerProvider);
     final busy = state is ConnectionInProgress;
     return Scaffold(
@@ -124,18 +134,6 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
             compact: true,
           ),
         ],
-        if (state case ConnectionSucceeded(:final summary)) ...[
-          const SizedBox(height: TdSpacing.group),
-          _ConnectionSummary(
-            rows: {
-              'Original host': summary.originalHostInput,
-              'Secure endpoint': summary.endpointUri.toString(),
-              'Identity': summary.identity,
-              'Version': summary.version,
-              'Methods': '${summary.availableMethodNames.length}',
-            },
-          ),
-        ],
       ],
     ),
   );
@@ -194,55 +192,6 @@ class _ConnectionIntroduction extends StatelessWidget {
           style: TdTypography.bodyLarge.copyWith(color: td.textSecondary),
         ),
       ],
-    );
-  }
-}
-
-class _ConnectionSummary extends StatelessWidget {
-  const _ConnectionSummary({required this.rows});
-  final Map<String, String> rows;
-  @override
-  Widget build(BuildContext context) {
-    final td = context.tdTheme;
-    return Semantics(
-      liveRegion: true,
-      child: TdPanel(
-        key: const Key('connection-summary'),
-        title: 'Connection summary',
-        action: const TdStatusBadge(
-          status: TdStatus.success,
-          label: 'Connected',
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final row in rows.entries)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: TdSpacing.inlineTight,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      row.key,
-                      style: TdTypography.metadata.copyWith(
-                        color: td.textMuted,
-                      ),
-                    ),
-                    Text(
-                      row.value,
-                      style: TdTypography.monoBody.copyWith(
-                        color: td.textPrimary,
-                      ),
-                      softWrap: true,
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -1,0 +1,54 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_REF_PROTECTED == "true"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^feat\//'
+
+variables:
+  FLUTTER_VERSION: "3.47.0"
+  FLUTTER_HOME: "$CI_PROJECT_DIR/.flutter-sdk"
+
+stages:
+  - verify
+
+.linux_flutter_setup: &linux_flutter_setup
+  - chmod +x .gitlab/ci/unzip
+  - export PATH="$CI_PROJECT_DIR/.gitlab/ci:$PATH:/usr/sbin:/usr/bin:/bin"
+  - rm -rf "$FLUTTER_HOME"
+  - git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$FLUTTER_HOME"
+  - export PATH="$FLUTTER_HOME/bin:$PATH"
+  - flutter config --no-analytics
+  - flutter --version
+  - flutter pub get
+
+portable_quality_and_web:
+  stage: verify
+  tags:
+    - shared-build
+  before_script: *linux_flutter_setup
+  script:
+    - dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
+    - (cd packages/truenas_api && dart analyze && dart test)
+    - (cd packages/truedash_design_system && flutter analyze && flutter test)
+    - (cd examples/design_system_consumer && flutter analyze && flutter test)
+    - (cd apps/truedash && flutter analyze && flutter test && flutter build web --release)
+
+macos_release:
+  stage: verify
+  tags:
+    - shared-macos
+  before_script:
+    - export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    - fvm install
+    - fvm flutter --version
+    - fvm flutter pub get
+  script:
+    - (cd apps/truedash && fvm flutter build macos --release)
+    - codesign --verify --deep --strict apps/truedash/build/macos/Build/Products/Release/truedash.app
+    - >-
+      codesign -d --entitlements :- apps/truedash/build/macos/Build/Products/Release/truedash.app 2>/dev/null |
+      plutil -convert json -o - - |
+      python3 -c "import json,sys; assert json.load(sys.stdin).get('com.apple.security.network.client') is True"

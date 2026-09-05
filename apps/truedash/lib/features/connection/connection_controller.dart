@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truenas_api/truenas_api.dart';
 
 import 'connection_state.dart';
+import '../server_profiles/server_profile.dart';
+import '../server_profiles/server_profiles_controller.dart';
 
 final rpcConnectorProvider = Provider<RpcConnector>(
   (ref) => const WebSocketRpcConnector(),
@@ -41,6 +43,7 @@ final connectionControllerProvider =
 
 final class ConnectionController extends Notifier<ConnectionState> {
   late SessionRepository _repository;
+  var _nextProfileId = 0;
 
   @override
   ConnectionState build() {
@@ -60,6 +63,14 @@ final class ConnectionController extends Notifier<ConnectionState> {
         serverInput: serverInput,
         apiKey: apiKey,
       );
+      ref
+          .read(serverProfilesControllerProvider.notifier)
+          .registerAndSelect(
+            ServerProfile.fromSafeSummary(
+              id: 'profile-${++_nextProfileId}',
+              summary: summary,
+            ),
+          );
       state = ConnectionSucceeded(summary);
     } on EndpointValidationException catch (error) {
       state = ConnectionFailed(error.message);
