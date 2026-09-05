@@ -14,25 +14,21 @@ variables:
 stages:
   - verify
 
-.flutter_setup: &flutter_setup
-  - chmod +x .gitlab/ci/unzip .gitlab/ci/sysctl
-  - export PATH="$CI_PROJECT_DIR/.gitlab/ci:$PATH:/usr/sbin:/usr/bin:/bin:/opt/homebrew/bin"
+.linux_flutter_setup: &linux_flutter_setup
+  - chmod +x .gitlab/ci/unzip
+  - export PATH="$CI_PROJECT_DIR/.gitlab/ci:$PATH:/usr/sbin:/usr/bin:/bin"
   - rm -rf "$FLUTTER_HOME"
   - git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$FLUTTER_HOME"
   - export PATH="$FLUTTER_HOME/bin:$PATH"
   - flutter config --no-analytics
   - flutter --version
+  - flutter pub get
 
 portable_quality_and_web:
   stage: verify
   tags:
     - shared-build
-  before_script:
-    - *flutter_setup
-    - (cd packages/truenas_api && dart pub get)
-    - (cd packages/truedash_design_system && flutter pub get)
-    - (cd examples/design_system_consumer && flutter pub get)
-    - (cd apps/truedash && flutter pub get)
+  before_script: *linux_flutter_setup
   script:
     - dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
     - (cd packages/truenas_api && dart analyze && dart test)
@@ -45,9 +41,11 @@ macos_release:
   tags:
     - shared-macos
   before_script:
-    - *flutter_setup
-    - (cd apps/truedash && flutter pub get)
+    - export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    - fvm install
+    - fvm flutter --version
+    - fvm flutter pub get
   script:
-    - (cd apps/truedash && flutter build macos --release)
+    - (cd apps/truedash && fvm flutter build macos --release)
     - codesign --verify --deep --strict apps/truedash/build/macos/Build/Products/Release/truedash.app
     - test "$(codesign -d --entitlements :- apps/truedash/build/macos/Build/Products/Release/truedash.app 2>&1 | plutil -extract com.apple.security.network.client raw -)" = true
