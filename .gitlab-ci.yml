@@ -15,6 +15,8 @@ stages:
   - verify
 
 .flutter_setup: &flutter_setup
+  - chmod +x .gitlab/ci/unzip .gitlab/ci/sysctl
+  - export PATH="$CI_PROJECT_DIR/.gitlab/ci:$PATH:/usr/sbin:/usr/bin:/bin:/opt/homebrew/bin"
   - rm -rf "$FLUTTER_HOME"
   - git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$FLUTTER_HOME"
   - export PATH="$FLUTTER_HOME/bin:$PATH"
