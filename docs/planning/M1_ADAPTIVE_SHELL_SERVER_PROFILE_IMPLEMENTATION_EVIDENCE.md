@@ -34,17 +34,19 @@ Codex 격리 lane은 새 profile/controller/shell의 behavioral tests를 먼저 
 
 Breakpoint widget tests cover 599/600/999/1000. Focused connection test coverage additionally checks successful safe seeding/shell transition, failure remains at the form, 320/390 plus 200% text reflow, and API-key sentinel non-rendering.
 
-## Build 및 rendered QA 환경 한계
+## Release build·서명 검증 및 rendered QA
 
-이 checkout에는 Web과 macOS runner가 구성되어 있지 않습니다. 다음 실제 명령은 source 변경 없이 플랫폼 구성 부재로 종료했습니다.
+이 브랜치의 `apps/truedash`에는 Web과 macOS runner가 있습니다. 이전의 repo-root 실행 결과는 이 앱 디렉터리의 build 가능 여부를 나타내지 않으므로 아래 실제 앱 디렉터리 실행으로 대체합니다.
 
 | 명령 | 실제 결과 |
 | --- | --- |
-| `fvm flutter build web --release --target apps/truedash/lib/main.dart` | exit 1 — `This project is not configured for the web.` |
-| `fvm flutter build macos --release --target apps/truedash/lib/main.dart` | exit 1 — `No macOS desktop project configured.` |
-| `codesign --verify --deep --strict build/macos/Build/Products/Release/truedash.app` | macOS build가 app을 만들지 않아 실행 불가 |
+| `cd apps/truedash && fvm flutter build web --release` | exit 0 — `✓ Built build/web` |
+| `cd apps/truedash && fvm flutter build macos --release` | exit 0 — `✓ Built build/macos/Build/Products/Release/truedash.app (49.6MB)` |
+| `codesign --verify --deep --strict build/macos/Build/Products/Release/truedash.app` | exit 0 |
+| signed app entitlement inspect | `codesign -d --entitlements :-` output에 `com.apple.security.network.client`가 `<true/>`로 존재 |
+| plist parse | `/usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' macos/Runner/Release.entitlements` → `true`; `plutil -convert json -o -`도 해당 key를 `true`로 parse |
 
-따라서 production Web browser matrix, console/scrollWidth, screenshots, local static server 및 browser tab은 생성하지 않았습니다. 이 증적은 browser render 또는 release/codesign 성공을 주장하지 않습니다. runner를 별도 승인 범위로 추가한 뒤 해당 build와 실제 browser QA를 다시 수행해야 합니다.
+`build/web`을 `python3 -m http.server 4173 --directory build/web`로 실제 static serving했고, 별도 Chrome CDP QA instance에서 production page를 열어 matrix 자동화를 시도했습니다. 320px light screenshot은 생성됐습니다. 그러나 harness는 기존 Chrome을 감지하지 못해 session 시작에 실패했고, CDP script는 응답 대기 timeout, 후속 isolated Chrome headless matrix는 첫 capture 뒤 `Trace/BPT trap: 5`로 중단됐습니다. 그러므로 390/768/1024/1440, dark, selected/long-profile, 200% text/reduced-motion의 완전한 browser matrix·console error·scrollWidth 결과를 이 문서는 주장하지 않습니다. 이 실패는 runner 부재가 아니라 QA automation runtime 문제이며, 다음 retry에서 별도 안정된 Chromium/CDP 환경으로 전체 matrix를 재실행해야 합니다.
 
 ## 범위·보안 점검
 
