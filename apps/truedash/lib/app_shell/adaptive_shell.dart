@@ -45,7 +45,13 @@ class _AdaptiveShellState extends ConsumerState<AdaptiveShell> {
             ? TdSpacing.pageDesktop
             : TdSpacing.pageTablet,
         onReturnToConnection: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const ConnectionScreen()),
+          MaterialPageRoute<void>(
+            builder: (_) => ConnectionScreen(
+              onConnectionSucceeded: () {
+                if (mounted) Navigator.of(context).pop();
+              },
+            ),
+          ),
         ),
       );
       return FocusTraversalGroup(

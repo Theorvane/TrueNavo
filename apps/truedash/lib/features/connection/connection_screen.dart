@@ -6,7 +6,10 @@ import 'connection_controller.dart';
 import 'connection_state.dart';
 
 class ConnectionScreen extends ConsumerStatefulWidget {
-  const ConnectionScreen({super.key});
+  const ConnectionScreen({super.key, this.onConnectionSucceeded});
+
+  final VoidCallback? onConnectionSucceeded;
+
   @override
   ConsumerState<ConnectionScreen> createState() => _ConnectionScreenState();
 }
@@ -25,6 +28,13 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<ConnectionState>(connectionControllerProvider, (_, next) {
+      if (next is ConnectionSucceeded && widget.onConnectionSucceeded != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onConnectionSucceeded!();
+        });
+      }
+    });
     final state = ref.watch(connectionControllerProvider);
     final busy = state is ConnectionInProgress;
     return Scaffold(

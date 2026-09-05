@@ -1,0 +1,52 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^feat\//'
+
+stages:
+  - verify
+  - build
+
+.flutter_setup: &flutter_setup
+  - fvm install
+  - fvm flutter --version
+
+portable_quality:
+  stage: verify
+  tags:
+    - shared-build
+  before_script:
+    - *flutter_setup
+    - (cd packages/truenas_api && fvm dart pub get)
+    - (cd packages/truedash_design_system && fvm flutter pub get)
+    - (cd examples/design_system_consumer && fvm flutter pub get)
+    - (cd apps/truedash && fvm flutter pub get)
+  script:
+    - fvm dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
+    - (cd packages/truenas_api && fvm dart analyze && fvm dart test)
+    - (cd packages/truedash_design_system && fvm flutter analyze && fvm flutter test)
+    - (cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test)
+    - (cd apps/truedash && fvm flutter analyze && fvm flutter test)
+
+web_release:
+  stage: build
+  tags:
+    - shared-build
+  before_script:
+    - *flutter_setup
+    - (cd apps/truedash && fvm flutter pub get)
+  script:
+    - (cd apps/truedash && fvm flutter build web --release)
+
+macos_release:
+  stage: build
+  tags:
+    - shared-macos
+  before_script:
+    - *flutter_setup
+    - (cd apps/truedash && fvm flutter pub get)
+  script:
+    - (cd apps/truedash && fvm flutter build macos --release)
+    - codesign --verify --deep --strict apps/truedash/build/macos/Build/Products/Release/truedash.app
+    - test "$(codesign -d --entitlements :- apps/truedash/build/macos/Build/Products/Release/truedash.app 2>&1 | plutil -extract com.apple.security.network.client raw -)" = true
