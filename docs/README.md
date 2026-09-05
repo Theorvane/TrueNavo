@@ -10,6 +10,7 @@
 - [`planning/M0_FOUNDATION_DESIGN.md`](planning/M0_FOUNDATION_DESIGN.md) — approved M0 secure connection boundary
 - [`planning/M0_FOUNDATION_IMPLEMENTATION.md`](planning/M0_FOUNDATION_IMPLEMENTATION.md) — M0 implementation and verification plan
 - [`planning/M0_IMPLEMENTATION_EVIDENCE.md`](planning/M0_IMPLEMENTATION_EVIDENCE.md) — command evidence from this isolated implementation
+- [`planning/M1_ADAPTIVE_SHELL_SERVER_PROFILE_DESIGN.md`](planning/M1_ADAPTIVE_SHELL_SERVER_PROFILE_DESIGN.md) — approved M1 adaptive shell and session-memory server-profile boundary
 
 The M0 implementation deliberately does not include the product plan's future billing, advertising, analytics, or full-function capability scope. It has no live TrueNAS compatibility claim until real-server evidence exists.
 
