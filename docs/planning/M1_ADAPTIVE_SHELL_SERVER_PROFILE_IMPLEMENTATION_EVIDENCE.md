@@ -1,56 +1,96 @@
 # M1 적응형 셸·세션 메모리 서버 프로필 구현 증적
 
-- 구현 커밋: `903255167a63a47bf54329f39b3903d037185eda`
+- 검증 대상 구현 커밋: `ad7f2805812e9bfdaa93db8afd1e224d06495734`
 - 브랜치: `feat/m1-adaptive-shell-server-profile`
-- 기준: `design/design-system-foundation`의 원래 스택 기준 `bac42639d5d52eaa1f1c595737bd795142c8414f`
-- 범위: 앱 내부의 적응형 탐색 셸 및 프로세스 메모리 `ServerProfile` catalog. TD-002는 완료되지 않았습니다.
+- target 기준: `main`의 `3ae642a6165c126623e6dd164de640c429ba26b3`
+- 범위: 앱 내부 적응형 탐색 셸과 프로세스 메모리 `ServerProfile` catalog. TD-002는 완료되지 않았습니다.
 
 ## 구현 사실
 
-- 실제 사용 가능 폭 기준으로 `<600`은 `NavigationBar`, `600–999`는 72px `NavigationRail`, `>=1000`은 확장 `NavigationRail`을 사용합니다.
-- 고정 목적지는 Home, Alerts, Manage, Jobs뿐입니다. 모든 목적지는 데이터 연결이 후속 슬라이스라는 정적 안내만 보이며, dashboard/alerts/jobs data·차트·metric·명령을 만들지 않습니다.
-- `ServerProfile`은 opaque id, display name, original host input, normalized endpoint, last-known version의 다섯 metadata만 가집니다. catalog는 Riverpod process memory 상태만 사용하며 endpoint 중복 upsert는 먼저 등록된 opaque id와 순서를 보존합니다.
+- 실제 사용 가능 폭 기준으로 `<600`은 native `NavigationBar`, `600–999`는 native 72px `NavigationRail`, `>=1000`은 native extended `NavigationRail`을 사용합니다.
+- 고정 목적지는 Home, Alerts, Manage, Jobs뿐입니다. 각 목적지는 서로 다른 scope 문구와 공통 후속-slice 상태를 별도로 표시하며 dashboard/alerts/jobs data·차트·metric·명령을 만들지 않습니다.
+- keyboard traversal은 server catalog trigger → Home → Alerts → Manage → Jobs → Return action 순서입니다. Return action은 profile이 없는 shell 상태에서 connection 화면으로 돌아가기 위해 표시됩니다.
+- native navigation action과 native server popup trigger가 primary focus를 가질 때 2px focus ring을 실제 action rect에 렌더합니다. native selection, semantics, Enter/Space 활성화, popup focus restoration은 유지합니다.
+- 각 navigation action, server trigger, popup item, Return action은 최소 `44×44` 조작 영역을 유지합니다.
+- `ServerProfile`은 opaque id, display name, original host input, normalized endpoint, last-known version의 다섯 metadata만 가집니다. catalog는 Riverpod process memory 상태만 사용합니다.
+- ID와 endpoint가 서로 다른 기존 profile을 동시에 가리키는 충돌에서도 catalog ID가 중복되지 않습니다. 기존 ID 위치에 새 metadata를 반영하고 endpoint 충돌 항목을 제거하며 selected ID는 유일하게 유지합니다.
 - 성공한 기존 M0 연결만 안전한 metadata를 등록·선택하고 셸로 전환합니다. 다른 profile 선택은 표시 context만 바꾸며 연결을 재개하지 않습니다.
-- API key/password/token, TLS fingerprint/trust decision, identity, method/capability payload, raw error/log를 profile state, 셸의 렌더링 text, 이 증적에 추가하지 않았습니다. 기존 M0 endpoint/TLS/auth/transport 코드는 변경하지 않았습니다.
+- API key/password/token, TLS fingerprint/trust decision, identity, method/capability payload, raw error/log를 profile state, 셸 렌더링 text, 이 증적에 추가하지 않았습니다. 기존 M0 endpoint/TLS/auth/transport 코드는 변경하지 않았습니다.
 
-## TDD 증적
+## 회귀 테스트 증적
 
-Codex 격리 lane은 새 profile/controller/shell의 behavioral tests를 먼저 추가했고, 최초 focused test 실행은 누락된 profile/shell 구현에 대한 RED를 확인한 뒤 최소 구현을 추가했습니다. Hermes의 독립 focused 검증에서 switcher test가 중복 tooltip finder로 실패했고, 중복 `Tooltip` wrapper를 제거한 뒤 GREEN을 재실행했습니다.
+수정 전 구현에서는 다음 RED가 독립 재현됐습니다.
 
-- RED/독립 첫 focused run: `fvm flutter test apps/truedash/test/features/server_profiles apps/truedash/test/app_shell apps/truedash/test/features/connection/connection_screen_test.dart` — exit 1. 원인: `server_switcher_test.dart`에서 `Choose server` tooltip이 두 개여서 tap finder가 모호함.
-- GREEN focused run: 같은 명령 — exit 0, 28 tests passed.
+- 서로 다른 endpoint가 같은 suggested ID를 사용할 때 IDs가 `[one, two, one]`이 되어 catalog identity가 모호해졌습니다.
+- 강화된 accessibility suite에서 compact navigation focus 순서, 실제 destination action, 개별 `44×44` target, 실제 focus ring, server menu focus 복원 계약이 실패했습니다.
+
+`ad7f2805812e9bfdaa93db8afd1e224d06495734`에서 focused suite를 다시 실행한 결과:
+
+```text
+fvm flutter test \
+  test/features/server_profiles/server_profiles_controller_test.dart \
+  test/features/server_profiles/server_switcher_test.dart \
+  test/app_shell/adaptive_shell_test.dart \
+  test/app_shell/adaptive_shell_accessibility_test.dart \
+  --reporter expanded
+```
+
+- exit 0, **30 tests passed**
+- destination semantics는 label과 `Tab n of 4`, tap action, selected `Tristate`를 실제 native action에서 확인합니다.
+- Tab마다 `FocusManager.instance.primaryFocus` rect가 실제 server/destination/Return action rect와 겹치는지 확인하고 Enter·Space 활성화를 검증합니다.
+- focus ring 테스트는 key 존재만 보지 않고 실제 action rect 중첩, 2px 이상 border, 디자인 시스템 focus color를 확인합니다.
+- reflow 테스트는 light/dark, 320/390/768/1024/1440, 200% text scale, reduced motion에서 실제 rendered rect가 viewport 안에 있는지 확인합니다.
 
 ## Hermes 독립 검증
 
-| 명령 | 결과 |
-| --- | --- |
-| `fvm dart format --set-exit-if-changed .` | exit 0, 61 files unchanged |
-| `fvm flutter analyze apps/truedash` | exit 0, no issues |
-| `fvm flutter test apps/truedash` | exit 0, 34 tests passed |
-| `fvm flutter analyze packages/truedash_design_system` | exit 0, no issues |
-| `fvm flutter test packages/truedash_design_system` | exit 0, 27 tests passed |
-| `fvm dart test packages/truenas_api` | exit 0, 45 tests passed |
-| `git diff --check` before implementation commit | exit 0 |
+| 대상 | 명령 | 실제 결과 |
+| --- | --- | --- |
+| 앱 format | `cd apps/truedash && fvm dart format --output=none --set-exit-if-changed lib test` | exit 0, 22 files unchanged |
+| 앱 analyze | `cd apps/truedash && fvm flutter analyze` | exit 0, no issues |
+| 앱 전체 | `cd apps/truedash && fvm flutter test --reporter compact` | exit 0, **54 tests passed** |
+| 디자인 시스템 analyze | `cd packages/truedash_design_system && fvm flutter analyze` | exit 0, no issues |
+| 디자인 시스템 전체 | `cd packages/truedash_design_system && fvm flutter test --reporter compact` | exit 0, **27 tests passed** |
+| API analyze | `cd packages/truenas_api && fvm dart analyze` | exit 0; 기존 info diagnostics 4건, error/warning 0 |
+| API 전체 | `cd packages/truenas_api && fvm dart test --reporter compact` | exit 0, **45 tests passed** |
+| 외부 consumer | `cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test --reporter compact` | exit 0, no issues, **1 test passed** |
+| whitespace | `git diff --check` | exit 0 |
 
-Breakpoint widget tests cover 599/600/999/1000. Focused connection test coverage additionally checks successful safe seeding/shell transition, failure remains at the form, 320/390 plus 200% text reflow, and API-key sentinel non-rendering.
+Breakpoint widget tests는 599/600/999/1000을 포함합니다. connection tests는 성공한 safe metadata seeding/shell 전환, 실패 시 form 유지, API-key sentinel 비렌더링을 별도로 검증합니다.
 
-## Release build·서명 검증 및 rendered QA
-
-이 브랜치의 `apps/truedash`에는 Web과 macOS runner가 있습니다. 이전의 repo-root 실행 결과는 이 앱 디렉터리의 build 가능 여부를 나타내지 않으므로 아래 실제 앱 디렉터리 실행으로 대체합니다.
+## Release build·서명 검증
 
 | 명령 | 실제 결과 |
 | --- | --- |
 | `cd apps/truedash && fvm flutter build web --release` | exit 0 — `✓ Built build/web` |
-| `cd apps/truedash && fvm flutter build macos --release` | exit 0 — `✓ Built build/macos/Build/Products/Release/truedash.app (49.6MB)` |
-| `codesign --verify --deep --strict build/macos/Build/Products/Release/truedash.app` | exit 0 |
-| signed app entitlement inspect | `codesign -d --entitlements :-` output에 `com.apple.security.network.client`가 `<true/>`로 존재 |
-| plist parse | `/usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' macos/Runner/Release.entitlements` → `true`; `plutil -convert json -o -`도 해당 key를 `true`로 parse |
+| `cd apps/truedash && fvm flutter build macos --release` | exit 0 — `✓ Built .../truedash.app (49.7MB)` |
+| `codesign --verify --deep --strict --verbose=2 .../truedash.app` | exit 0 — valid on disk, satisfies Designated Requirement |
+| `codesign -d --entitlements :- .../truedash.app` | `com.apple.security.app-sandbox=true`, `com.apple.security.network.client=true` |
+| `macos/Runner/Release.entitlements` 직접 확인 | app sandbox와 network client만 선언 |
 
-`build/web`을 `python3 -m http.server 4173 --directory build/web`로 실제 static serving했고, 별도 Chrome CDP QA instance에서 production page를 열어 matrix 자동화를 시도했습니다. 320px light screenshot은 생성됐습니다. 그러나 harness는 기존 Chrome을 감지하지 못해 session 시작에 실패했고, CDP script는 응답 대기 timeout, 후속 isolated Chrome headless matrix는 첫 capture 뒤 `Trace/BPT trap: 5`로 중단됐습니다. 그러므로 390/768/1024/1440, dark, selected/long-profile, 200% text/reduced-motion의 완전한 browser matrix·console error·scrollWidth 결과를 이 문서는 주장하지 않습니다. 이 실패는 runner 부재가 아니라 QA automation runtime 문제이며, 다음 retry에서 별도 안정된 Chromium/CDP 환경으로 전체 matrix를 재실행해야 합니다.
+로컬 산출물은 ad-hoc signature(`TeamIdentifier=not set`)이며 배포용 Developer ID/App Store 서명 또는 notarization 증거가 아닙니다.
+
+## Production Web rendered QA
+
+검증 대상 구현의 실제 `AdaptiveShell`, 실제 `ServerProfile`, 실제 Riverpod controller를 저장소에 남기지 않는 QA entrypoint로 구성하고 `flutter build web --release`로 production bundle을 만든 뒤 localhost static server와 별도 임시 Chrome/CDP profile에서 검사했습니다. QA entrypoint·서버·Chrome profile은 검사 후 제거했습니다.
+
+| viewport/theme | 실제 결과 |
+| --- | --- |
+| 320×800 light/dark | compact `NavigationBar`; 네 destination 전체 표시; body text 정상 줄바꿈; `innerWidth == scrollWidth == 320` |
+| 390×800 light/dark | compact `NavigationBar`; 네 destination 전체 표시; `innerWidth == scrollWidth == 390` |
+| 768×800 dark | compact rail; label·icon·content overlap/clip 없음 |
+| 1024×800 dark | extended rail; label·icon·content overlap/clip 없음 |
+| 1440×900 light/dark | extended rail; content max-width와 중앙 정렬 유지; light에서 `innerWidth == scrollWidth == 1440` |
+
+추가 interaction capture:
+
+- 390×800 light에서 첫 Tab 후 실제 `Studio NAS` popup trigger 외곽에 focus ring이 렌더되고 잘리지 않았습니다.
+- 두 번째 Tab 후 실제 Home bottom-navigation action rect에 selected pill과 구분되는 focus ring이 렌더되고 잘리지 않았습니다.
+- CDP runtime 수집 결과 `Runtime.exceptionThrown=0`, browser error/warning log entry `0`입니다.
+
+육안/이미지 검토에서 missing icon/text, navigation overlap, horizontal overflow, clipping, blank frame, blocking contrast defect를 발견하지 못했습니다.
 
 ## 범위·보안 점검
 
-- 변경은 `apps/truedash`와 이 문서/README index로 한정하며 `packages/truenas_api`, `packages/truedash_design_system`, dependency/lockfile, platform TLS 코드에는 변경이 없습니다.
-- `git diff --check`로 whitespace 오류를 점검했습니다.
+- remediation 변경은 `apps/truedash`의 shell/profile 구현과 테스트, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
 - M1 profile/shell 파일은 persistence, discovery, secure storage, TLS trust mutation, credential persistence, reconnect coordinator, capability registry, operational data, ads/billing을 구현하지 않습니다.
-- 이 구현은 credential-backed live switching, real TrueNAS interoperability, 또는 TD-002 완료의 증거가 아닙니다.
+- 이 구현은 credential-backed live switching, real TrueNAS interoperability, Developer ID/notarized distribution, Android/iOS build, 또는 TD-002 완료의 증거가 아닙니다.
