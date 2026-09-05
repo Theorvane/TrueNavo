@@ -24,14 +24,17 @@ final class NormalizedAuthority {
         'Only https and wss are supported.',
       );
     }
-    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+    if (uri.userInfo.isNotEmpty ||
+        _hasExplicitUserInfoDelimiter(trimmed) ||
+        uri.hasQuery ||
+        uri.hasFragment) {
       throw const AuthorityValidationException(
         'Credentials, queries, and fragments are not allowed.',
       );
     }
-    if (!_isAscii(uri.host) || uri.host.contains('%')) {
+    if (!_isValidHost(uri)) {
       throw const AuthorityValidationException(
-        'Host names must use ASCII IDNA form.',
+        'The host is not a valid ASCII DNS name or IP address.',
       );
     }
 
@@ -82,8 +85,103 @@ final class NormalizedAuthority {
   @override
   int get hashCode => Object.hash(scheme, host, port);
 
+  static bool _hasExplicitUserInfoDelimiter(String input) {
+    final schemeEnd = input.indexOf('://');
+    if (schemeEnd < 0) return false;
+    final authorityStart = schemeEnd + 3;
+    var authorityEnd = input.length;
+    for (final delimiter in const ['/', '?', '#']) {
+      final index = input.indexOf(delimiter, authorityStart);
+      if (index >= 0 && index < authorityEnd) authorityEnd = index;
+    }
+    return input.substring(authorityStart, authorityEnd).contains('@');
+  }
+
   static bool _isAscii(String value) =>
       value.codeUnits.every((unit) => unit <= 0x7f);
+
+  static bool _isValidHost(Uri uri) {
+    final host = uri.host;
+    if (!_isAscii(host) || host.contains('%')) {
+      return false;
+    }
+    if (host.contains(':')) {
+      return _isBracketedIpv6(uri) && _isValidIpv6(host);
+    }
+    if (host.contains(RegExp(r'^[0-9.]+$'))) {
+      return _isValidIpv4(host);
+    }
+    return _isValidDnsName(host);
+  }
+
+  static bool _isBracketedIpv6(Uri uri) =>
+      uri.authority.startsWith('[') && uri.authority.contains(']');
+
+  static bool _isValidDnsName(String host) {
+    if (host.length > 253) {
+      return false;
+    }
+    return host.split('.').every(_isValidDnsLabel);
+  }
+
+  static bool _isValidDnsLabel(String label) {
+    if (label.length > 63 || !_dnsLabelExpression.hasMatch(label)) {
+      return false;
+    }
+    if (!label.toLowerCase().startsWith('xn--')) {
+      return true;
+    }
+
+    // Without UTS-46, do not try to decode ACE labels. Permit only the
+    // conventional delimiter-bearing ASCII form; unsupported but valid ACE
+    // labels fail closed rather than receiving a pretend Unicode conversion.
+    return _conservativeAceLabelExpression.hasMatch(label.toLowerCase());
+  }
+
+  static bool _isValidIpv4(String host) {
+    final parts = host.split('.');
+    return parts.length == 4 &&
+        parts.every((part) {
+          if (!RegExp(r'^(0|[1-9][0-9]{0,2})$').hasMatch(part)) {
+            return false;
+          }
+          return int.parse(part) <= 255;
+        });
+  }
+
+  static bool _isValidIpv6(String host) {
+    final compressionIndex = host.indexOf('::');
+    if (compressionIndex != host.lastIndexOf('::')) {
+      return false;
+    }
+    final hasCompression = compressionIndex >= 0;
+    final parts = host.split(':');
+    var groupCount = 0;
+    for (var index = 0; index < parts.length; index++) {
+      final part = parts[index];
+      if (part.isEmpty) {
+        continue;
+      }
+      if (part.contains('.')) {
+        if (index != parts.length - 1 || !_isValidIpv4(part)) {
+          return false;
+        }
+        groupCount += 2;
+      } else if (!RegExp(r'^[0-9a-fA-F]{1,4}$').hasMatch(part)) {
+        return false;
+      } else {
+        groupCount++;
+      }
+    }
+    return hasCompression ? groupCount < 8 : groupCount == 8;
+  }
+
+  static final RegExp _dnsLabelExpression = RegExp(
+    r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$',
+  );
+  static final RegExp _conservativeAceLabelExpression = RegExp(
+    r'^xn--[a-z0-9]+-[a-z0-9-]*[a-z0-9]$',
+  );
 
   static bool _hasExplicitZeroPort(Uri uri) {
     final authority = uri.authority;
@@ -135,13 +233,14 @@ final class PinRecord {
         digest is! String ||
         format != fingerprintFormatValue ||
         createdAt is! String ||
-        !createdAt.endsWith('Z')) {
+        !_canonicalUtcTimestampExpression.hasMatch(createdAt)) {
       throw const PinRecordFormatException(
         'The pin record values are invalid.',
       );
     }
     final parsedCreatedAt = DateTime.tryParse(createdAt);
-    if (parsedCreatedAt == null) {
+    if (parsedCreatedAt == null ||
+        parsedCreatedAt.toUtc().toIso8601String() != createdAt) {
       throw const PinRecordFormatException('The pin creation time is invalid.');
     }
     return PinRecord(leafDerSha256: digest, createdAt: parsedCreatedAt);
@@ -156,6 +255,9 @@ final class PinRecord {
     'createdAt',
   };
   static final RegExp _digestExpression = RegExp(r'^[0-9A-F]{64}$');
+  static final RegExp _canonicalUtcTimestampExpression = RegExp(
+    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$',
+  );
 
   int get version => currentVersion;
   final String leafDerSha256;

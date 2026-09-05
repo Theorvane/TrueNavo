@@ -43,6 +43,20 @@ void main() {
       expect(authority.pinKey, 'https://xn--bcher-kva.example:443');
     });
 
+    test('accepts valid IPv4 and bracketed IPv6 authorities', () {
+      final ipv4 = NormalizedAuthority.parse('https://192.0.2.10');
+      final ipv6Default = NormalizedAuthority.parse('https://[2001:db8::10]');
+      final ipv6Explicit = NormalizedAuthority.parse(
+        'https://[2001:db8::10]:8443',
+      );
+
+      expect(ipv4.pinKey, 'https://192.0.2.10:443');
+      expect(ipv6Default.pinKey, 'https://[2001:db8::10]:443');
+      expect(ipv6Explicit.pinKey, 'https://[2001:db8::10]:8443');
+      expect(ipv6Default, NormalizedAuthority.parse('https://[2001:DB8::10]'));
+      expect(ipv6Default, isNot(ipv6Explicit));
+    });
+
     test(
       'fails closed for non-ASCII hosts without a UTS-46 implementation',
       () {
@@ -68,6 +82,7 @@ void main() {
       'http://nas.example',
       'ws://nas.example',
       'https://user@nas.example',
+      'https://@nas.example',
       'https://nas.example?value=1',
       'https://nas.example#fragment',
       'https:///api/current',
@@ -77,6 +92,15 @@ void main() {
       'https://nas.example:65536',
       'https://nas.example:443:444',
       'https://[not-an-ipv6]',
+      'https://nas_example',
+      'https://nas..example',
+      'https://-nas.example',
+      'https://nas-.example',
+      'https://xn--.example',
+      'https://xn--a.example',
+      'https://xn---bad.example',
+      'https://${'a' * 64}.example',
+      'https://${List<String>.filled(128, 'a').join('.')}',
     ]) {
       test('rejects unsafe or ambiguous authority: $input', () {
         expect(
@@ -157,6 +181,30 @@ void main() {
         'leafDerSha256': digest,
         'fingerprintFormat': 'SHA-256/DER',
         'createdAt': 'not-a-date',
+      },
+      <String, Object>{
+        'version': 1,
+        'leafDerSha256': digest,
+        'fingerprintFormat': 'SHA-256/DER',
+        'createdAt': '2026-9-06T12:30:00.000Z',
+      },
+      <String, Object>{
+        'version': 1,
+        'leafDerSha256': digest,
+        'fingerprintFormat': 'SHA-256/DER',
+        'createdAt': '2026-09-06T12:30:00Z',
+      },
+      <String, Object>{
+        'version': 1,
+        'leafDerSha256': digest,
+        'fingerprintFormat': 'SHA-256/DER',
+        'createdAt': '2026-09-06T12:30:00.000+00:00',
+      },
+      <String, Object>{
+        'version': 1,
+        'leafDerSha256': digest,
+        'fingerprintFormat': 'SHA-256/DER',
+        'createdAt': '2026-02-30T12:30:00.000Z',
       },
       <String, Object>{
         'version': 1,
