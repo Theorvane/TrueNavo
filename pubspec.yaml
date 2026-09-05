@@ -1,0 +1,7 @@
+name: truedash_workspace
+publish_to: none
+environment:
+  sdk: ^3.13.0
+workspace:
+  - apps/truedash
+  - packages/truenas_api

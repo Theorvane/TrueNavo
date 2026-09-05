@@ -1,0 +1,253 @@
+import 'dart:convert';
+
+import 'package:test/test.dart';
+import 'package:truenas_api/truenas_api.dart';
+
+import '../support/in_memory_transport.dart';
+
+void main() {
+  test('sends caller ID and completes matching result', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final result = client.call('system.info', id: 'one');
+    expect(jsonDecode(transport.sentFrames.single)['id'], 'one');
+    transport.add('{"jsonrpc":"2.0","id":"one","result":{"version":"x"}}');
+    expect(await result, {'version': 'x'});
+    await client.close();
+  });
+
+  test(
+    'correlates out-of-order responses and ignores notification completion',
+    () async {
+      final transport = InMemoryTransport();
+      final client = JsonRpcClient(transport);
+      final first = client.call('a', id: 1);
+      final second = client.call('b', id: 2);
+      transport.add(
+        '{"jsonrpc":"2.0","method":"collection_update","params":{}}',
+      );
+      transport.add('{"jsonrpc":"2.0","id":2,"result":"second"}');
+      transport.add('{"jsonrpc":"2.0","id":1,"result":"first"}');
+      expect(await first, 'first');
+      expect(await second, 'second');
+      await client.close();
+    },
+  );
+
+  test('only valid request notifications are delivered', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final notifications = <Map<String, Object?>>[];
+    final subscription = client.notifications.listen(notifications.add);
+    final pending = client.call('a', id: 'pending');
+
+    transport.add('{"jsonrpc":"2.0","method":"collection_update","params":{}}');
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, hasLength(1));
+    transport.add('{"jsonrpc":"2.0","id":"pending","result":true}');
+    await pending;
+    await subscription.cancel();
+    await client.close();
+  });
+
+  for (final frame in [
+    '{"jsonrpc":"2.0","method":"collection_update"}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":{}}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":[]}',
+  ]) {
+    test('valid notification is delivered: $frame', () async {
+      final transport = InMemoryTransport();
+      final client = JsonRpcClient(transport);
+      final notifications = <Map<String, Object?>>[];
+      final subscription = client.notifications.listen(notifications.add);
+
+      transport.add(frame);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(notifications, hasLength(1));
+      await subscription.cancel();
+      await client.close();
+    });
+  }
+
+  for (final frame in [
+    '{"jsonrpc":"2.0","method":"collection_update","params":null}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":1}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":"bad"}',
+    '{"jsonrpc":"2.0","method":"collection_update","params":true}',
+  ]) {
+    test(
+      'invalid notification params are reported without settling pending: $frame',
+      () async {
+        final transport = InMemoryTransport();
+        final client = JsonRpcClient(transport);
+        final notifications = <Map<String, Object?>>[];
+        final subscription = client.notifications.listen(notifications.add);
+        final pending = client.call('a', id: 'pending');
+        var pendingSettled = false;
+        pending.then<void>(
+          (_) => pendingSettled = true,
+          onError: (_, _) => pendingSettled = true,
+        );
+        final protocolError = client.protocolErrors.first;
+
+        transport.add(frame);
+
+        await expectLater(
+          protocolError.timeout(const Duration(milliseconds: 100)),
+          completion(isA<JsonRpcProtocolException>()),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(notifications, isEmpty);
+        expect(pendingSettled, isFalse);
+        transport.add('{"jsonrpc":"2.0","id":"pending","result":true}');
+        expect(await pending, isTrue);
+        await subscription.cancel();
+        await client.close();
+      },
+    );
+  }
+
+  for (final frame in [
+    '{"jsonrpc":"2.0","result":{}}',
+    '{"jsonrpc":"2.0","error":{"code":-1,"message":"bad"}}',
+    '{"jsonrpc":"2.0","method":""}',
+    '{"jsonrpc":"2.0","method":42}',
+    '{"jsonrpc":"1.0","method":"collection_update"}',
+    '{"jsonrpc":"2.0","method":"collection_update","result":{}}',
+  ]) {
+    test(
+      'invalid id-less object reports an error without settling pending: $frame',
+      () async {
+        final transport = InMemoryTransport();
+        final client = JsonRpcClient(transport);
+        final notifications = <Map<String, Object?>>[];
+        final subscription = client.notifications.listen(notifications.add);
+        final pending = client.call('a', id: 'pending');
+        final protocolError = client.protocolErrors.first;
+
+        transport.add(frame);
+
+        await expectLater(protocolError, completes);
+        await Future<void>.delayed(Duration.zero);
+        expect(notifications, isEmpty);
+        transport.add('{"jsonrpc":"2.0","id":"pending","result":true}');
+        expect(await pending, isTrue);
+        await subscription.cancel();
+        await client.close();
+      },
+    );
+  }
+
+  test('preserves remote errors', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final result = client.call('a', id: 'x');
+    transport.add(
+      '{"jsonrpc":"2.0","id":"x","error":{"code":-32000,"message":"denied","data":{"a":1}}}',
+    );
+    await expectLater(
+      result,
+      throwsA(
+        isA<JsonRpcRemoteException>().having((e) => e.code, 'code', -32000),
+      ),
+    );
+    await client.close();
+  });
+
+  test('protocol violations are observable and settle pending calls', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final errors = <JsonRpcProtocolException>[];
+    final subscription = client.protocolErrors.listen(errors.add);
+    final result = client.call('a', id: 'x');
+    transport.add('{bad');
+    await expectLater(result, throwsA(isA<JsonRpcProtocolException>()));
+    await Future<void>.delayed(Duration.zero);
+    expect(errors, isNotEmpty);
+    await subscription.cancel();
+    await client.close();
+  });
+
+  test('an invalid error object settles its matching pending call', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final result = client.call('a', id: 'x');
+    transport.add('{"jsonrpc":"2.0","id":"x","error":{"code":"bad"}}');
+    await expectLater(
+      result.timeout(const Duration(milliseconds: 100)),
+      throwsA(isA<JsonRpcProtocolException>()),
+    );
+    await client.close();
+  });
+
+  test(
+    'an invalid response ID settles pending calls with a protocol error',
+    () async {
+      final transport = InMemoryTransport();
+      final client = JsonRpcClient(transport);
+      final result = client.call('a', id: 'x');
+      transport.add('{"jsonrpc":"2.0","id":null,"result":true}');
+      await expectLater(result, throwsA(isA<JsonRpcProtocolException>()));
+      await client.close();
+    },
+  );
+
+  test('unknown or duplicate IDs are protocol errors', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final result = client.call('a', id: 'x');
+    transport.add('{"jsonrpc":"2.0","id":"x","result":true}');
+    await result;
+    final error = client.protocolErrors.first;
+    transport.add('{"jsonrpc":"2.0","id":"x","result":true}');
+    await expectLater(error, completes);
+    await client.close();
+  });
+
+  for (final response in [
+    '{"jsonrpc":"1.0","id":"x","result":true}',
+    '{"jsonrpc":"2.0","id":"x","result":true,"error":{}}',
+    '{"jsonrpc":"2.0","id":"x"}',
+    '{"jsonrpc":"2.0","id":"unknown","result":true}',
+  ]) {
+    test('settles pending calls for a protocol violation', () async {
+      final transport = InMemoryTransport();
+      final client = JsonRpcClient(transport);
+      final result = client.call('a', id: 'x');
+      transport.add(response);
+      await expectLater(result, throwsA(isA<JsonRpcProtocolException>()));
+      await client.close();
+    });
+  }
+
+  test('closing fails pending operations and is idempotent', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final result = client.call('a', id: 'x');
+    final settled = expectLater(
+      result,
+      throwsA(isA<RpcTransportClosedException>()),
+    );
+    await client.close();
+    await settled;
+    await client.close();
+    expect(transport.closeCalls, 1);
+  });
+
+  test('a socket close fails every pending operation', () async {
+    final transport = InMemoryTransport();
+    final client = JsonRpcClient(transport);
+    final first = expectLater(
+      client.call('a', id: 'first'),
+      throwsA(isA<RpcTransportClosedException>()),
+    );
+    final second = expectLater(
+      client.call('b', id: 'second'),
+      throwsA(isA<RpcTransportClosedException>()),
+    );
+    await transport.finish();
+    await Future.wait([first, second]);
+    await client.close();
+  });
+}

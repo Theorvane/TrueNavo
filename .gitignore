@@ -27,3 +27,6 @@ coverage/
 *.log
 .tmp/
 tmp/
+
+# FVM version cache
+.fvm/
