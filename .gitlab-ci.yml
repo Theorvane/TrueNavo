@@ -7,49 +7,45 @@ workflow:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH =~ /^feat\//'
 
+variables:
+  FLUTTER_VERSION: "3.47.0"
+  FLUTTER_HOME: "$CI_PROJECT_DIR/.flutter-sdk"
+
 stages:
   - verify
-  - build
 
 .flutter_setup: &flutter_setup
-  - fvm install
-  - fvm flutter --version
+  - rm -rf "$FLUTTER_HOME"
+  - git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$FLUTTER_HOME"
+  - export PATH="$FLUTTER_HOME/bin:$PATH"
+  - flutter config --no-analytics
+  - flutter --version
 
-portable_quality:
+portable_quality_and_web:
   stage: verify
   tags:
     - shared-build
   before_script:
     - *flutter_setup
-    - (cd packages/truenas_api && fvm dart pub get)
-    - (cd packages/truedash_design_system && fvm flutter pub get)
-    - (cd examples/design_system_consumer && fvm flutter pub get)
-    - (cd apps/truedash && fvm flutter pub get)
+    - (cd packages/truenas_api && dart pub get)
+    - (cd packages/truedash_design_system && flutter pub get)
+    - (cd examples/design_system_consumer && flutter pub get)
+    - (cd apps/truedash && flutter pub get)
   script:
-    - fvm dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
-    - (cd packages/truenas_api && fvm dart analyze && fvm dart test)
-    - (cd packages/truedash_design_system && fvm flutter analyze && fvm flutter test)
-    - (cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test)
-    - (cd apps/truedash && fvm flutter analyze && fvm flutter test)
-
-web_release:
-  stage: build
-  tags:
-    - shared-build
-  before_script:
-    - *flutter_setup
-    - (cd apps/truedash && fvm flutter pub get)
-  script:
-    - (cd apps/truedash && fvm flutter build web --release)
+    - dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
+    - (cd packages/truenas_api && dart analyze && dart test)
+    - (cd packages/truedash_design_system && flutter analyze && flutter test)
+    - (cd examples/design_system_consumer && flutter analyze && flutter test)
+    - (cd apps/truedash && flutter analyze && flutter test && flutter build web --release)
 
 macos_release:
-  stage: build
+  stage: verify
   tags:
     - shared-macos
   before_script:
     - *flutter_setup
-    - (cd apps/truedash && fvm flutter pub get)
+    - (cd apps/truedash && flutter pub get)
   script:
-    - (cd apps/truedash && fvm flutter build macos --release)
+    - (cd apps/truedash && flutter build macos --release)
     - codesign --verify --deep --strict apps/truedash/build/macos/Build/Products/Release/truedash.app
     - test "$(codesign -d --entitlements :- apps/truedash/build/macos/Build/Products/Release/truedash.app 2>&1 | plutil -extract com.apple.security.network.client raw -)" = true
