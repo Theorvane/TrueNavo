@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:truedash_design_system/truedash_design_system.dart';
 
 import 'connection_controller.dart';
 import 'connection_state.dart';
@@ -14,6 +15,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
   final _url = TextEditingController();
   final _apiKey = TextEditingController();
   bool _showKey = false;
+
   @override
   void dispose() {
     _url.dispose();
@@ -27,185 +29,220 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
     final busy = state is ConnectionInProgress;
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Card(
-                elevation: 0,
-                color: const Color(0xff151c31),
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Row(
-                        children: [
-                          CircleAvatar(child: Icon(Icons.storage_rounded)),
-                          SizedBox(width: 12),
-                          Text(
-                            'TrueDash',
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w700,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final expanded = constraints.maxWidth >= 1000;
+            final pagePadding = expanded
+                ? TdSpacing.pageDesktop
+                : TdSpacing.pageMobile;
+            final form = _form(
+              context,
+              state,
+              busy,
+              showIntroduction: !expanded,
+            );
+            return SingleChildScrollView(
+              key: const Key('connection-scroll-view'),
+              padding: EdgeInsets.all(pagePadding),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1120),
+                  child: expanded
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: _IntroPane(
+                                key: const Key('connection-intro-pane'),
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Unofficial · planning-era M0 connection check',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      TextField(
-                        key: const Key('server-url-field'),
-                        controller: _url,
-                        keyboardType: TextInputType.url,
-                        enabled: !busy,
-                        decoration: const InputDecoration(
-                          labelText: 'Server URL',
-                          hintText: 'https://nas.example:8443',
-                          prefixIcon: Icon(Icons.link),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        key: const Key('api-key-field'),
-                        controller: _apiKey,
-                        obscureText: !_showKey,
-                        enableSuggestions: false,
-                        autocorrect: false,
-                        enabled: !busy,
-                        decoration: InputDecoration(
-                          labelText: 'API key',
-                          prefixIcon: const Icon(Icons.key_outlined),
-                          suffixIcon: IconButton(
-                            tooltip: _showKey ? 'Hide API key' : 'Show API key',
-                            onPressed: () =>
-                                setState(() => _showKey = !_showKey),
-                            icon: Icon(
-                              _showKey
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          key: const Key('connect-button'),
-                          onPressed: busy
-                              ? null
-                              : () => ref
-                                    .read(connectionControllerProvider.notifier)
-                                    .connect(
-                                      serverInput: _url.text,
-                                      apiKey: _apiKey.text,
-                                    ),
-                          icon: busy
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.lock_open_rounded),
-                          label: Text(
-                            busy ? 'Connecting securely…' : 'Connect',
-                          ),
-                        ),
-                      ),
-                      if (state case ConnectionFailed(:final message)) ...[
-                        const SizedBox(height: 20),
-                        _MessageCard(
-                          icon: Icons.error_outline,
-                          message: message,
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ],
-                      if (state case ConnectionSucceeded(:final summary)) ...[
-                        const SizedBox(height: 20),
-                        _SummaryCard(
-                          rows: {
-                            'Original host': summary.originalHostInput,
-                            'Secure endpoint': summary.endpointUri.toString(),
-                            'Identity': summary.identity,
-                            'Version': summary.version,
-                            'Methods': '${summary.availableMethodNames.length}',
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
+                            const SizedBox(width: TdSpacing.sectionDesktop),
+                            Expanded(child: form),
+                          ],
+                        )
+                      : form,
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
   }
-}
 
-class _MessageCard extends StatelessWidget {
-  const _MessageCard({
-    required this.icon,
-    required this.message,
-    required this.color,
-  });
-  final IconData icon;
-  final String message;
-  final Color color;
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: .12),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: color),
-        const SizedBox(width: 12),
-        Expanded(child: Text(message)),
-      ],
-    ),
-  );
-}
-
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.rows});
-  final Map<String, String> rows;
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: const Color(0xff203557),
-      borderRadius: BorderRadius.circular(12),
-    ),
+  Widget _form(
+    BuildContext context,
+    ConnectionState state,
+    bool busy, {
+    required bool showIntroduction,
+  }) => TdPanel(
+    key: const Key('connection-form-pane'),
+    padding: const EdgeInsets.all(TdSpacing.group),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Connected', style: TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 10),
-        for (final row in rows.entries)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Text(
-              '${row.key}: ${row.value}',
-              overflow: TextOverflow.ellipsis,
-            ),
+        if (showIntroduction) const _MobileHeader(),
+        TdTextField(
+          label: 'Server URL',
+          fieldKey: const Key('server-url-field'),
+          controller: _url,
+          hintText: 'https://nas.example:8443',
+          prefixIcon: Icons.link,
+          keyboardType: TextInputType.url,
+          enabled: !busy,
+        ),
+        const SizedBox(height: TdSpacing.component),
+        TdTextField(
+          label: 'API key',
+          fieldKey: const Key('api-key-field'),
+          controller: _apiKey,
+          prefixIcon: Icons.key_outlined,
+          enabled: !busy,
+          secret: true,
+          obscureText: !_showKey,
+          onToggleSecret: () => setState(() => _showKey = !_showKey),
+        ),
+        const SizedBox(height: TdSpacing.group),
+        TdButton(
+          key: const Key('connect-button'),
+          label: busy ? 'Connecting securely…' : 'Connect',
+          icon: Icons.lock_open_rounded,
+          isLoading: busy,
+          expand: true,
+          onPressed: busy
+              ? null
+              : () => ref
+                    .read(connectionControllerProvider.notifier)
+                    .connect(serverInput: _url.text, apiKey: _apiKey.text),
+        ),
+        if (state case ConnectionFailed(:final message)) ...[
+          const SizedBox(height: TdSpacing.group),
+          TdStateView(
+            kind: TdStateKind.error,
+            title: 'Connection could not be completed',
+            description: message,
+            compact: true,
           ),
+        ],
+        if (state case ConnectionSucceeded(:final summary)) ...[
+          const SizedBox(height: TdSpacing.group),
+          _ConnectionSummary(
+            rows: {
+              'Original host': summary.originalHostInput,
+              'Secure endpoint': summary.endpointUri.toString(),
+              'Identity': summary.identity,
+              'Version': summary.version,
+              'Methods': '${summary.availableMethodNames.length}',
+            },
+          ),
+        ],
       ],
     ),
   );
+}
+
+class _IntroPane extends StatelessWidget {
+  const _IntroPane({super.key});
+  @override
+  Widget build(BuildContext context) =>
+      TdPanel(child: const _ConnectionIntroduction());
+}
+
+class _MobileHeader extends StatelessWidget {
+  const _MobileHeader();
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.only(bottom: TdSpacing.group),
+    child: _ConnectionIntroduction(),
+  );
+}
+
+class _ConnectionIntroduction extends StatelessWidget {
+  const _ConnectionIntroduction();
+  @override
+  Widget build(BuildContext context) {
+    final td = context.tdTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: TdSpacing.related,
+          runSpacing: TdSpacing.inline,
+          children: [
+            ExcludeSemantics(
+              child: Icon(
+                Icons.storage_rounded,
+                color: td.actionPrimary,
+                size: TdSizing.icon,
+              ),
+            ),
+            Text(
+              'TrueDash',
+              style: TdTypography.titleLarge.copyWith(color: td.textPrimary),
+            ),
+          ],
+        ),
+        const SizedBox(height: TdSpacing.related),
+        Text(
+          'Unofficial TrueNAS client',
+          style: TdTypography.titleSmall.copyWith(color: td.textPrimary),
+        ),
+        const SizedBox(height: TdSpacing.inline),
+        Text(
+          'Connect directly to a secure HTTPS or WSS endpoint. Your API key is used only for this connection attempt and is never stored or shown in the result.',
+          style: TdTypography.bodyLarge.copyWith(color: td.textSecondary),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConnectionSummary extends StatelessWidget {
+  const _ConnectionSummary({required this.rows});
+  final Map<String, String> rows;
+  @override
+  Widget build(BuildContext context) {
+    final td = context.tdTheme;
+    return Semantics(
+      liveRegion: true,
+      child: TdPanel(
+        key: const Key('connection-summary'),
+        title: 'Connection summary',
+        action: const TdStatusBadge(
+          status: TdStatus.success,
+          label: 'Connected',
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final row in rows.entries)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: TdSpacing.inlineTight,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      row.key,
+                      style: TdTypography.metadata.copyWith(
+                        color: td.textMuted,
+                      ),
+                    ),
+                    Text(
+                      row.value,
+                      style: TdTypography.monoBody.copyWith(
+                        color: td.textPrimary,
+                      ),
+                      softWrap: true,
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

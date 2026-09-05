@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:truedash_design_system/truedash_design_system.dart';
 
 import 'features/connection/connection_screen.dart';
 
@@ -9,13 +10,24 @@ class TrueDashApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: 'TrueDash',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xff3d6bea),
-        brightness: Brightness.dark,
-      ),
-      scaffoldBackgroundColor: const Color(0xff0c1020),
+    theme: TrueDashTheme.light(),
+    darkTheme: TrueDashTheme.dark(),
+    themeMode: ThemeMode.system,
+    builder: (context, child) => LayoutBuilder(
+      builder: (context, constraints) {
+        final density = TrueDashDensity.resolve(constraints.maxWidth);
+        final highContrast = MediaQuery.highContrastOf(context);
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return Theme(
+          data: isDark
+              ? TrueDashTheme.dark(density: density, highContrast: highContrast)
+              : TrueDashTheme.light(
+                  density: density,
+                  highContrast: highContrast,
+                ),
+          child: child!,
+        );
+      },
     ),
     home: const ConnectionScreen(),
   );

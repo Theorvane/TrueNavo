@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash/features/connection/connection_controller.dart';
 import 'package:truedash/truedash_app.dart';
+import 'package:truedash_design_system/truedash_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
 const sentinel = 'test-api-key';
@@ -22,10 +24,7 @@ void main() {
         ),
       );
       expect(find.text('TrueDash'), findsOneWidget);
-      expect(
-        find.text('Unofficial · planning-era M0 connection check'),
-        findsOneWidget,
-      );
+      expect(find.text('Unofficial TrueNAS client'), findsOneWidget);
       await tester.enterText(
         find.byKey(const Key('server-url-field')),
         'https://nas.example',
@@ -41,14 +40,18 @@ void main() {
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
       expect(find.text('Connected'), findsOneWidget);
-      expect(find.text('Original host: https://nas.example'), findsOneWidget);
+      expect(find.text('Original host'), findsOneWidget);
       expect(
-        find.text('Secure endpoint: wss://nas.example/api/current'),
+        find.descendant(
+          of: find.byKey(const Key('connection-summary')),
+          matching: find.text('https://nas.example'),
+        ),
         findsOneWidget,
       );
-      expect(find.text('Identity: admin'), findsOneWidget);
-      expect(find.text('Version: 25.10'), findsOneWidget);
-      expect(find.text('Methods: 2'), findsOneWidget);
+      expect(find.text('wss://nas.example/api/current'), findsOneWidget);
+      expect(find.text('admin'), findsOneWidget);
+      expect(find.text('25.10'), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
       expect(_visibleTextContains(sentinel), findsNothing);
     },
   );
@@ -96,13 +99,67 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(
       tester
-          .widget<FilledButton>(find.byKey(const Key('connect-button')))
+          .widget<TdButton>(find.byKey(const Key('connect-button')))
           .onPressed,
       isNull,
     );
     repository.complete();
     await tester.pumpAndSettle();
   });
+
+  for (final width in [320.0, 390.0]) {
+    testWidgets(
+      'success summary at ${width.toInt()}px and 200% text scale reflows without overflow',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        tester.binding.platformDispatcher.textScaleFactorTestValue = 2;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(
+          tester.binding.platformDispatcher.clearTextScaleFactorTestValue,
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sessionRepositoryProvider.overrideWithValue(
+                _LongSuccessRepository(),
+              ),
+            ],
+            child: const TrueDashApp(),
+          ),
+        );
+        await tester.enterText(
+          find.byKey(const Key('server-url-field')),
+          'https://nas.example',
+        );
+        await tester.enterText(
+          find.byKey(const Key('api-key-field')),
+          sentinel,
+        );
+        await tester.scrollUntilVisible(
+          find.byKey(const Key('connect-button')),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.tap(find.byKey(const Key('connect-button')));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Connection summary'), findsOneWidget);
+        expect(find.text('Connected'), findsOneWidget);
+        final title = tester.getTopLeft(find.text('Connection summary'));
+        final action = tester.getTopLeft(find.text('Connected'));
+        expect(action.dy, greaterThan(title.dy));
+        final endpoint = tester.renderObject<RenderParagraph>(
+          find.text(
+            'wss://nas.example/api/current/with/a/long/inspectable/path',
+          ),
+        );
+        expect(endpoint.size.height, greaterThan(40));
+      },
+    );
+  }
 
   for (final failure in <_FailureCase>[
     _FailureCase(
@@ -221,6 +278,25 @@ final class _SuccessRepository implements SessionRepository {
     endpointUri: Uri.parse('wss://nas.example/api/current'),
     identity: 'admin',
     version: '25.10',
+    availableMethodNames: const {'a', 'b'},
+  );
+}
+
+final class _LongSuccessRepository implements SessionRepository {
+  @override
+  Future<void> close() async {}
+
+  @override
+  Future<ServerSummary> connect({
+    required String serverInput,
+    required String apiKey,
+  }) async => ServerSummary(
+    originalHostInput: serverInput,
+    endpointUri: Uri.parse(
+      'wss://nas.example/api/current/with/a/long/inspectable/path',
+    ),
+    identity: 'administrator with a long readable identity',
+    version: '25.10.0-with-an-inspectable-build-metadata-value',
     availableMethodNames: const {'a', 'b'},
   );
 }

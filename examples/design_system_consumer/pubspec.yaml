@@ -1,21 +1,15 @@
-name: truedash
-description: An unofficial planning-era TrueNAS connection client.
+name: design_system_consumer
+description: Compile-only external-consumer fixture for the TrueDash design system.
 publish_to: none
-version: 0.1.0+1
 environment:
   sdk: ^3.13.0
 resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: '>=3.0.3 <4.0.0'
-  truenas_api:
-    path: ../../packages/truenas_api
   truedash_design_system:
     path: ../../packages/truedash_design_system
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: '>=5.0.0 <7.0.0'
-flutter:
-  uses-material-design: true
