@@ -118,7 +118,7 @@ Light는 A안의 calm operational surface를 사용한다. 카드 그림자보�
 
 ### 5.3 상태 규칙
 
-`healthy`는 목록 기본 행에서 별도 녹색 배경을 사용하지 않는다. 전체 시스템 health, 완료된 복구 작업, 성공 confirmation처럼 의미가 필요한 경우에만 success를 사용한다. Warning과 critical은 tint surface, 아이콘, 제목, 설명을 함께 제공한다. Stale 데이터는 warning이 아니라 `textMuted`와 `stale` 라벨로 표현하고, 실제 위험 상태와 구분한다.
+`healthy`는 목록 기본 행에서 별도 녹색 배경을 사용하지 않는다. 전체 시스템 health, 완료된 복구 작업, 성공 confirmation처럼 의미가 필요한 경우에만 success를 사용한다. Warning과 critical은 tint surface, 아이콘, 제목, 설명을 함께 제공한다. Stale 데이터는 warning이 아니라 전용 `statusStaleForeground`/`statusStaleSurface`와 `stale` 라벨로 표현하고, 실제 위험 상태와 구분한다. Badge의 실제 합성 foreground/background 대비는 label 크기에서 WCAG AA 4.5:1 이상이어야 한다.
 
 ## 6. 타이포그래피
 
@@ -239,7 +239,9 @@ Breakpoint 전환은 OS가 아니라 실제 layout width로 결정한다. 화면
 
 ### 11.1 `TdButton`
 
-`primary`, `secondary`, `ghost`, `danger` variant와 `comfortable`, `compact` size를 제공한다. Loading 상태는 label을 유지하고 진행 indicator를 추가하며, 중복 실행을 막는다. Danger는 일반 primary와 다른 semantic token과 confirmation flow를 요구한다.
+`primary`, `secondary`, `ghost`, `danger` variant와 `comfortable`, `compact` size를 제공한다. Loading 상태는 label을 유지하고 진행 indicator를 추가하며, 중복 실행을 막되 disabled 색으로 보이지 않는다. Disabled는 `actionDisabled`, `onActionDisabled`, `borderDisabled` semantic roles로 명확히 조용하게 표시한다. Hover와 pressed는 기본 foreground/background를 대체하지 않는, solid와 surface를 구분한 `actionHoverOnSolid`/`actionPressedOnSolid` 및 `actionHoverOnSurface`/`actionPressedOnSurface` state layer로 표시한다. Dark surface에는 밝은 state layer를 사용해 canvas와 panel 모두에서 변화를 보장한다. keyboard focus는 solid/surface별 `actionFocusOnSolid`/`actionFocusOnSurface` 2px ring으로 표시한다. Danger는 일반 primary와 다른 semantic token과 confirmation flow를 요구한다.
+
+상호작용 회귀 계약은 실제 배경에 alpha 합성한 색으로 검증한다. Light/Dark의 모든 button variant는 hover에서 base 대비 최소 `1.10:1` 및 DeltaE76 `5`, pressed에서 최소 `1.20:1` 및 DeltaE76 `10`을 만족하며 pressed는 hover보다 약하지 않다. Ghost는 canvas와 panel 모두에서 검증한다. Focus ring은 각 variant의 인접한 rendered base와 최소 `3:1`, 같은 border pixel의 unfocused treatment와도 최소 `3:1`이어야 한다. 일반 border가 불투명하면 focus border와 그 normal border를 비교하고, ghost처럼 border가 투명하면 그 pixel의 underlying background를 unfocused treatment로 비교한다. 이 수치는 text 대비가 아닌 비텍스트 상호작용 feedback의 최소선이다.
 
 ### 11.2 `TdTextField`
 
@@ -355,6 +357,7 @@ Foundation token은 값 snapshot보다 관계를 검증한다. 예를 들어 spa
 컴포넌트 테스트는 다음 행동 계약을 검증한다.
 
 - Button loading 중 중복 action이 실행되지 않음
+- Button interaction regression: Flutter `3.47.0`에서 Light/Dark × primary/secondary/ghost/danger의 10개 composited case(ghost의 canvas·panel 각각 포함)가 hover `>=1.10:1`/DeltaE76 `>=5`, pressed `>=1.20:1`/DeltaE76 `>=10`, pressed-not-weaker-than-hover, 2px focus `>=3:1`을 검증함
 - Field label과 error semantics가 존재함
 - StatusBadge가 아이콘과 label을 함께 제공함
 - MetricCard의 screen-reader 읽기 순서가 유지됨

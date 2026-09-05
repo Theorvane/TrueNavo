@@ -63,44 +63,50 @@ Pretendard’s release archive does not place its license beside the variable fi
 - Create: `packages/truedash_design_system/pubspec.yaml`
 - Create: `packages/truedash_design_system/analysis_options.yaml`
 - Create: `packages/truedash_design_system/lib/truedash_design_system.dart`
-- Create: `packages/truedash_design_system/test/package_boundary_test.dart`
+- Create: `examples/design_system_consumer/`
 
-**Step 1: Write the failing boundary test**
+**Step 1: Add the external-consumer fixture**
 
-Create a package test that reads its own `pubspec.yaml` and `lib/` sources. Assert that the pubspec contains Flutter but not `truenas_api`, `flutter_riverpod`, or an HTTP/font-downloader package. Assert that no source imports those packages.
+Create a non-published workspace fixture that declares only Flutter and
+`truedash_design_system` as runtime dependencies. Its widget test must import
+the public barrel and compile representative themes/extensions, density,
+foundations, and every component. Do not inspect production source text.
 
 ```dart
-test('package remains presentation-only', () {
-  expect(pubspec, contains('flutter:'));
-  expect(pubspec, isNot(contains('truenas_api:')));
-  expect(allLibrarySource, isNot(contains('package:truenas_api/')));
-  expect(allLibrarySource, isNot(contains('package:flutter_riverpod/')));
-});
+dependencies:
+  flutter:
+    sdk: flutter
+  truedash_design_system:
+    path: ../../packages/truedash_design_system
 ```
 
-**Step 2: Run the test and verify RED**
+**Step 2: Run the fixture and verify RED**
 
 Run from repository root:
 
 ```bash
-fvm flutter test packages/truedash_design_system/test/package_boundary_test.dart
+cd examples/design_system_consumer && fvm flutter pub get && fvm flutter analyze && fvm flutter test
 ```
 
-Expected: FAIL because the package and test target are not registered yet.
+Expected: FAIL before the public package API is available to the fixture.
 
-**Step 3: Add the minimal package**
+**Step 3: Add the minimal package and register the fixture**
 
-Add `packages/truedash_design_system` to the root workspace. The package uses `resolution: workspace`, `flutter` as its only runtime dependency, and `flutter_test` plus `flutter_lints` as dev dependencies. Export no placeholder widget; export files only as later tasks add them.
+Add `packages/truedash_design_system` and the non-published consumer fixture to
+the root workspace. The package uses `resolution: workspace`, `flutter` as its
+only runtime dependency, and `flutter_test` plus `flutter_lints` as dev
+dependencies. Export no placeholder widget; export files only as later tasks
+add them.
 
 **Step 4: Resolve and verify GREEN**
 
 ```bash
 fvm flutter pub get
-fvm flutter test packages/truedash_design_system/test/package_boundary_test.dart
-fvm flutter analyze packages/truedash_design_system
+cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test
 ```
 
-Expected: dependency resolution succeeds, one boundary test passes, analyze reports no issues.
+Expected: dependency resolution succeeds; the fixture's analyzer and executable
+test pass using only its declared runtime dependencies.
 
 **Step 5: Checkpoint**
 
@@ -132,11 +138,23 @@ git push
 Test relationships rather than serializing every constant. Required assertions include:
 
 ```dart
-expect(TdSpacing.scale, orderedEquals([4, 8, 12, 16, 20, 24, 32, 40, 48, 64]));
+expect(TdSpacing.scale, isNotEmpty);
+expect(TdSpacing.scale.every((value) => value.isFinite && value > 0), isTrue);
+for (var index = 1; index < TdSpacing.scale.length; index++) {
+  expect(TdSpacing.scale[index], greaterThan(TdSpacing.scale[index - 1]));
+}
+expect(TdSpacing.inlineTight, lessThan(TdSpacing.inline));
+expect(TdSpacing.inline, lessThan(TdSpacing.related));
+expect(TdSpacing.related, lessThan(TdSpacing.component));
+expect(TdSpacing.component, lessThan(TdSpacing.group));
+expect(TdSpacing.pageMobile, lessThan(TdSpacing.pageTablet));
+expect(TdSpacing.pageTablet, lessThan(TdSpacing.pageDesktop));
 expect(TdSizing.minimumTouchTarget, greaterThanOrEqualTo(44));
 expect(TdTypography.body.fontSize, greaterThanOrEqualTo(12));
 expect(TdRadius.control, lessThanOrEqualTo(TdRadius.dialog));
 ```
+
+Do not assert the complete spacing list, its exact length, or a fixed full token inventory.
 
 Use table-driven boundary cases:
 

@@ -4,4 +4,6 @@ environment:
   sdk: ^3.13.0
 workspace:
   - apps/truedash
+  - examples/design_system_consumer
   - packages/truenas_api
+  - packages/truedash_design_system

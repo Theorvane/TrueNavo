@@ -1,0 +1,3 @@
+# Preserve pinned upstream font license text byte-for-byte.
+packages/truedash_design_system/assets/fonts/PRETENDARD_LICENSE.txt whitespace=-blank-at-eol
+packages/truedash_design_system/assets/fonts/JETBRAINS_MONO_OFL.txt whitespace=-blank-at-eol
