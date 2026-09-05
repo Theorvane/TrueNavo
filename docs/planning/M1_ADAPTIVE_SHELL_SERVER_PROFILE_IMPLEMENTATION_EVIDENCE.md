@@ -1,6 +1,6 @@
 # M1 적응형 셸·세션 메모리 서버 프로필 구현 증적
 
-- 검증 대상 구현 커밋: `ad7f2805812e9bfdaa93db8afd1e224d06495734`
+- 검증 대상 기능·CI 커밋: `8d0536f3c4d6aab14179c31e09a15661aeaec7e0`
 - 브랜치: `feat/m1-adaptive-shell-server-profile`
 - target 기준: `main`의 `3ae642a6165c126623e6dd164de640c429ba26b3`
 - 범위: 앱 내부 적응형 탐색 셸과 프로세스 메모리 `ServerProfile` catalog. TD-002는 완료되지 않았습니다.
@@ -9,7 +9,7 @@
 
 - 실제 사용 가능 폭 기준으로 `<600`은 native `NavigationBar`, `600–999`는 native 72px `NavigationRail`, `>=1000`은 native extended `NavigationRail`을 사용합니다.
 - 고정 목적지는 Home, Alerts, Manage, Jobs뿐입니다. 각 목적지는 서로 다른 scope 문구와 공통 후속-slice 상태를 별도로 표시하며 dashboard/alerts/jobs data·차트·metric·명령을 만들지 않습니다.
-- keyboard traversal은 server catalog trigger → Home → Alerts → Manage → Jobs → Return action 순서입니다. Return action은 profile이 없는 shell 상태에서 connection 화면으로 돌아가기 위해 표시됩니다.
+- keyboard traversal은 server catalog trigger → Home → Alerts → Manage → Jobs → Return action 순서입니다. Return action은 profile이 없는 shell 상태에서 connection 화면으로 돌아가기 위해 표시되며, 연결 성공 시 중첩된 connection route를 자동으로 닫고 Home과 선택 서버를 표시합니다.
 - native navigation action과 native server popup trigger가 primary focus를 가질 때 2px focus ring을 실제 action rect에 렌더합니다. native selection, semantics, Enter/Space 활성화, popup focus restoration은 유지합니다.
 - 각 navigation action, server trigger, popup item, Return action은 최소 `44×44` 조작 영역을 유지합니다.
 - `ServerProfile`은 opaque id, display name, original host input, normalized endpoint, last-known version의 다섯 metadata만 가집니다. catalog는 Riverpod process memory 상태만 사용합니다.
@@ -23,6 +23,7 @@
 
 - 서로 다른 endpoint가 같은 suggested ID를 사용할 때 IDs가 `[one, two, one]`이 되어 catalog identity가 모호해졌습니다.
 - 강화된 accessibility suite에서 compact navigation focus 순서, 실제 destination action, 개별 `44×44` target, 실제 focus ring, server menu focus 복원 계약이 실패했습니다.
+- 기존 Return action은 독립 `ConnectionScreen` route를 push한 뒤 연결 성공 시에도 그 route를 닫지 않아 Home이 보이지 않았습니다. 새 widget test가 원본에서 `Home` 0건으로 RED인 것을 확인한 뒤 성공 callback으로 route를 닫도록 수정했습니다.
 
 `ad7f2805812e9bfdaa93db8afd1e224d06495734`에서 focused suite를 다시 실행한 결과:
 
@@ -47,7 +48,7 @@ fvm flutter test \
 | --- | --- | --- |
 | 앱 format | `cd apps/truedash && fvm dart format --output=none --set-exit-if-changed lib test` | exit 0, 22 files unchanged |
 | 앱 analyze | `cd apps/truedash && fvm flutter analyze` | exit 0, no issues |
-| 앱 전체 | `cd apps/truedash && fvm flutter test --reporter compact` | exit 0, **54 tests passed** |
+| 앱 전체 | `cd apps/truedash && fvm flutter test --reporter compact` | exit 0, **55 tests passed** |
 | 디자인 시스템 analyze | `cd packages/truedash_design_system && fvm flutter analyze` | exit 0, no issues |
 | 디자인 시스템 전체 | `cd packages/truedash_design_system && fvm flutter test --reporter compact` | exit 0, **27 tests passed** |
 | API analyze | `cd packages/truenas_api && fvm dart analyze` | exit 0; 기존 info diagnostics 4건, error/warning 0 |
@@ -56,6 +57,17 @@ fvm flutter test \
 | whitespace | `git diff --check` | exit 0 |
 
 Breakpoint widget tests는 599/600/999/1000을 포함합니다. connection tests는 성공한 safe metadata seeding/shell 전환, 실패 시 form 유지, API-key sentinel 비렌더링을 별도로 검증합니다.
+
+## Hosted exact-head CI
+
+GitLab pipeline [`528`](https://git.sanhouse.kr/sjungwon03/truedash/-/pipelines/528)은 기능·CI 커밋 `8d0536f3c4d6aab14179c31e09a15661aeaec7e0`에서 **success**였습니다.
+
+| job | runner | 실제 결과 |
+| --- | --- | --- |
+| [`portable_quality_and_web` #1690](https://git.sanhouse.kr/sjungwon03/truedash/-/jobs/1690) | protected `shared-build` Linux amd64 | format, API/design-system/consumer/app analyze와 전체 tests, Web release build 성공 |
+| [`macos_release` #1691](https://git.sanhouse.kr/sjungwon03/truedash/-/jobs/1691) | protected `shared-macos` arm64 | macOS release build, strict codesign, `network.client=true` 검증 성공 |
+
+CI는 `.fvmrc`의 Flutter `3.47.0`을 사용합니다. Linux shell runner는 exact Flutter tag를 job workspace에 준비하고, macOS runner는 FVM의 pinned SDK를 사용합니다. source branch도 force-push 금지·Maintainer 전용 protected branch로 설정했습니다.
 
 ## Release build·서명 검증
 
@@ -91,6 +103,6 @@ Breakpoint widget tests는 599/600/999/1000을 포함합니다. connection tests
 
 ## 범위·보안 점검
 
-- remediation 변경은 `apps/truedash`의 shell/profile 구현과 테스트, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
+- remediation 변경은 `apps/truedash`의 shell/profile 구현과 테스트, root GitLab CI와 runner bootstrap shim, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
 - M1 profile/shell 파일은 persistence, discovery, secure storage, TLS trust mutation, credential persistence, reconnect coordinator, capability registry, operational data, ads/billing을 구현하지 않습니다.
 - 이 구현은 credential-backed live switching, real TrueNAS interoperability, Developer ID/notarized distribution, Android/iOS build, 또는 TD-002 완료의 증거가 아닙니다.
