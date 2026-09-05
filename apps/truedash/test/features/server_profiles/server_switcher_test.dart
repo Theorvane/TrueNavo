@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:truedash/app_shell/adaptive_shell.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
+import 'package:truedash_design_system/truedash_design_system.dart';
 
 void main() {
   testWidgets('switches displayed context only and explains its limit', (
@@ -35,7 +36,10 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: AdaptiveShell()),
+        child: MaterialApp(
+          theme: TrueDashTheme.light(),
+          home: const AdaptiveShell(),
+        ),
       ),
     );
     await tester.tap(find.byTooltip('Choose server'));
@@ -59,15 +63,24 @@ void main() {
   testWidgets('empty catalog describes the session-only empty state', (
     tester,
   ) async {
+    final handle = tester.ensureSemantics();
     await tester.pumpWidget(
-      const ProviderScope(child: MaterialApp(home: AdaptiveShell())),
+      ProviderScope(
+        child: MaterialApp(
+          theme: TrueDashTheme.light(),
+          home: const AdaptiveShell(),
+        ),
+      ),
     );
 
     expect(find.text('No server selected'), findsWidgets);
+    expect(find.bySemanticsLabel('Server catalog: empty'), findsOneWidget);
     expect(
       find.text('This app session has no server profile.'),
       findsOneWidget,
     );
     expect(find.text('Return to connection'), findsOneWidget);
+    expect(find.textContaining('Add server'), findsNothing);
+    handle.dispose();
   });
 }

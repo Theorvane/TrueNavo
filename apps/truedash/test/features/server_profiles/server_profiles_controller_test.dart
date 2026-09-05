@@ -31,6 +31,29 @@ void main() {
     expect(state.selectedProfileId, 'one');
   });
 
+  test('opaque ID takes precedence and endpoint collisions are removed', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final controller = container.read(
+      serverProfilesControllerProvider.notifier,
+    );
+    controller.registerAndSelect(profile('one', 'wss://one', name: 'One'));
+    controller.registerAndSelect(profile('two', 'wss://two', name: 'Two'));
+
+    controller.registerAndSelect(profile('one', 'wss://three', name: 'Three'));
+    var state = container.read(serverProfilesControllerProvider);
+    expect(state.profiles.map((item) => item.id), ['one', 'two']);
+    expect(state.profiles.first.normalizedEndpoint, 'wss://three');
+    expect(state.selectedProfileId, 'one');
+
+    controller.registerAndSelect(profile('one', 'wss://two', name: 'Merged'));
+    state = container.read(serverProfilesControllerProvider);
+    expect(state.profiles.map((item) => item.id), ['one']);
+    expect(state.profiles.single.displayName, 'Merged');
+    expect(state.profiles.single.normalizedEndpoint, 'wss://two');
+    expect(state.selectedProfileId, 'one');
+  });
+
   test(
     'unknown selection is unchanged and removal selects first remaining',
     () {

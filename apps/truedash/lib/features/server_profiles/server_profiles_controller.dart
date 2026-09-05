@@ -37,29 +37,45 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
   ServerProfilesState build() => ServerProfilesState(profiles: const []);
 
   void registerAndSelect(ServerProfile profile) {
-    final existingIndex = state.profiles.indexWhere(
+    final idIndex = state.profiles.indexWhere((item) => item.id == profile.id);
+    final endpointIndex = state.profiles.indexWhere(
       (item) => item.normalizedEndpoint == profile.normalizedEndpoint,
     );
-    if (existingIndex < 0) {
+    if (idIndex < 0 && endpointIndex < 0) {
       state = ServerProfilesState(
         profiles: [...state.profiles, profile],
         selectedProfileId: profile.id,
       );
       return;
     }
-    final existing = state.profiles[existingIndex];
-    final updated = profile.copyWith();
-    final profiles = [...state.profiles];
-    profiles[existingIndex] = ServerProfile(
-      id: existing.id,
-      displayName: updated.displayName,
-      originalHostInput: updated.originalHostInput,
-      normalizedEndpoint: updated.normalizedEndpoint,
-      lastKnownVersion: updated.lastKnownVersion,
-    );
+
+    // An opaque ID names the catalog entry.  If the new endpoint belongs to a
+    // different entry, remove that collision before replacing metadata in
+    // place.  Otherwise an endpoint match keeps its first opaque ID.
+    final replacementIndex = idIndex >= 0 ? idIndex : endpointIndex;
+    final replacementId = state.profiles[replacementIndex].id;
+    final profiles = <ServerProfile>[];
+    for (var index = 0; index < state.profiles.length; index++) {
+      if (index == endpointIndex && endpointIndex != replacementIndex) {
+        continue;
+      }
+      if (index == replacementIndex) {
+        profiles.add(
+          ServerProfile(
+            id: replacementId,
+            displayName: profile.displayName,
+            originalHostInput: profile.originalHostInput,
+            normalizedEndpoint: profile.normalizedEndpoint,
+            lastKnownVersion: profile.lastKnownVersion,
+          ),
+        );
+      } else {
+        profiles.add(state.profiles[index]);
+      }
+    }
     state = ServerProfilesState(
       profiles: profiles,
-      selectedProfileId: existing.id,
+      selectedProfileId: replacementId,
     );
   }
 
