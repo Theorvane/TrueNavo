@@ -2,8 +2,9 @@ import 'package:truenas_api/truenas_api.dart';
 
 /// A secure server authority normalized for an app-owned TLS pin.
 ///
-/// Non-ASCII host names are rejected because this app does not include a
-/// UTS-46 implementation. Callers must provide an ASCII IDNA (punycode) host.
+/// Non-ASCII and ACE (`xn--`) host names are rejected because this app does not
+/// include a standards-compliant UTS-46/IDNA validator. Callers may use plain
+/// ASCII DNS names or IP literals in this slice.
 final class NormalizedAuthority {
   NormalizedAuthority._({
     required this.scheme,
@@ -128,14 +129,9 @@ final class NormalizedAuthority {
     if (label.length > 63 || !_dnsLabelExpression.hasMatch(label)) {
       return false;
     }
-    if (!label.toLowerCase().startsWith('xn--')) {
-      return true;
-    }
-
-    // Without UTS-46, do not try to decode ACE labels. Permit only the
-    // conventional delimiter-bearing ASCII form; unsupported but valid ACE
-    // labels fail closed rather than receiving a pretend Unicode conversion.
-    return _conservativeAceLabelExpression.hasMatch(label.toLowerCase());
+    // A shape-only regex cannot prove that an ACE label is valid Punycode.
+    // Reject every ACE label until a standards-compliant IDNA validator exists.
+    return !label.toLowerCase().startsWith('xn--');
   }
 
   static bool _isValidIpv4(String host) {
@@ -179,9 +175,6 @@ final class NormalizedAuthority {
   static final RegExp _dnsLabelExpression = RegExp(
     r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$',
   );
-  static final RegExp _conservativeAceLabelExpression = RegExp(
-    r'^xn--[a-z0-9]+-[a-z0-9-]*[a-z0-9]$',
-  );
 
   static bool _hasExplicitZeroPort(Uri uri) {
     final authority = uri.authority;
@@ -215,6 +208,13 @@ final class PinRecord {
     if (!_digestExpression.hasMatch(leafDerSha256)) {
       throw const PinRecordFormatException(
         'A pin digest must be 64 uppercase hexadecimal characters.',
+      );
+    }
+    if (!_canonicalUtcTimestampExpression.hasMatch(
+      this.createdAt.toIso8601String(),
+    )) {
+      throw const PinRecordFormatException(
+        'The pin creation time must use canonical UTC millisecond precision.',
       );
     }
   }

@@ -34,15 +34,6 @@ void main() {
       expect(wss.rpcConnectionUri, Uri.parse('wss://nas.example/api/current'));
     });
 
-    test('accepts lowercase ASCII IDNA labels', () {
-      final authority = NormalizedAuthority.parse(
-        'https://XN--BCHER-KVA.example',
-      );
-
-      expect(authority.host, 'xn--bcher-kva.example');
-      expect(authority.pinKey, 'https://xn--bcher-kva.example:443');
-    });
-
     test('accepts valid IPv4 and bracketed IPv6 authorities', () {
       final ipv4 = NormalizedAuthority.parse('https://192.0.2.10');
       final ipv6Default = NormalizedAuthority.parse('https://[2001:db8::10]');
@@ -99,6 +90,8 @@ void main() {
       'https://xn--.example',
       'https://xn--a.example',
       'https://xn---bad.example',
+      'https://xn--bcher-kva.example',
+      'https://XN--BCHER-KVA.example',
       'https://${'a' * 64}.example',
       'https://${List<String>.filled(128, 'a').join('.')}',
     ]) {
@@ -155,6 +148,19 @@ void main() {
         throwsA(isA<PinRecordFormatException>()),
       );
     });
+
+    test(
+      'rejects timestamps more precise than the stored millisecond format',
+      () {
+        expect(
+          () => PinRecord(
+            leafDerSha256: digest,
+            createdAt: DateTime.utc(2026, 9, 6, 12, 30, 0, 0, 1),
+          ),
+          throwsA(isA<PinRecordFormatException>()),
+        );
+      },
+    );
 
     for (final json in <Object>[
       <String, Object>{},
