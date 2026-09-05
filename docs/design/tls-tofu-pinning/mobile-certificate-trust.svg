@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
+  <title id="title">TrueDash mobile first certificate trust flow</title>
+  <desc id="desc">Dark mobile certificate review screen showing a credential-free probe, certificate details, copyable SHA-256 fingerprint, and explicit trust and connect action.</desc>
+  <rect width="1200" height="900" fill="#0B1117"/>
+  <g font-family="Arial, sans-serif">
+    <text x="64" y="68" fill="#F2F6F8" font-size="30" font-weight="700">First trust · native mobile</text>
+    <text x="64" y="101" fill="#AAB6C2" font-size="17">320px-safe full-screen review; no API key leaves before approval.</text>
+    <path d="M205 158 H364" stroke="#2CC7D4" stroke-width="2"/><circle cx="205" cy="158" r="7" fill="#2CC7D4"/><text x="64" y="151" fill="#AAB6C2" font-size="15">1. Probe only</text><text x="64" y="176" fill="#F2F6F8" font-size="17" font-weight="700">No credentials</text>
+    <path d="M825 158 H1000" stroke="#2CC7D4" stroke-width="2"/><circle cx="1000" cy="158" r="7" fill="#2CC7D4"/><text x="872" y="151" fill="#AAB6C2" font-size="15">2. Approval</text><text x="836" y="176" fill="#F2F6F8" font-size="17" font-weight="700">Fresh pinned reconnect</text>
+    <rect x="390" y="125" width="420" height="715" rx="38" fill="#111923" stroke="#60758A" stroke-width="2"/>
+    <rect x="405" y="169" width="390" height="645" rx="25" fill="#18222E"/>
+    <rect x="558" y="143" width="84" height="9" rx="5" fill="#60758A"/>
+    <text x="433" y="218" fill="#AAB6C2" font-size="14">CERTIFICATE CHECK</text>
+    <text x="433" y="253" fill="#F2F6F8" font-size="25" font-weight="700">Review certificate</text>
+    <text x="433" y="283" fill="#AAB6C2" font-size="15">nas.home.example:443</text>
+    <rect x="429" y="306" width="342" height="70" rx="10" fill="#382D16" stroke="#F2B84B"/>
+    <text x="448" y="334" fill="#F2B84B" font-size="16" font-weight="700">!  Not yet pinned to this server</text>
+    <text x="448" y="351" fill="#F2F6F8" font-size="14">No API key has been sent.</text>
+    <text x="433" y="400" fill="#AAB6C2" font-size="13">PLATFORM TRUST</text><text x="603" y="400" fill="#F2B84B" font-size="14" font-weight="700">Did not pass</text>
+    <path d="M433 412 H771" stroke="#253241"/>
+    <text x="433" y="435" fill="#AAB6C2" font-size="13">SUBJECT / SAN</text><text x="433" y="454" fill="#F2F6F8" font-size="14">CN=nas.home.example</text>
+    <text x="433" y="479" fill="#AAB6C2" font-size="13">ISSUER</text><text x="433" y="498" fill="#F2F6F8" font-size="14">Example Home Lab CA</text>
+    <text x="433" y="523" fill="#AAB6C2" font-size="13">VALIDITY</text><text x="433" y="542" fill="#F2F6F8" font-size="14">2026-08-01 — 2027-08-01</text>
+    <text x="433" y="570" fill="#AAB6C2" font-size="13">SHA-256 / LEAF DER</text><text x="433" y="593" fill="#F2F6F8" font-family="monospace" font-size="13">A4C9 7E12 6B8F 420D</text><text x="433" y="612" fill="#F2F6F8" font-family="monospace" font-size="13">9A31 55C8 0E4D 7F22</text><text x="433" y="631" fill="#F2F6F8" font-family="monospace" font-size="13">918A 3B6E 40D5 7C19</text><text x="433" y="650" fill="#F2F6F8" font-family="monospace" font-size="13">8E2F 6A90 B3CD 11F4</text>
+    <rect x="433" y="667" width="120" height="42" rx="8" fill="#202C39" stroke="#60758A"/><text x="456" y="693" fill="#F2F6F8" font-size="14">▣ Copy</text>
+    <text x="433" y="731" fill="#AAB6C2" font-size="13">Trust applies only to this certificate and authority.</text>
+    <rect x="429" y="750" width="150" height="48" rx="8" fill="#202C39" stroke="#60758A"/><text x="474" y="780" fill="#F2F6F8" font-size="15" font-weight="700">Cancel</text>
+    <rect x="591" y="750" width="180" height="48" rx="8" fill="#2CC7D4"/><text x="611" y="780" fill="#031719" font-size="14" font-weight="700">⌁ Trust and connect</text>
+    <rect x="588" y="747" width="186" height="54" rx="10" fill="none" stroke="#B8F7FB" stroke-width="2"/>
+    <path d="M825 390 H1050 V332" fill="none" stroke="#F2B84B" stroke-width="2"/><text x="880" y="315" fill="#F2B84B" font-size="16" font-weight="700">Warning is explicit</text><text x="880" y="338" fill="#AAB6C2" font-size="14">Trust failure is reported,</text><text x="880" y="358" fill="#AAB6C2" font-size="14">not overridden.</text>
+    <path d="M810 688 H1046 V728" fill="none" stroke="#2CC7D4" stroke-width="2"/><text x="865" y="756" fill="#2CC7D4" font-size="16" font-weight="700">Copyable comparison value</text><text x="865" y="779" fill="#AAB6C2" font-size="14">Grouped uppercase SHA-256.</text>
+  </g>
+</svg>
