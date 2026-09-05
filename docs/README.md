@@ -5,6 +5,7 @@
 - [`planning/TRUEDASH_PRODUCT_PLAN.md`](planning/TRUEDASH_PRODUCT_PLAN.md) — product scope, UX, architecture, security, testing, and roadmap
 - [`planning/TRUEDASH_CAPABILITY_MATRIX.csv`](planning/TRUEDASH_CAPABILITY_MATRIX.csv) — 88-item full-function parity ledger
 - [`planning/TRUEDASH_DESIGN_SYSTEM.md`](planning/TRUEDASH_DESIGN_SYSTEM.md) — approved A+B visual direction, tokens, responsive rules, components, and accessibility criteria
+- [`planning/TRUEDASH_DESIGN_SYSTEM_IMPLEMENTATION.md`](planning/TRUEDASH_DESIGN_SYSTEM_IMPLEMENTATION.md) — task-by-task TDD, verification, rendering, and stacked-MR delivery plan
 - [`planning/M0_FOUNDATION_DESIGN.md`](planning/M0_FOUNDATION_DESIGN.md) — approved M0 secure connection boundary
 - [`planning/M0_FOUNDATION_IMPLEMENTATION.md`](planning/M0_FOUNDATION_IMPLEMENTATION.md) — M0 implementation and verification plan
 - [`planning/M0_IMPLEMENTATION_EVIDENCE.md`](planning/M0_IMPLEMENTATION_EVIDENCE.md) — command evidence from this isolated implementation
