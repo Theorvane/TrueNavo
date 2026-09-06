@@ -36,18 +36,14 @@ final class NativePinStorageLock {
       throw ArgumentError.value(keys, 'keys', 'must not be empty');
     }
 
-    final support = await _directoryProvider();
-    final directory = Directory(
-      '${support.path}${Platform.pathSeparator}tls-pin-locks',
-    );
-    try {
-      await directory.create(recursive: true);
-    } on Object {
-      throw const NativePinStorageLockException();
-    }
-
     final files = <RandomAccessFile>[];
     try {
+      final support = await _directoryProvider();
+      final directory = Directory(
+        '${support.path}${Platform.pathSeparator}tls-pin-locks',
+      );
+      await directory.create(recursive: true);
+
       for (final hash in hashes) {
         final file = File(
           '${directory.path}${Platform.pathSeparator}$hash.lock',
