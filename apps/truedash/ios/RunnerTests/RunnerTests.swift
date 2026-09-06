@@ -43,6 +43,29 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(calls, 1)
   }
 
+  func testSynchronousFailureFromVerifyRejectionDoesNotDiscardCopiedLeaf() {
+    let connection = FakeConnection()
+    let ready = expectation(description: "verify installed")
+    let core = PresentedLeafProbeCore(factory: { _, _, verify, state in
+      connection.verify = verify; connection.state = state
+      connection.installed = { ready.fulfill() }; return connection
+    }, leafCopier: { _ in Data([1, 2, 3]) })
+    let captured = expectation(description: "captured leaf")
+    core.capture(request("0123456789abcdef0123456789abcdef")) { response in
+      XCTAssertEqual(response["leafDerBase64"] as? String, Data([1, 2, 3]).base64EncodedString())
+      captured.fulfill()
+    }
+    wait(for: [ready], timeout: 1)
+    var decisions = [Bool]()
+    connection.verify?(nil, { accepted in
+      decisions.append(accepted)
+      connection.state?(.failed(NWError.posix(.ECONNREFUSED)))
+    })
+    wait(for: [captured], timeout: 1)
+    XCTAssertEqual(decisions, [false])
+    XCTAssertEqual(connection.cancelCount, 1)
+  }
+
   func testTwoOperationsCancelIndependentlyAndIdempotently() {
     let aConnection = FakeConnection(), bConnection = FakeConnection()
     let installed = expectation(description: "connections installed")

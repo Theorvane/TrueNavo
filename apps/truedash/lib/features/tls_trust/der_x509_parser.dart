@@ -18,7 +18,8 @@ NativeParsedLeafFacts parsePresentedLeafDer(Uint8List der) {
     certificate.finish();
 
     final reader = _DerReader(tbs);
-    if (reader.peekTag() == 0xa0) _version(reader.take(0xa0));
+    // Version is DEFAULT v1 when omitted. DER must not encode that default.
+    final version = reader.peekTag() == 0xa0 ? _version(reader.take(0xa0)) : 0;
     _serialNumber(reader.take(0x02));
     final innerAlgorithm = reader.take(0x30);
     _algorithmIdentifier(innerAlgorithm);
@@ -95,6 +96,11 @@ NativeParsedLeafFacts parsePresentedLeafDer(Uint8List der) {
           throw const FormatException();
       }
     }
+    // RFC 5280 permits unique IDs only in v2/v3, and extensions only in v3.
+    if (version == 0 && (issuerUniqueIdSeen || subjectUniqueIdSeen)) {
+      throw const FormatException();
+    }
+    if (extensionsSeen && version != 2) throw const FormatException();
     return NativeParsedLeafFacts(
       subjectCommonName: subject,
       dnsSubjectAlternativeNames: dnsSans,
@@ -109,11 +115,14 @@ NativeParsedLeafFacts parsePresentedLeafDer(Uint8List der) {
   }
 }
 
-void _version(Uint8List bytes) {
+int _version(Uint8List bytes) {
   final reader = _DerReader(bytes);
   final integer = reader.take(0x02);
   reader.finish();
   if (integer.length != 1 || integer.single > 2) throw const FormatException();
+  // Version is DEFAULT v1, so DER must omit an explicit zero value.
+  if (integer.single == 0) throw const FormatException();
+  return integer.single;
 }
 
 void _critical(Uint8List bytes) {

@@ -53,10 +53,12 @@ final class PresentedLeafProbeCore {
         request.port,
         { [weak self, weak operation] trust, decision in
           // Network.framework must never be allowed to authenticate this
-          // capture-only connection. Every callback gets exactly one reject.
-          decision(false)
+          // capture-only connection. Copy and queue the leaf before rejecting:
+          // rejection may synchronously emit a terminal connection state.
           let leaf = self?.copyLeaf(trust)
           self?.queue.async { self?.verified(operation, leaf: leaf) }
+          // Every callback gets exactly one reject.
+          decision(false)
         },
         { [weak self, weak operation] state in
           self?.queue.async { self?.stateChanged(operation, state: state) }

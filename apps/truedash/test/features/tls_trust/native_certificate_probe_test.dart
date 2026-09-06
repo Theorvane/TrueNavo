@@ -542,6 +542,39 @@ void main() {
         );
       }
     });
+
+    test('rejects non-v3 versions when genuine extensions remain', () {
+      for (final version in [1, 0]) {
+        final mutated = Uint8List.fromList(validHostMatchingLeafDer);
+        final index = _uniqueIndexOf(mutated, [0xa0, 0x03, 0x02, 0x01, 0x02]);
+        mutated[index + 4] = version;
+        expect(
+          () => parsePresentedLeafDer(mutated),
+          throwsFormatException,
+          reason: version == 1
+              ? 'v2 cannot retain v3 extensions'
+              : 'DER must omit the DEFAULT v1 version',
+        );
+      }
+    });
+
+    test('enforces issuer and subject unique-ID version requirements', () {
+      for (final tag in [0x81, 0x82]) {
+        final v2 = _replaceExtensionsWithUniqueId(
+          validHostMatchingLeafDer,
+          tag,
+        );
+        final version = _uniqueIndexOf(v2, [0xa0, 0x03, 0x02, 0x01, 0x02]);
+        v2[version + 4] = 1;
+        expect(parsePresentedLeafDer(v2).hasSubjectAlternativeNames, isFalse);
+
+        final v1 = _replaceExtensionsWithUniqueId(
+          _withoutExplicitVersion(validHostMatchingLeafDer),
+          tag,
+        );
+        expect(() => parsePresentedLeafDer(v1), throwsFormatException);
+      }
+    });
   });
 
   test(
@@ -644,6 +677,43 @@ int _criticalBooleanValueIndexForExtension(
     0xff,
   ], reason: 'extension OID must be followed by a critical TRUE BOOLEAN');
   return booleanIndex + 2;
+}
+
+Uint8List _withoutExplicitVersion(Uint8List der) {
+  final version = _uniqueIndexOf(der, [0xa0, 0x03, 0x02, 0x01, 0x02]);
+  expect(version, 8, reason: 'fixture version must be the first TBS field');
+  final result = Uint8List.fromList([
+    ...der.sublist(0, version),
+    ...der.sublist(version + 5),
+  ]);
+  _adjustCertificateAndTbsLengths(result, -5);
+  return result;
+}
+
+Uint8List _replaceExtensionsWithUniqueId(Uint8List der, int tag) {
+  final extension = _uniqueIndexOf(der, [0xa3, 0x52, 0x30, 0x50]);
+  // Replace the complete [3] EXPLICIT Extensions field (84 bytes) with one
+  // well-formed IMPLICIT BIT STRING containing zero unused bits.
+  final result = Uint8List.fromList([
+    ...der.sublist(0, extension),
+    tag,
+    0x01,
+    0x00,
+    ...der.sublist(extension + 84),
+  ]);
+  _adjustCertificateAndTbsLengths(result, -81);
+  return result;
+}
+
+void _adjustCertificateAndTbsLengths(Uint8List der, int delta) {
+  // The fixture uses two-byte definite lengths for Certificate and
+  // TBSCertificate.
+  for (final lengthOffset in [2, 6]) {
+    final oldLength = (der[lengthOffset] << 8) | der[lengthOffset + 1];
+    final newLength = oldLength + delta;
+    der[lengthOffset] = newLength >> 8;
+    der[lengthOffset + 1] = newLength & 0xff;
+  }
 }
 
 final class _FixtureExpectation {
