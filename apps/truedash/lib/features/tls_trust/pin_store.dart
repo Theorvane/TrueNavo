@@ -10,6 +10,7 @@ enum PinStoreFailure {
   deleteFailed,
   malformedRecord,
   replacementInProgress,
+  replacementChanged,
   unsupportedPlatform,
   transactionFinished,
 }
@@ -82,6 +83,41 @@ sealed class PinStageResult {
       PinStageFailure;
 }
 
+sealed class PinRecoveryResult {
+  const PinRecoveryResult();
+  const factory PinRecoveryResult.none() = PinRecoveryNone;
+  const factory PinRecoveryResult.success(
+    PinRecord pending,
+    PinStoreTransaction transaction,
+  ) = PinRecoverySuccess;
+  const factory PinRecoveryResult.failure(PinStoreFailure failure) =
+      PinRecoveryFailure;
+}
+
+final class PinRecoveryNone extends PinRecoveryResult {
+  const PinRecoveryNone();
+  @override
+  bool operator ==(Object other) => other is PinRecoveryNone;
+  @override
+  int get hashCode => 0;
+}
+
+final class PinRecoverySuccess extends PinRecoveryResult {
+  const PinRecoverySuccess(this.pending, this.transaction);
+  final PinRecord pending;
+  final PinStoreTransaction transaction;
+}
+
+final class PinRecoveryFailure extends PinRecoveryResult {
+  const PinRecoveryFailure(this.failure);
+  final PinStoreFailure failure;
+  @override
+  bool operator ==(Object other) =>
+      other is PinRecoveryFailure && other.failure == failure;
+  @override
+  int get hashCode => failure.hashCode;
+}
+
 final class PinStageSuccess extends PinStageResult {
   const PinStageSuccess(this.transaction);
   final PinStoreTransaction transaction;
@@ -108,6 +144,7 @@ abstract interface class PinStore {
     NormalizedAuthority authority,
     PinRecord replacement,
   );
+  Future<PinRecoveryResult> recoverReplacement(NormalizedAuthority authority);
 }
 
 /// Selects the app-owned platform raw backend. Web returns typed unsupported
@@ -169,10 +206,17 @@ final class PersistentPinStore implements PinStore {
     if (pending is _EnvelopeValue &&
         active is _EnvelopeValue &&
         active.record == pending.record) {
-      final cleanup = await _raw.delete(pendingKey(authority));
+      final cleanup = await _raw.deleteIfValue(
+        pendingKey(authority),
+        pending.value,
+      );
       if (cleanup is RawPinStorageOperationFailure) {
         _release(ownership);
         return PinStageResult.failure(_map(cleanup.failure));
+      }
+      if (cleanup is RawPinStorageNotMatched) {
+        _release(ownership);
+        return const PinStageResult.failure(PinStoreFailure.replacementChanged);
       }
     } else if (pending is _EnvelopeValue) {
       _release(ownership);
@@ -180,16 +224,86 @@ final class PersistentPinStore implements PinStore {
         PinStoreFailure.replacementInProgress,
       );
     }
-    final result = await _raw.write(
+    final pendingValue = _serialize(authority, replacement);
+    final result = await _raw.writeIfValue(
       pendingKey(authority),
-      _serialize(authority, replacement),
+      null,
+      pendingValue,
     );
     if (result is RawPinStorageOperationFailure) {
       _release(ownership);
       return PinStageResult.failure(_map(result.failure));
     }
+    if (result is RawPinStorageNotMatched) {
+      _release(ownership);
+      return const PinStageResult.failure(PinStoreFailure.replacementChanged);
+    }
     return PinStageResult.success(
-      _PersistentTransaction(this, authority, replacement, ownership),
+      _PersistentTransaction(
+        this,
+        authority,
+        replacement,
+        pendingValue,
+        active is _EnvelopeValue ? active.value : null,
+        ownership,
+      ),
+    );
+  }
+
+  @override
+  Future<PinRecoveryResult> recoverReplacement(
+    NormalizedAuthority authority,
+  ) async {
+    final ownership = authority.pinKey;
+    if (!_ownedAuthorities.add(ownership)) {
+      return const PinRecoveryResult.failure(
+        PinStoreFailure.replacementInProgress,
+      );
+    }
+    final active = await _readEnvelope(activeKey(authority), authority);
+    final pending = await _readEnvelope(pendingKey(authority), authority);
+    if (active is _EnvelopeFailure) {
+      _release(ownership);
+      return PinRecoveryResult.failure(active.failure);
+    }
+    if (pending is _EnvelopeFailure) {
+      _release(ownership);
+      return PinRecoveryResult.failure(pending.failure);
+    }
+    if (pending is _EnvelopeAbsent) {
+      _release(ownership);
+      return const PinRecoveryResult.none();
+    }
+    final pendingRecord = pending as _EnvelopeValue;
+    final pendingValue = pendingRecord.value;
+    if (active is _EnvelopeValue && active.record == pendingRecord.record) {
+      final cleanup = await _raw.deleteIfValue(
+        pendingKey(authority),
+        pendingValue,
+      );
+      if (cleanup is RawPinStorageOperationFailure) {
+        _release(ownership);
+        return PinRecoveryResult.failure(_map(cleanup.failure));
+      }
+      if (cleanup is RawPinStorageNotMatched) {
+        _release(ownership);
+        return const PinRecoveryResult.failure(
+          PinStoreFailure.replacementChanged,
+        );
+      }
+      _release(ownership);
+      return const PinRecoveryResult.none();
+    }
+    return PinRecoveryResult.success(
+      pendingRecord.record,
+      _PersistentTransaction(
+        this,
+        authority,
+        pendingRecord.record,
+        pendingValue,
+        active is _EnvelopeValue ? active.value : null,
+        ownership,
+      ),
     );
   }
 
@@ -211,7 +325,10 @@ final class PersistentPinStore implements PinStore {
           !decoded.containsKey('record')) {
         throw const FormatException();
       }
-      return _EnvelopeValue(PinRecord.fromJson(decoded['record']!));
+      return _EnvelopeValue(
+        PinRecord.fromJson(decoded['record']!),
+        value.value,
+      );
     } on Object {
       return const _EnvelopeFailure(PinStoreFailure.malformedRecord);
     }
@@ -241,8 +358,9 @@ final class _EnvelopeAbsent extends _Envelope {
 }
 
 final class _EnvelopeValue extends _Envelope {
-  const _EnvelopeValue(this.record);
+  const _EnvelopeValue(this.record, this.value);
   final PinRecord record;
+  final String value;
 }
 
 final class _EnvelopeFailure extends _Envelope {
@@ -255,11 +373,15 @@ final class _PersistentTransaction implements PinStoreTransaction {
     this._store,
     this._authority,
     this._record,
+    this._pendingValue,
+    this._expectedActiveValue,
     this._ownership,
   );
   final PersistentPinStore _store;
   final NormalizedAuthority _authority;
   final PinRecord _record;
+  final String _pendingValue;
+  final String? _expectedActiveValue;
   final String _ownership;
   var _activeWritten = false;
   var _finished = false;
@@ -269,20 +391,30 @@ final class _PersistentTransaction implements PinStoreTransaction {
       return const PinStoreResult.failure(PinStoreFailure.transactionFinished);
     }
     if (!_activeWritten) {
-      final write = await _store._raw.write(
+      final write = await _store._raw.writeIfValues(
         PersistentPinStore.activeKey(_authority),
+        _expectedActiveValue,
+        PersistentPinStore.pendingKey(_authority),
+        _pendingValue,
         _store._serialize(_authority, _record),
       );
       if (write is RawPinStorageOperationFailure) {
         return PinStoreResult.failure(_store._map(write.failure));
       }
+      if (write is RawPinStorageNotMatched) {
+        return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
+      }
       _activeWritten = true;
     }
-    final delete = await _store._raw.delete(
+    final delete = await _store._raw.deleteIfValue(
       PersistentPinStore.pendingKey(_authority),
+      _pendingValue,
     );
     if (delete is RawPinStorageOperationFailure) {
       return PinStoreResult.failure(_store._map(delete.failure));
+    }
+    if (delete is RawPinStorageNotMatched) {
+      return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
     }
     _finish();
     return const PinStoreResult.success();
@@ -296,11 +428,15 @@ final class _PersistentTransaction implements PinStoreTransaction {
     if (_activeWritten) {
       return const PinStoreResult.failure(PinStoreFailure.transactionFinished);
     }
-    final delete = await _store._raw.delete(
+    final delete = await _store._raw.deleteIfValue(
       PersistentPinStore.pendingKey(_authority),
+      _pendingValue,
     );
     if (delete is RawPinStorageOperationFailure) {
       return PinStoreResult.failure(_store._map(delete.failure));
+    }
+    if (delete is RawPinStorageNotMatched) {
+      return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
     }
     _finish();
     return const PinStoreResult.success();

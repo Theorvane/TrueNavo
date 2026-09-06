@@ -95,10 +95,99 @@ void main() {
     expect(ci, contains("get('com.apple.security.network.client') is True"));
     expect(ci, contains("'keychain-access-groups' in"));
   });
+  test('iOS Runner configurations and entitlement plist enable only Keychain access groups', () {
+    final project = File('ios/Runner.xcodeproj/project.pbxproj')
+        .readAsStringSync();
+    final entitlements = File('ios/Runner/Runner.entitlements');
+    final plist = _keychainGroups(entitlements.readAsStringSync());
+    final runnerConfigurations = <String, String>{
+      for (final name in ['Debug', 'Profile', 'Release'])
+        name: _runnerBuildSettings(project, name),
+    };
+    for (final configuration in runnerConfigurations.values) {
+      expect(
+        configuration,
+        contains('CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'),
+      );
+    }
+    expect(plist, isEmpty);
+  });
+  test('macOS CI builds and validates signed iOS simulator output in isolated DerivedData', () {
+    final ci = File('../../.gitlab-ci.yml').readAsStringSync();
+    expect(ci, contains('build ios --simulator --debug --config-only'));
+    expect(ci, contains('ios-task2-derived'));
+    expect(ci, contains('-sdk iphonesimulator'));
+    expect(ci, contains('-configuration Debug'));
+    expect(ci, contains('Debug-iphonesimulator/Runner.app'));
+    expect(ci, contains('ios/Runner/Runner.entitlements'));
+    expect(ci, contains('keychain-access-groups'));
+  });
+  test('macOS CI runs the iOS Keychain restart integration runner', () {
+    final ci = File('../../.gitlab-ci.yml').readAsStringSync();
+    final runner = File('tool/run_ios_keychain_restart_integration_test.sh')
+        .readAsStringSync();
+    final xcrunShim = File('tool/xcrun_with_derived_data.sh')
+        .readAsStringSync();
+    final integration = File('integration_test/ios_keychain_restart_test.dart')
+        .readAsStringSync();
+
+    expect(ci, contains('./tool/run_ios_keychain_restart_integration_test.sh'));
+    expect(runner, contains('integration_test/ios_keychain_restart_test.dart'));
+    expect(runner, contains('TRUEDASH_IOS_TEST_DERIVED_DATA'));
+    expect(runner, contains('xcrun_with_derived_data.sh'));
+    expect(xcrunShim, contains('-derivedDataPath'));
+    expect(xcrunShim, contains(r'${TRUEDASH_IOS_TEST_DERIVED_DATA:?}'));
+    expect(
+      integration,
+      contains("String.fromEnvironment('keychainTestPhase')"),
+    );
+    expect(integration, contains("case 'write':"));
+    expect(integration, contains("case 'read-delete':"));
+  });
   test('persistent representation excludes profile, API key and raw certificate fields', () {
     final pinStore = source('pin_store.dart');
     expect(pinStore, isNot(contains('ServerProfile')));
     expect(pinStore, isNot(contains('apiKey')));
     expect(pinStore, isNot(contains('rawDer')));
   });
+}
+
+String _runnerBuildSettings(String project, String configuration) {
+  final identifier = configuration == 'Profile'
+      ? '249021D4217E4FDB00AE95B9'
+      : configuration == 'Debug'
+      ? '97C147061CF9000F007C117D'
+      : '97C147071CF9000F007C117D';
+  final match = RegExp(
+    '$identifier.*?buildSettings = \\{(.*?)\\};\\s*name = $configuration;',
+    dotAll: true,
+  ).firstMatch(project);
+  return match?.group(1) ?? fail('missing Runner $configuration configuration');
+}
+
+List<String> _keychainGroups(String plist) {
+  final dictionary = RegExp(
+    r'<dict>(.*?)</dict>',
+    dotAll: true,
+  ).firstMatch(plist)?.group(1);
+  if (dictionary == null) fail('entitlements has no dictionary');
+  final group = RegExp(
+    r'<key>keychain-access-groups</key>\s*<array>(.*?)</array>|<key>keychain-access-groups</key>\s*<array\s*/>',
+    dotAll: true,
+  ).firstMatch(dictionary);
+  if (group == null || RegExp(r'<key>').allMatches(dictionary).length != 1) {
+    fail('entitlements must contain only keychain-access-groups');
+  }
+  final contents = group.group(1) ?? '';
+  final strings = RegExp(
+    r'<string>(.*?)</string>',
+    dotAll: true,
+  ).allMatches(contents).map((match) => match.group(1)!).toList();
+  if (contents
+      .replaceAll(RegExp(r'<string>.*?</string>', dotAll: true), '')
+      .trim()
+      .isNotEmpty) {
+    fail('keychain-access-groups must be an array of strings');
+  }
+  return strings;
 }

@@ -195,9 +195,166 @@ void main() {
       const PinStoreResult.failure(PinStoreFailure.transactionFinished),
     );
   });
+  test(
+    'restart recovery exposes an orphan without active for explicit commit',
+    () async {
+      final raw = InMemoryRawPinStorage();
+      raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      final restarted = make(raw);
+      final recovered = await restarted.recoverReplacement(authority);
+      final transaction = recoveredTransaction(recovered, replacement);
+      expect(await transaction.commit(), const PinStoreResult.success());
+      expect(
+        await restarted.read(authority),
+        PinReadResult.record(replacement),
+      );
+    },
+  );
+  test(
+    'restart recovery preserves differing active until explicit abort',
+    () async {
+      final raw = InMemoryRawPinStorage();
+      raw.values[PersistentPinStore.activeKey(authority)] = envelope(
+        authority,
+        old,
+      );
+      raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      final restarted = make(raw);
+      final transaction = recoveredTransaction(
+        await restarted.recoverReplacement(authority),
+        replacement,
+      );
+      expect(await transaction.abort(), const PinStoreResult.success());
+      expect(await restarted.read(authority), PinReadResult.record(old));
+    },
+  );
+  test(
+    'recovered commit fails closed when active or pending changed',
+    () async {
+      final raw = InMemoryRawPinStorage();
+      raw.values[PersistentPinStore.activeKey(authority)] = envelope(
+        authority,
+        old,
+      );
+      raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      final restarted = make(raw);
+      final transaction = recoveredTransaction(
+        await restarted.recoverReplacement(authority),
+        replacement,
+      );
+      raw.values[PersistentPinStore.activeKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      expect(
+        await transaction.commit(),
+        const PinStoreResult.failure(PinStoreFailure.replacementChanged),
+      );
+      raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+        authority,
+        old,
+      );
+      expect(
+        await transaction.abort(),
+        const PinStoreResult.failure(PinStoreFailure.replacementChanged),
+      );
+      raw.values[PersistentPinStore.activeKey(authority)] = envelope(
+        authority,
+        old,
+      );
+      raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      expect(await transaction.abort(), const PinStoreResult.success());
+    },
+  );
+  test('recovery fails closed for malformed/backend values and ownership collision', () async {
+    final raw = InMemoryRawPinStorage();
+    raw.values[PersistentPinStore.pendingKey(authority)] = '{}';
+    final store = make(raw);
+    expect(
+      await store.recoverReplacement(authority),
+      const PinRecoveryResult.failure(PinStoreFailure.malformedRecord),
+    );
+    raw.values.clear();
+    raw.values[PersistentPinStore.activeKey(authority)] = '{}';
+    expect(
+      await store.recoverReplacement(authority),
+      const PinRecoveryResult.failure(PinStoreFailure.malformedRecord),
+    );
+    raw.values.clear();
+    raw.failNextRead();
+    expect(
+      await store.recoverReplacement(authority),
+      const PinRecoveryResult.failure(PinStoreFailure.readFailed),
+    );
+    raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+      authority,
+      replacement,
+    );
+    final first = make(raw);
+    final transaction = recoveredTransaction(
+      await first.recoverReplacement(authority),
+      replacement,
+    );
+    final second = make(raw);
+    expect(
+      await second.recoverReplacement(authority),
+      const PinRecoveryResult.failure(PinStoreFailure.replacementInProgress),
+    );
+    expect(await transaction.abort(), const PinStoreResult.success());
+  });
+  test(
+    'recovery safely cleans a pending value already committed as active',
+    () async {
+      final raw = InMemoryRawPinStorage();
+      raw.values[PersistentPinStore.activeKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      raw.values[PersistentPinStore.pendingKey(authority)] = envelope(
+        authority,
+        replacement,
+      );
+      final store = make(raw);
+      expect(
+        await store.recoverReplacement(authority),
+        const PinRecoveryResult.none(),
+      );
+      expect(
+        raw.values.containsKey(PersistentPinStore.pendingKey(authority)),
+        isFalse,
+      );
+      expect(await store.read(authority), PinReadResult.record(replacement));
+    },
+  );
 }
 
 PinStoreTransaction staged(PinStageResult result) => switch (result) {
   PinStageSuccess(:final transaction) => transaction,
   PinStageFailure(:final failure) => fail('stage failed: $failure'),
 };
+
+PinStoreTransaction recoveredTransaction(
+  PinRecoveryResult result,
+  PinRecord record,
+) => switch (result) {
+  PinRecoverySuccess(:final pending, :final transaction)
+      when pending == record =>
+    transaction,
+  PinRecoveryFailure(:final failure) => fail('recovery failed: $failure'),
+  _ => fail('recovery did not return the expected pending record'),
+};
+
+String envelope(NormalizedAuthority authority, PinRecord record) =>
+    jsonEncode({'authority': authority.pinKey, 'record': record.toJson()});

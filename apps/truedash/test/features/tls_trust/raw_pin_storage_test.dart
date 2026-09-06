@@ -40,4 +40,29 @@ void main() {
       const RawPinStorageResult.failure(RawPinStorageFailure.deleteFailed),
     );
   });
+
+  test(
+    'conditional operations never overwrite or delete a changed value',
+    () async {
+      final storage = InMemoryRawPinStorage();
+      storage.values['active'] = 'old';
+      storage.values['pending'] = 'candidate';
+      expect(
+        await storage.writeIfValues(
+          'active',
+          'old',
+          'pending',
+          'different',
+          'new',
+        ),
+        const RawPinStorageResult.notMatched(),
+      );
+      expect(storage.values['active'], 'old');
+      expect(
+        await storage.deleteIfValue('pending', 'different'),
+        const RawPinStorageResult.notMatched(),
+      );
+      expect(storage.values['pending'], 'candidate');
+    },
+  );
 }

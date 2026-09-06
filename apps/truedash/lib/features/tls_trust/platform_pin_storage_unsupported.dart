@@ -18,4 +18,29 @@ final class UnsupportedRawPinStorage implements RawPinStorage {
       const RawPinStorageResult.failure(
         RawPinStorageFailure.unsupportedPlatform,
       );
+  @override
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  ) async => const RawPinStorageResult.failure(
+    RawPinStorageFailure.unsupportedPlatform,
+  );
+  @override
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  ) async => const RawPinStorageResult.failure(
+    RawPinStorageFailure.unsupportedPlatform,
+  );
+  @override
+  Future<RawPinStorageResult> deleteIfValue(
+    String key,
+    String expectedValue,
+  ) async => const RawPinStorageResult.failure(
+    RawPinStorageFailure.unsupportedPlatform,
+  );
 }

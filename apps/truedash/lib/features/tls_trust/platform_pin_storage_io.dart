@@ -69,6 +69,58 @@ final class FlutterSecureRawPinStorage implements RawPinStorage {
       );
     }
   }
+
+  @override
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  ) async {
+    final current = await read(key);
+    if (current is RawPinReadFailure) {
+      return RawPinStorageResult.failure(current.failure);
+    }
+    final actual = switch (current) {
+      RawPinAbsent() => null,
+      RawPinValue(:final value) => value,
+      _ => null,
+    };
+    if (actual != expectedValue) return const RawPinStorageResult.notMatched();
+    return write(key, value);
+  }
+
+  @override
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  ) async {
+    final guard = await read(guardKey);
+    if (guard is RawPinReadFailure) {
+      return RawPinStorageResult.failure(guard.failure);
+    }
+    if (guard is! RawPinValue || guard.value != expectedGuardValue) {
+      return const RawPinStorageResult.notMatched();
+    }
+    return writeIfValue(key, expectedValue, value);
+  }
+
+  @override
+  Future<RawPinStorageResult> deleteIfValue(
+    String key,
+    String expectedValue,
+  ) async {
+    final current = await read(key);
+    if (current is RawPinReadFailure) {
+      return RawPinStorageResult.failure(current.failure);
+    }
+    if (current is! RawPinValue || current.value != expectedValue) {
+      return const RawPinStorageResult.notMatched();
+    }
+    return delete(key);
+  }
 }
 
 final class _UnsupportedRawPinStorage implements RawPinStorage {
@@ -86,4 +138,29 @@ final class _UnsupportedRawPinStorage implements RawPinStorage {
       const RawPinStorageResult.failure(
         RawPinStorageFailure.unsupportedPlatform,
       );
+  @override
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  ) async => const RawPinStorageResult.failure(
+    RawPinStorageFailure.unsupportedPlatform,
+  );
+  @override
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  ) async => const RawPinStorageResult.failure(
+    RawPinStorageFailure.unsupportedPlatform,
+  );
+  @override
+  Future<RawPinStorageResult> deleteIfValue(
+    String key,
+    String expectedValue,
+  ) async => const RawPinStorageResult.failure(
+    RawPinStorageFailure.unsupportedPlatform,
+  );
 }

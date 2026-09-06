@@ -5,6 +5,28 @@ abstract interface class RawPinStorage {
   Future<RawPinReadResult> read(String key);
   Future<RawPinStorageResult> write(String key, String value);
   Future<RawPinStorageResult> delete(String key);
+
+  /// Changes a value only when it still has the expected value. A null
+  /// expectation means the key must still be absent.
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  );
+
+  /// Changes [key] only while both it and [guardKey] still match their
+  /// expected values. Store ownership serializes app operations; backends
+  /// fail closed when either condition cannot be verified.
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  );
+
+  /// Deletes a value only when it still exactly matches [expectedValue].
+  Future<RawPinStorageResult> deleteIfValue(String key, String expectedValue);
 }
 
 enum RawPinStorageFailure {
@@ -55,6 +77,7 @@ sealed class RawPinStorageResult {
   const factory RawPinStorageResult.success() = RawPinStorageSuccess;
   const factory RawPinStorageResult.failure(RawPinStorageFailure failure) =
       RawPinStorageOperationFailure;
+  const factory RawPinStorageResult.notMatched() = RawPinStorageNotMatched;
 }
 
 final class RawPinStorageSuccess extends RawPinStorageResult {
@@ -73,6 +96,14 @@ final class RawPinStorageOperationFailure extends RawPinStorageResult {
       other is RawPinStorageOperationFailure && other.failure == failure;
   @override
   int get hashCode => failure.hashCode;
+}
+
+final class RawPinStorageNotMatched extends RawPinStorageResult {
+  const RawPinStorageNotMatched();
+  @override
+  bool operator ==(Object other) => other is RawPinStorageNotMatched;
+  @override
+  int get hashCode => 1;
 }
 
 /// Test-only deterministic raw-store fake; it deliberately contains no OS API.
@@ -110,6 +141,56 @@ final class InMemoryRawPinStorage implements RawPinStorage {
     _deleteFailure = null;
     if (failure != null) return RawPinStorageResult.failure(failure);
     values.remove(key);
+    return const RawPinStorageResult.success();
+  }
+
+  @override
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  ) async {
+    final failure = _writeFailure;
+    _writeFailure = null;
+    if (failure != null) return RawPinStorageResult.failure(failure);
+    if (values[key] != expectedValue) {
+      return const RawPinStorageResult.notMatched();
+    }
+    values[key] = value;
+    return const RawPinStorageResult.success();
+  }
+
+  @override
+  Future<RawPinStorageResult> deleteIfValue(
+    String key,
+    String expectedValue,
+  ) async {
+    final failure = _deleteFailure;
+    _deleteFailure = null;
+    if (failure != null) return RawPinStorageResult.failure(failure);
+    if (values[key] != expectedValue) {
+      return const RawPinStorageResult.notMatched();
+    }
+    values.remove(key);
+    return const RawPinStorageResult.success();
+  }
+
+  @override
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  ) async {
+    final failure = _writeFailure;
+    _writeFailure = null;
+    if (failure != null) return RawPinStorageResult.failure(failure);
+    if (values[key] != expectedValue ||
+        values[guardKey] != expectedGuardValue) {
+      return const RawPinStorageResult.notMatched();
+    }
+    values[key] = value;
     return const RawPinStorageResult.success();
   }
 }
