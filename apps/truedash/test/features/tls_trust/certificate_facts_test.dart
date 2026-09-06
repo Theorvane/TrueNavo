@@ -181,6 +181,64 @@ void main() {
     );
   });
 
+  test('ignores an irrelevant non-hostname CN when a DNS SAN is present', () {
+    final result = assess(
+      authority,
+      validHostMatchingLeafDer,
+      parsed(commonName: 'NAS appliance'),
+    );
+
+    expect(result.isApprovable, isTrue);
+    expect(
+      result.presentedCertificate!.facts.subjectSummary,
+      'SAN: nas.example.test',
+    );
+    expect(result.toString(), isNot(contains('NAS appliance')));
+    expect(
+      assess(
+        authority,
+        validHostMatchingLeafDer,
+        parsed(
+          commonName: 'NAS appliance',
+          hasSubjectAlternativeNames: false,
+          dnsSans: const <String>[],
+        ),
+      ).failure,
+      CertificateTrustFailure.malformedCertificate,
+    );
+  });
+
+  test('ignores a control-like CN when a matching IP SAN is present', () {
+    final result = assess(
+      NormalizedAuthority.parse('https://192.0.2.10'),
+      validHostMatchingLeafDer,
+      parsed(
+        commonName: 'NAS\u202Eappliance',
+        dnsSans: const <String>[],
+        ipSans: const <String>['192.0.2.10'],
+      ),
+    );
+
+    expect(result.isApprovable, isTrue);
+    expect(
+      result.presentedCertificate!.facts.subjectSummary,
+      'SAN: 192.0.2.10',
+    );
+    expect(result.toString(), isNot(contains('NAS\u202Eappliance')));
+    expect(
+      assess(
+        authority,
+        validHostMatchingLeafDer,
+        parsed(
+          commonName: 'NAS\u202Eappliance',
+          hasSubjectAlternativeNames: false,
+          dnsSans: const <String>[],
+        ),
+      ).failure,
+      CertificateTrustFailure.malformedCertificate,
+    );
+  });
+
   test(
     'rejects contradictory SAN-presence metadata from the native parser',
     () {
@@ -391,6 +449,9 @@ void main() {
         '2001:db8::g',
         '2001:db8::192.0.2.256',
         '2001:db8::192.0.2.010',
+        '1:2:3:4:5:192.0.2.10::',
+        '1:2:3:4:5:192.0.2.10::1',
+        '1:2:3:4:5:192.0.2.10:1',
       ]) {
         expect(
           assess(

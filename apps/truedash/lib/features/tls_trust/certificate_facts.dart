@@ -148,11 +148,6 @@ final class CertificateFactsPolicy {
   _ValidatedFacts? _validateParsedFacts(NativeParsedLeafFacts facts) {
     final issuer = _safeSummary(facts.issuerSummary);
     if (issuer == null) return null;
-    final commonName = facts.subjectCommonName;
-    final canonicalCn = commonName == null
-        ? null
-        : _canonicalCommonName(commonName);
-    if (commonName != null && canonicalCn == null) return null;
 
     final dnsSans = <String>[];
     for (final san in facts.dnsSubjectAlternativeNames) {
@@ -173,6 +168,13 @@ final class CertificateFactsPolicy {
         (dnsSans.isNotEmpty || ipSans.isNotEmpty)) {
       return null;
     }
+    // RFC 6125 SAN precedence means the CN is irrelevant when the certificate
+    // has supported SAN identities. Do not validate, display, or retain it.
+    final canonicalCn = facts.hasSubjectAlternativeNames
+        ? null
+        : facts.subjectCommonName == null
+        ? null
+        : _canonicalCommonName(facts.subjectCommonName!);
     if (!facts.hasSubjectAlternativeNames && canonicalCn == null) return null;
     return _ValidatedFacts(
       commonName: canonicalCn,
@@ -294,11 +296,19 @@ final class CertificateFactsPolicy {
         ? <String>[...beforeCompression, ...afterCompression]
         : value.split(':');
     final groups = <int>[];
+    var expandedGroupsBeforeCompression = 0;
     for (var index = 0; index < parts.length; index++) {
       final part = parts[index];
       if (part.isEmpty) return null;
+      final groupsBeforePart = groups.length;
       if (part.contains('.')) {
-        if (index != parts.length - 1 || !_isValidIpv4(part)) return null;
+        // A dotted IPv4 tail expands to two groups, and must be the final
+        // textual component. In particular, no compression may follow it.
+        if (index != parts.length - 1 ||
+            !value.endsWith(part) ||
+            !_isValidIpv4(part)) {
+          return null;
+        }
         final octets = part.split('.').map(int.parse).toList();
         groups
           ..add((octets[0] << 8) | octets[1])
@@ -308,11 +318,14 @@ final class CertificateFactsPolicy {
       } else {
         groups.add(int.parse(part, radix: 16));
       }
+      if (hasCompression && index < beforeCompression.length) {
+        expandedGroupsBeforeCompression += groups.length - groupsBeforePart;
+      }
     }
     if (hasCompression) {
       if (groups.length >= 8) return null;
       groups.insertAll(
-        beforeCompression.length,
+        expandedGroupsBeforeCompression,
         List<int>.filled(8 - groups.length, 0),
       );
     } else if (groups.length != 8) {
