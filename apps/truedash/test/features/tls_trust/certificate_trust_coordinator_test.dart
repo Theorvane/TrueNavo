@@ -1309,6 +1309,66 @@ void main() {
     expect(raw.values[PersistentPinStore.pendingKey(authority)], isNull);
     expect(events.where((event) => event == 'probe'), hasLength(1));
   });
+
+  test('pre-active-write failure aborts persistent replacement despite transport cleanup failure', () async {
+    final raw = _FailActiveWriteRawPinStorage();
+    final store = PersistentPinStore(raw);
+    final old = PinRecord(leafDerSha256: digest, createdAt: DateTime.utc(2026));
+    expect(
+      await (await store.stageReplacement(authority, old) as PinStageSuccess)
+          .transaction
+          .commit(),
+      const PinStoreResult.success(),
+    );
+    final events = <String>[];
+    final failedTransport = _Transport()..throwClose = true;
+    final retryTransport = _Transport();
+    final connector = _Connector(events)
+      ..outcome = NativePinnedVerified(failedTransport);
+    final coordinator = CertificateTrustCoordinator(
+      pinStore: store,
+      probe: _Probe(
+        events,
+        NativeProbeCertificate(
+          PresentedCertificate(
+            authority: authority,
+            facts: CertificateFacts(
+              subjectSummary: facts.subjectSummary,
+              issuerSummary: facts.issuerSummary,
+              leafDerSha256: 'F' * 64,
+              notValidBefore: facts.notValidBefore,
+              notValidAfter: facts.notValidAfter,
+            ),
+            platformTrust: PlatformTrust.passed,
+          ),
+        ),
+      ),
+      connector: connector,
+      now: () => DateTime.utc(2026),
+      probeTimeout: const Duration(seconds: 1),
+      reconnectTimeout: const Duration(seconds: 1),
+    );
+    final review = await coordinator.checkForReplacement(
+      authority,
+    ) as ReplacementTrustReview;
+    raw.failNextActiveWrite();
+
+    expect(
+      await coordinator.approve(review.token),
+      _blocked(CertificateTrustCoordinatorFailure.cleanup),
+    );
+    expect(await store.read(authority), PinReadResult.record(old));
+    expect(raw.values[PersistentPinStore.pendingKey(authority)], isNull);
+    expect(failedTransport.closeCount, 1);
+
+    connector.outcome = NativePinnedVerified(retryTransport);
+    expect(
+      await coordinator.retry(review.token),
+      isA<VerifiedTrustTransport>(),
+    );
+    expect(retryTransport.closeCount, 0);
+    expect(events.where((event) => event == 'probe'), hasLength(1));
+  });
 }
 
 CertificateTrustCoordinator _coordinator(

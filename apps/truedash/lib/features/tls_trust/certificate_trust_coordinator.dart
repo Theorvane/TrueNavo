@@ -270,7 +270,7 @@ final class CertificateTrustCoordinator {
       operation.committing = false;
       if (committed is! PinStoreSuccess) {
         final cleanup = await _closeUnhanded(transport);
-        if (!cleanup && committed is PinStorePreActiveWriteFailure) {
+        if (committed is PinStorePreActiveWriteFailure) {
           // This outcome is explicitly pre-active-write, so the transaction
           // still owns only its pending record and can safely release it.
           // Ambiguous and post-write failures retain point-of-no-return
@@ -278,7 +278,9 @@ final class CertificateTrustCoordinator {
           return await _abort(
             operation,
             transaction,
-            CertificateTrustCoordinatorFailure.pinStore,
+            cleanup
+                ? CertificateTrustCoordinatorFailure.cleanup
+                : CertificateTrustCoordinatorFailure.pinStore,
           );
         }
         return _terminal(
