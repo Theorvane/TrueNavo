@@ -600,6 +600,86 @@ void main() {
       },
     );
 
+    test(
+      'reconnect disposes a staged transport when timeout wins during close',
+      () async {
+        final backend = OwnershipBackend()..holdClose = true;
+        final reconnect = BoundedNativeTlsPorts(backend: backend).reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(milliseconds: 1),
+          cancellation: CancellationSource().token,
+        );
+
+        await backend.closeStarted.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        backend.releaseClose();
+
+        expect(
+          await reconnect,
+          const NativePinnedFailure(
+            CertificateTrustFailure.pinnedReconnectFailed,
+          ),
+        );
+        expect(backend.attempt.closeCalls, 1);
+        expect(backend.attempt.transferCalls, 0);
+        expect(backend.attempt.transport.closeCalls, 1);
+      },
+    );
+
+    test(
+      'reconnect disposes a staged transport when cancelled during close',
+      () async {
+        final source = CancellationSource();
+        final backend = OwnershipBackend()..holdClose = true;
+        final reconnect = BoundedNativeTlsPorts(backend: backend).reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(seconds: 1),
+          cancellation: source.token,
+        );
+
+        await backend.closeStarted.future;
+        source.cancel();
+        backend.releaseClose();
+
+        expect(
+          await reconnect,
+          const NativePinnedFailure(CertificateTrustFailure.cancelled),
+        );
+        expect(backend.attempt.closeCalls, 1);
+        expect(backend.attempt.transferCalls, 0);
+        expect(backend.attempt.transport.closeCalls, 1);
+      },
+    );
+
+    test(
+      'reconnect transfers its open transport once after close cleanup',
+      () async {
+        final backend = OwnershipBackend()..holdClose = true;
+        final reconnect = BoundedNativeTlsPorts(backend: backend).reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(seconds: 1),
+          cancellation: CancellationSource().token,
+        );
+
+        await backend.closeStarted.future;
+        expect(backend.attempt.transferCalls, 0);
+        backend.releaseClose();
+
+        final outcome = await reconnect;
+        expect(outcome, isA<NativePinnedVerified>());
+        expect(
+          (outcome as NativePinnedVerified).transport,
+          same(backend.attempt.transport),
+        );
+        expect(backend.attempt.closeCalls, 1);
+        expect(backend.attempt.transferCalls, 1);
+        expect(backend.attempt.transport.closeCalls, 0);
+      },
+    );
+
     test('all platform modules provide their exact Task 4 result', () async {
       final token = CancellationSource().token;
       expect(
@@ -1167,6 +1247,9 @@ final class DeferredResourcePinnedAttempt implements NativePinnedAttempt {
   void transferTransport() {}
 
   @override
+  Future<void> discardTransport() => close();
+
+  @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
@@ -1243,6 +1326,9 @@ final class ScriptedPinnedAttempt implements NativePinnedAttempt {
   @override
   void transferTransport() {}
 
+  @override
+  Future<void> discardTransport() => close();
+
   void complete(NativePinnedOutcome value) {
     if (!_outcome.isCompleted) _outcome.complete(value);
   }
@@ -1261,4 +1347,75 @@ final class ScriptedPinnedAttempt implements NativePinnedAttempt {
     }
     await _backend.closeReconnect(this);
   }
+}
+
+final class OwnershipBackend implements NativeTlsAttemptBackend {
+  late final OwnershipPinnedAttempt attempt;
+  bool holdClose = false;
+  final closeStarted = Completer<void>();
+  final _closeRelease = Completer<void>();
+
+  @override
+  NativeProbeAttempt startProbe({
+    required NormalizedAuthority authority,
+    required CancellationToken cancellation,
+  }) => throw UnimplementedError();
+
+  @override
+  NativePinnedAttempt startReconnect({
+    required NormalizedAuthority authority,
+    required PinRecord pin,
+    required CancellationToken cancellation,
+  }) => attempt = OwnershipPinnedAttempt(this);
+
+  void releaseClose() {
+    if (!_closeRelease.isCompleted) _closeRelease.complete();
+  }
+}
+
+final class OwnershipPinnedAttempt implements NativePinnedAttempt {
+  OwnershipPinnedAttempt(this._backend) {
+    _outcome.complete(NativePinnedVerified(transport));
+  }
+
+  final OwnershipBackend _backend;
+  final transport = _TrackingRpcTransport();
+  final _outcome = Completer<NativePinnedOutcome>();
+  int closeCalls = 0;
+  int transferCalls = 0;
+  Future<void>? _closeFuture;
+  Future<void>? _discardFuture;
+
+  @override
+  Future<NativePinnedOutcome> get outcome => _outcome.future;
+
+  @override
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
+    closeCalls++;
+    if (!_backend.closeStarted.isCompleted) _backend.closeStarted.complete();
+    if (_backend.holdClose) await _backend._closeRelease.future;
+  }
+
+  @override
+  Future<void> discardTransport() => _discardFuture ??= transport.close();
+
+  @override
+  void transferTransport() => transferCalls++;
+}
+
+final class _TrackingRpcTransport implements RpcTransport {
+  int closeCalls = 0;
+
+  @override
+  Stream<String> get inboundFrames => const Stream.empty();
+
+  @override
+  Future<void> close() async {
+    closeCalls++;
+  }
+
+  @override
+  Future<void> send(String frame) async {}
 }

@@ -211,8 +211,11 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   final _outcome = Completer<NativePinnedOutcome>();
   CancellationRegistration? _registration;
   Future<void>? _closeFuture;
+  Future<void>? _discardFuture;
+  Future<void>? _transportCloseFuture;
   _ApplePinnedRpcTransport? _transport;
   var _transferred = false;
+  var _discardRequested = false;
 
   void start() {
     _registration = cancellation.register(() {
@@ -239,11 +242,9 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
 
   void _received(Object? response) {
     final decoded = _decodePinnedConnect(response, operationId);
-    // Native cancellation retains operation ownership through didOpen, so it
-    // synchronously owns (and closes) an accepted session even when the Dart
-    // response is delivered late.  Do not introduce an untracked second close
-    // here: BoundedNativeTlsPorts already awaited the native cancellation.
-    if (_outcome.isCompleted || cancellation.isCancelled) {
+    if (_outcome.isCompleted || cancellation.isCancelled || _discardRequested) {
+      final sessionId = decoded.sessionId;
+      if (sessionId != null) _closeLateTransport(sessionId);
       return;
     }
     final failure = decoded.failure;
@@ -266,22 +267,58 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   Future<NativePinnedOutcome> get outcome => _outcome.future;
   @override
   void transferTransport() => _transferred = true;
+
+  @override
+  Future<void> discardTransport() {
+    _discardRequested = true;
+    return _discardFuture ??= _discardTransport();
+  }
+
+  Future<void> _discardTransport() async {
+    final transport = _transport;
+    if (transport != null) await _closeTransport(transport);
+  }
+
+  void _closeLateTransport(String sessionId) {
+    final transport = _ApplePinnedRpcTransport(channel, sessionId);
+    unawaited(_ignoreLateTransportClose(transport));
+  }
+
+  Future<void> _ignoreLateTransportClose(
+    _ApplePinnedRpcTransport transport,
+  ) async {
+    try {
+      await _closeTransport(transport);
+    } catch (_) {
+      // A late native response cannot surface an asynchronous platform error.
+    }
+  }
+
+  Future<void> _closeTransport(_ApplePinnedRpcTransport transport) =>
+      _transportCloseFuture ??= transport.close();
+
   @override
   Future<void> close() => _closeFuture ??= _close();
   Future<void> _close() async {
     _registration?.dispose();
-    if (!_transferred) {
-      final transport = _transport;
-      if (transport != null) {
-        await transport.close();
-      } else {
-        try {
-          await channel.invokeMethod(_pinnedCancelMethod, <String, Object?>{
-            'protocolVersion': _protocolVersion,
-            'operationId': operationId,
-          });
-        } catch (_) {}
+    if (_transferred) return;
+    final transport = _transport;
+    if (transport != null) {
+      if (cancellation.isCancelled || _discardRequested) {
+        await _closeTransport(transport);
       }
+      _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
+      return;
+    }
+    final response = await channel.invokeMethod(
+      _pinnedCancelMethod,
+      <String, Object?>{
+        'protocolVersion': _protocolVersion,
+        'operationId': operationId,
+      },
+    );
+    if (!_cancelAcknowledged(response, operationId)) {
+      throw StateError('Invalid cancel acknowledgement.');
     }
     _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
   }
@@ -325,6 +362,15 @@ _PinnedConnectResult _decodePinnedConnect(Object? raw, String operationId) {
     sessionId: null,
     failure: CertificateTrustFailure.malformedCertificate,
   );
+}
+
+bool _cancelAcknowledged(Object? raw, String operationId) {
+  final map = _stringMap(raw);
+  return map != null &&
+      map.length == 3 &&
+      map['protocolVersion'] == _protocolVersion &&
+      map['operationId'] == operationId &&
+      map['failureCode'] == 'cancelled';
 }
 
 Map<String, Object?>? _stringMap(Object? value) {

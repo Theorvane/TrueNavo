@@ -185,13 +185,22 @@ abstract interface class NativeProbeAttempt {
 
 /// A registered, closeable pinned-reconnect attempt.
 ///
-/// [close] is idempotent, operation-specific, waits for cleanup, and prevents
-/// future activity, releases resources, and settles or releases any pending
-/// [outcome].
+/// [close] is idempotent, operation-specific, waits for operation-metadata
+/// cleanup, prevents future connection activity, and settles or releases any
+/// pending [outcome]. A verified transport remains staged after [close] until
+/// the bounded owner invokes exactly one of [transferTransport] or
+/// [discardTransport].
 abstract interface class NativePinnedAttempt {
   Future<NativePinnedOutcome> get outcome;
 
   Future<void> close();
+
+  /// Disposes a verified transport that was never handed to the caller.
+  ///
+  /// This is separate from [close] so an attempt can finish its operation
+  /// metadata cleanup before the bounded owner makes its final handoff
+  /// decision.
+  Future<void> discardTransport();
 
   /// Atomically releases a verified transport to the caller.  Implementations
   /// must ensure subsequent attempt cleanup cannot close that transport.
@@ -380,17 +389,14 @@ final class BoundedNativeTlsPorts
     });
     _reconnectOutcome(attempt).then(complete);
     final outcome = await winner.future;
-    final canTransfer =
-        outcome is NativePinnedVerified &&
-        !cancelled &&
-        !cancellation.isCancelled &&
-        !timedOut;
-    if (canTransfer) {
-      attempt.transferTransport();
-    }
     try {
       await attempt.close();
     } catch (_) {
+      try {
+        await attempt.discardTransport();
+      } catch (_) {
+        // The cleanup failure below intentionally takes precedence.
+      }
       return const NativePinnedBoundaryFailure(
         NativeTlsBoundaryFailure.cleanupFailed,
       );
@@ -399,12 +405,29 @@ final class BoundedNativeTlsPorts
       registration.dispose();
     }
     if (cancelled || cancellation.isCancelled) {
+      try {
+        await attempt.discardTransport();
+      } catch (_) {
+        return const NativePinnedBoundaryFailure(
+          NativeTlsBoundaryFailure.cleanupFailed,
+        );
+      }
       return const NativePinnedFailure(CertificateTrustFailure.cancelled);
     }
     if (timedOut) {
+      try {
+        await attempt.discardTransport();
+      } catch (_) {
+        return const NativePinnedBoundaryFailure(
+          NativeTlsBoundaryFailure.cleanupFailed,
+        );
+      }
       return const NativePinnedFailure(
         CertificateTrustFailure.pinnedReconnectFailed,
       );
+    }
+    if (outcome is NativePinnedVerified) {
+      attempt.transferTransport();
     }
     return outcome;
   }

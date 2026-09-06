@@ -573,11 +573,11 @@ void main() {
         await handoff,
         const NativePinnedFailure(CertificateTrustFailure.cancelled),
       );
-      // The awaited operation cancellation owns a native session that may
-      // already have crossed didOpen; a late Dart reply must not add an
-      // untracked second close.
+      // A Dart response queued behind cancellation has a session identifier,
+      // so it is closed through the session-scoped fallback exactly once.
       expect(handoffChannel.cancelCalls, hasLength(1));
-      expect(handoffChannel.closeCalls, isEmpty);
+      await Future<void>.delayed(Duration.zero);
+      expect(handoffChannel.closeCalls, hasLength(1));
 
       final ownerSource = CancellationSource();
       final ownerChannel = _FakePinnedChannel();
@@ -634,9 +634,9 @@ void main() {
           channel.completeConnect(channel.calls.single.operationId);
         }
         source.cancel();
+        await channel.heldCancelStarted.future;
         var settled = false;
         reconnect.whenComplete(() => settled = true);
-        await Future<void>.delayed(Duration.zero);
         expect(channel.cancelCalls, hasLength(1));
         expect(settled, isFalse);
         channel.completeCancel();
@@ -644,8 +644,71 @@ void main() {
           await reconnect,
           const NativePinnedFailure(CertificateTrustFailure.cancelled),
         );
-        expect(channel.closeCalls, isEmpty);
+        await Future<void>.delayed(Duration.zero);
+        expect(channel.closeCalls, hasLength(openedBeforeCancel ? 1 : 0));
       }
+    });
+
+    test('failed cancel acknowledgements are cleanup failures and late sessions close once', () async {
+      for (final cancelResponse in <Object?>[
+        StateError('native cancel failure'),
+        <String, Object>{'protocolVersion': 1, 'operationId': 'wrong'},
+        <String, Object>{
+          'protocolVersion': 1,
+          'operationId': '0' * 32,
+          'failureCode': 'pinMismatch',
+        },
+      ]) {
+        final source = CancellationSource();
+        final channel = _FakePinnedChannel()..nextCancelResult = cancelResponse;
+        final reconnect =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              appleChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: source.token,
+            );
+
+        source.cancel();
+        expect(
+          await reconnect,
+          const NativePinnedBoundaryFailure(
+            NativeTlsBoundaryFailure.cleanupFailed,
+          ),
+        );
+        channel.completeConnect(channel.calls.single.operationId);
+        await Future<void>.delayed(Duration.zero);
+        expect(channel.closeCalls, hasLength(1));
+      }
+    });
+
+    test('a late valid session after cancellation is closed once', () async {
+      final source = CancellationSource();
+      final channel = _FakePinnedChannel()..holdCancel = true;
+      final reconnect =
+          createReconnectForNativeTlsPlatform(
+            NativeTlsPlatform.apple,
+            appleChannel: channel,
+          ).reconnect(
+            authority: authority,
+            pin: pin,
+            timeout: const Duration(milliseconds: 100),
+            cancellation: source.token,
+          );
+
+      source.cancel();
+      await channel.heldCancelStarted.future;
+      channel.completeConnect(channel.calls.single.operationId);
+      channel.completeCancel();
+      expect(
+        await reconnect,
+        const NativePinnedFailure(CertificateTrustFailure.cancelled),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(channel.closeCalls, hasLength(1));
     });
 
     test('maps fixed native failures separately, isolates probe identity, and retains normal public trust source', () async {
@@ -758,11 +821,13 @@ final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
   final _pendingReceives = <Completer<Object?>>[];
   Object? nextSendResult = _unset;
   Object? nextCloseResult = _unset;
+  Object? nextCancelResult = _unset;
   bool holdSend = false;
   Completer<Object?>? _pendingSend;
   bool holdClose = false;
   Completer<Object?>? _pendingClose;
   bool holdCancel = false;
+  final heldCancelStarted = Completer<void>();
   Completer<Object?>? _pendingCancel;
 
   @override
@@ -775,7 +840,19 @@ final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
     }
     if (method == 'truedash.cancelPinnedRpc') {
       cancelCalls.add(message);
-      if (holdCancel) return (_pendingCancel = Completer<Object?>()).future;
+      if (holdCancel) {
+        final pending = _pendingCancel = Completer<Object?>();
+        if (!heldCancelStarted.isCompleted) heldCancelStarted.complete();
+        return pending.future;
+      }
+      if (identical(nextCancelResult, _unset)) {
+        return Future<Object?>.value(<String, Object>{
+          'protocolVersion': 1,
+          'operationId': message.operationId,
+          'failureCode': 'cancelled',
+        });
+      }
+      return _respond(nextCancelResult);
     }
     if (method == 'truedash.receivePinnedRpc') {
       receiveCalls.add(message);
@@ -849,11 +926,15 @@ final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
     );
   }
 
-  void completeCancel() => _pendingCancel!.complete(<String, Object>{
-    'protocolVersion': 1,
-    'operationId': calls.single.operationId,
-    'failureCode': 'cancelled',
-  });
+  void completeCancel([Object? response = _unset]) => _pendingCancel!.complete(
+    identical(response, _unset)
+        ? <String, Object>{
+            'protocolVersion': 1,
+            'operationId': calls.single.operationId,
+            'failureCode': 'cancelled',
+          }
+        : response,
+  );
 }
 
 final class _SynchronousChannelError {
