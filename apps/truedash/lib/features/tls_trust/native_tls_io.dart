@@ -373,7 +373,9 @@ final class _ApplePinnedRpcTransport implements RpcTransport {
         'sessionId': _sessionId,
         'frame': frame,
       });
-      if (!_ack(response)) throw const RpcTransportClosedException();
+      if (_closed || !_ack(response)) {
+        throw const RpcTransportClosedException();
+      }
     } catch (_) {
       await _failClosed();
       throw const RpcTransportClosedException();
@@ -388,7 +390,7 @@ final class _ApplePinnedRpcTransport implements RpcTransport {
         'sessionId': _sessionId,
       }),
     ).then(
-      (response) {
+      (response) async {
         if (_closed) return;
         final map = _stringMap(response);
         if (map == null ||
@@ -398,7 +400,12 @@ final class _ApplePinnedRpcTransport implements RpcTransport {
           return;
         }
         if (map.length == 3 && map['frame'] is String) {
-          _frames.add(map['frame']! as String);
+          final frame = map['frame']! as String;
+          if (utf8.encode(frame).length > 1024 * 1024) {
+            await _failClosed();
+            return;
+          }
+          _frames.add(frame);
           // This receive has settled before its `then` callback runs. Start
           // the next one directly: there is still exactly one in flight.
           _poll();

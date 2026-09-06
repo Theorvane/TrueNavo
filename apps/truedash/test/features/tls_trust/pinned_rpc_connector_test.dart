@@ -399,6 +399,70 @@ void main() {
     });
 
     test(
+      'a valid send acknowledgement after close still fails typed',
+      () async {
+        final channel = _FakePinnedChannel()..holdSend = true;
+        final transport = (await _successfulReconnect(
+          channel,
+          authority,
+          pin,
+        )).transport;
+        final events = <Object>[];
+        final subscription = transport.inboundFrames.listen(
+          events.add,
+          onError: events.add,
+        );
+
+        final sent = transport.send('x');
+        expect(channel.transportMessages, hasLength(1));
+        final closed = transport.close();
+        await closed;
+        channel.completeSend();
+
+        await expectLater(sent, throwsA(isA<RpcTransportClosedException>()));
+        expect(channel.closeCalls, hasLength(1));
+        expect(events.whereType<RpcTransportClosedException>(), hasLength(0));
+        await subscription.cancel();
+      },
+    );
+
+    test(
+      'oversized inbound UTF-8 frame fails through shared awaited cleanup',
+      () async {
+        final channel = _FakePinnedChannel()..holdClose = true;
+        final transport = (await _successfulReconnect(
+          channel,
+          authority,
+          pin,
+        )).transport;
+        final tooLarge = List<String>.filled(262145, '😀').join();
+        expect(tooLarge.length, lessThan(1024 * 1024));
+        final received = expectLater(
+          transport.inboundFrames,
+          emitsInOrder(<Object>[
+            emitsError(isA<RpcTransportClosedException>()),
+            emitsDone,
+          ]),
+        );
+        channel.completeReceive(<String, Object>{
+          'protocolVersion': 1,
+          'sessionId': _FakePinnedChannel.sessionId,
+          'frame': tooLarge,
+        });
+        await Future<void>.delayed(Duration.zero);
+        final explicit = transport.close();
+        var settled = false;
+        explicit.whenComplete(() => settled = true);
+        expect(channel.closeCalls, hasLength(1));
+        expect(settled, isFalse);
+        channel.completeClose();
+        await explicit;
+        await received;
+        expect(channel.receiveCalls, hasLength(1));
+      },
+    );
+
+    test(
       'failure cleanup is shared with explicit close and is awaited',
       () async {
         for (final failure in ['send', 'receive', 'remote']) {
@@ -694,6 +758,8 @@ final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
   final _pendingReceives = <Completer<Object?>>[];
   Object? nextSendResult = _unset;
   Object? nextCloseResult = _unset;
+  bool holdSend = false;
+  Completer<Object?>? _pendingSend;
   bool holdClose = false;
   Completer<Object?>? _pendingClose;
   bool holdCancel = false;
@@ -719,6 +785,7 @@ final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
     }
     if (method == 'truedash.sendPinnedRpc') {
       transportMessages.add(message);
+      if (holdSend) return (_pendingSend = Completer<Object?>()).future;
       return _respond(nextSendResult);
     }
     if (method == 'truedash.closePinnedRpc') {
@@ -759,6 +826,14 @@ final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
   void completeReceive(Object? response) {
     final pending = _pendingReceives.removeAt(0);
     pending.complete(response);
+  }
+
+  void completeSend([Object? response = _unset]) {
+    _pendingSend!.complete(
+      identical(response, _unset)
+          ? <String, Object>{'protocolVersion': 1, 'sessionId': sessionId}
+          : response,
+    );
   }
 
   void failReceive(Object error) {

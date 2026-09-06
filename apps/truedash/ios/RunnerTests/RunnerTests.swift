@@ -177,6 +177,38 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(core.debugStateSnapshot, .init(operationCount: 0, taskCount: 0, sessionCount: 0))
     XCTAssertEqual(completionCount, 1)
   }
+
+  func testPinnedRpcLateSuccessfulSendAfterCloseReturnsFixedClosedResponseOnce() {
+    let core = ApplePinnedRpcCore()
+    let id = "55555555555555555555555555555555"
+    let opened = expectation(description: "opened")
+    guard let fixture = core.debugInstallAcceptedOperation(operationId: id, completion: { _ in opened.fulfill() }) else { return XCTFail("fixture must install") }
+    core.urlSession(fixture.session, webSocketTask: fixture.task, didOpenWithProtocol: nil)
+    wait(for: [opened], timeout: 1)
+    guard let sessionId = core.debugSessionId(for: id) else { return XCTFail("open must create session") }
+
+    let sendStarted = expectation(description: "send held")
+    var releaseSend: ((Error?) -> Void)?
+    core.debugSend = { _, _, completion in releaseSend = completion; sendStarted.fulfill() }
+    let sent = expectation(description: "send closed response")
+    sent.expectedFulfillmentCount = 1
+    var sendCount = 0
+    core.send(["protocolVersion": 1, "sessionId": sessionId, "frame": "x"]) { response in
+      sendCount += 1
+      XCTAssertEqual(response["protocolVersion"] as? Int, 1)
+      XCTAssertEqual(response["sessionId"] as? String, sessionId)
+      XCTAssertEqual(response["closed"] as? Bool, true)
+      XCTAssertEqual(response.count, 3)
+      sent.fulfill()
+    }
+    wait(for: [sendStarted], timeout: 1)
+    let closed = expectation(description: "closed")
+    core.close(["protocolVersion": 1, "sessionId": sessionId]) { _ in closed.fulfill() }
+    wait(for: [closed], timeout: 1)
+    releaseSend?(nil)
+    wait(for: [sent], timeout: 1)
+    XCTAssertEqual(sendCount, 1)
+  }
   #endif
 
   func testRequestValidationAndCancellationCompletionOnce() {

@@ -30,6 +30,11 @@ final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessio
   private var operationByTask: [ObjectIdentifier: String] = [:]
   private var sessions: [String: Session] = [:]
 
+  #if DEBUG
+  /// Test-only seam for holding a WebSocket send completion deterministically.
+  var debugSend: ((URLSessionWebSocketTask, String, @escaping (Error?) -> Void) -> Void)?
+  #endif
+
   init(now: @escaping () -> Date = Date.init) { self.now = now; super.init() }
 
   #if DEBUG
@@ -115,8 +120,17 @@ final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessio
     guard let request = FrameRequest(raw), request.frame.utf8.count <= Self.maximumFrameBytes else { completion(Self.sessionFailure(nil)); return }
     queue.async {
       guard let session = self.sessions[request.sessionId] else { completion(Self.sessionFailure(request.sessionId)); return }
-      session.task.send(.string(request.frame)) { error in
-        self.queue.async { completion(error == nil ? Self.ack(request.sessionId) : Self.sessionFailure(request.sessionId)) }
+      self.send(session, frame: request.frame) { error in
+        self.queue.async {
+          // URLSession can acknowledge an already-issued send after this
+          // session has been removed by close/cleanup. An acknowledgement is
+          // valid only while it still refers to this live session object.
+          guard error == nil, self.sessions[request.sessionId] === session else {
+            completion(Self.sessionFailure(request.sessionId))
+            return
+          }
+          completion(Self.ack(request.sessionId))
+        }
       }
     }
   }
@@ -218,6 +232,12 @@ final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessio
   }
 
   private func operation(for task: URLSessionTask) -> Operation? { operationByTask[ObjectIdentifier(task)].flatMap { operations[$0] } }
+  private func send(_ session: Session, frame: String, completion: @escaping (Error?) -> Void) {
+    #if DEBUG
+    if let debugSend { debugSend(session.task, frame, completion); return }
+    #endif
+    session.task.send(.string(frame), completionHandler: completion)
+  }
   private func fail(_ task: URLSessionTask, _ code: String) { if let operation = operation(for: task) { fail(operation, code) } }
   private func fail(_ operation: Operation, _ code: String) {
     guard operations.removeValue(forKey: operation.request.operationId) != nil else { return }
