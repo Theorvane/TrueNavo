@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/services.dart';
+import 'package:truenas_api/truenas_api.dart';
 
 import 'certificate_facts.dart';
 import 'der_x509_parser.dart';
@@ -16,6 +17,11 @@ const _protocolVersion = 1;
 const _maximumDerBytes = 64 * 1024;
 const _captureMethod = 'truedash.capturePresentedLeaf';
 const _cancelMethod = 'truedash.cancelPresentedLeaf';
+const _pinnedConnectMethod = 'truedash.connectPinnedRpc';
+const _pinnedCancelMethod = 'truedash.cancelPinnedRpc';
+const _pinnedSendMethod = 'truedash.sendPinnedRpc';
+const _pinnedReceiveMethod = 'truedash.receivePinnedRpc';
+const _pinnedCloseMethod = 'truedash.closePinnedRpc';
 
 /// The deliberately tiny bridge used by the Apple capture adapter.
 abstract interface class AppleTlsMethodChannel {
@@ -25,6 +31,21 @@ abstract interface class AppleTlsMethodChannel {
 final class _FlutterAppleTlsMethodChannel implements AppleTlsMethodChannel {
   const _FlutterAppleTlsMethodChannel();
   static const _channel = MethodChannel('truedash.presented_leaf_probe.v1');
+
+  @override
+  Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) =>
+      _channel.invokeMethod<Object?>(method, arguments);
+}
+
+/// The intentionally small, transport-only Apple reconnect bridge.
+abstract interface class ApplePinnedRpcMethodChannel {
+  Future<Object?> invokeMethod(String method, Map<String, Object?> arguments);
+}
+
+final class _FlutterApplePinnedRpcMethodChannel
+    implements ApplePinnedRpcMethodChannel {
+  const _FlutterApplePinnedRpcMethodChannel();
+  static const _channel = MethodChannel('truedash.pinned_rpc.v1');
 
   @override
   Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) =>
@@ -54,7 +75,23 @@ NativeCertificateProbe createProbeForNativeTlsPlatform(
   );
 }
 
-PinnedRpcConnector createReconnect() => _UnavailableReconnect();
+PinnedRpcConnector createReconnect() => createReconnectForNativeTlsPlatform(
+  Platform.isIOS || Platform.isMacOS
+      ? NativeTlsPlatform.apple
+      : NativeTlsPlatform.other,
+);
+
+PinnedRpcConnector createReconnectForNativeTlsPlatform(
+  NativeTlsPlatform platform, {
+  ApplePinnedRpcMethodChannel? appleChannel,
+}) {
+  if (platform != NativeTlsPlatform.apple) return _UnavailableReconnect();
+  return BoundedNativeTlsPorts(
+    backend: ApplePinnedRpcBackend(
+      channel: appleChannel ?? const _FlutterApplePinnedRpcMethodChannel(),
+    ),
+  );
+}
 
 final class _UnavailableProbe implements NativeCertificateProbe {
   @override
@@ -125,6 +162,313 @@ final class ApplePresentedLeafProbeBackend implements NativeTlsAttemptBackend {
     required PinRecord pin,
     required CancellationToken cancellation,
   }) => throw UnsupportedError('Pinned reconnect is not implemented.');
+}
+
+/// A separate backend from the capture-only probe; it owns no certificate
+/// capture capability and sends no application frames during connection.
+final class ApplePinnedRpcBackend implements NativeTlsAttemptBackend {
+  ApplePinnedRpcBackend({required this.channel});
+  final ApplePinnedRpcMethodChannel channel;
+
+  @override
+  NativeProbeAttempt startProbe({
+    required NormalizedAuthority authority,
+    required CancellationToken cancellation,
+  }) =>
+      throw UnsupportedError('Pinned RPC backend cannot capture certificates.');
+
+  @override
+  NativePinnedAttempt startReconnect({
+    required NormalizedAuthority authority,
+    required PinRecord pin,
+    required CancellationToken cancellation,
+  }) {
+    final attempt = _ApplePinnedAttempt(
+      operationId: _newOperationId(),
+      authority: authority,
+      pin: pin,
+      cancellation: cancellation,
+      channel: channel,
+    );
+    attempt.start();
+    return attempt;
+  }
+}
+
+final class _ApplePinnedAttempt implements NativePinnedAttempt {
+  _ApplePinnedAttempt({
+    required this.operationId,
+    required this.authority,
+    required this.pin,
+    required this.cancellation,
+    required this.channel,
+  });
+  final String operationId;
+  final NormalizedAuthority authority;
+  final PinRecord pin;
+  final CancellationToken cancellation;
+  final ApplePinnedRpcMethodChannel channel;
+  final _outcome = Completer<NativePinnedOutcome>();
+  CancellationRegistration? _registration;
+  Future<void>? _closeFuture;
+  _ApplePinnedRpcTransport? _transport;
+  var _transferred = false;
+
+  void start() {
+    _registration = cancellation.register(() {
+      _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
+    });
+    if (cancellation.isCancelled) return;
+    try {
+      channel
+          .invokeMethod(_pinnedConnectMethod, <String, Object?>{
+            'protocolVersion': _protocolVersion,
+            'operationId': operationId,
+            'host': authority.host,
+            'port': authority.port,
+            'rpcPath': authority.rpcConnectionUri.path.isEmpty
+                ? '/'
+                : authority.rpcConnectionUri.path,
+            'leafDerSha256': pin.leafDerSha256,
+          })
+          .then(_received, onError: (_, _) => _complete(_malformed()));
+    } catch (_) {
+      _complete(_malformed());
+    }
+  }
+
+  void _received(Object? response) {
+    final decoded = _decodePinnedConnect(response, operationId);
+    // Native cancellation retains operation ownership through didOpen, so it
+    // synchronously owns (and closes) an accepted session even when the Dart
+    // response is delivered late.  Do not introduce an untracked second close
+    // here: BoundedNativeTlsPorts already awaited the native cancellation.
+    if (_outcome.isCompleted || cancellation.isCancelled) {
+      return;
+    }
+    final failure = decoded.failure;
+    if (failure != null) {
+      _complete(NativePinnedFailure(failure));
+      return;
+    }
+    final sessionId = decoded.sessionId!;
+    _transport = _ApplePinnedRpcTransport(channel, sessionId);
+    _complete(NativePinnedVerified(_transport!));
+  }
+
+  NativePinnedOutcome _malformed() =>
+      const NativePinnedFailure(CertificateTrustFailure.malformedCertificate);
+  void _complete(NativePinnedOutcome value) {
+    if (!_outcome.isCompleted) _outcome.complete(value);
+  }
+
+  @override
+  Future<NativePinnedOutcome> get outcome => _outcome.future;
+  @override
+  void transferTransport() => _transferred = true;
+  @override
+  Future<void> close() => _closeFuture ??= _close();
+  Future<void> _close() async {
+    _registration?.dispose();
+    if (!_transferred) {
+      final transport = _transport;
+      if (transport != null) {
+        await transport.close();
+      } else {
+        try {
+          await channel.invokeMethod(_pinnedCancelMethod, <String, Object?>{
+            'protocolVersion': _protocolVersion,
+            'operationId': operationId,
+          });
+        } catch (_) {}
+      }
+    }
+    _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
+  }
+}
+
+typedef _PinnedConnectResult = ({
+  String? sessionId,
+  CertificateTrustFailure? failure,
+});
+
+_PinnedConnectResult _decodePinnedConnect(Object? raw, String operationId) {
+  final map = _stringMap(raw);
+  if (map == null ||
+      map['protocolVersion'] != _protocolVersion ||
+      map['operationId'] != operationId) {
+    return (
+      sessionId: null,
+      failure: CertificateTrustFailure.malformedCertificate,
+    );
+  }
+  if (map.containsKey('sessionId') &&
+      map.length == 3 &&
+      _validId(map['sessionId'])) {
+    return (sessionId: map['sessionId']! as String, failure: null);
+  }
+  if (map.containsKey('failureCode') && map.length == 3) {
+    final failure = switch (map['failureCode']) {
+      'pinMismatch' => CertificateTrustFailure.pinMismatch,
+      'hostnameMismatch' => CertificateTrustFailure.hostnameMismatch,
+      'expiredCertificate' => CertificateTrustFailure.expiredCertificate,
+      'notYetValidCertificate' =>
+        CertificateTrustFailure.notYetValidCertificate,
+      'malformedCertificate' => CertificateTrustFailure.malformedCertificate,
+      'pinnedReconnectFailed' => CertificateTrustFailure.pinnedReconnectFailed,
+      'cancelled' => CertificateTrustFailure.cancelled,
+      _ => CertificateTrustFailure.malformedCertificate,
+    };
+    return (sessionId: null, failure: failure);
+  }
+  return (
+    sessionId: null,
+    failure: CertificateTrustFailure.malformedCertificate,
+  );
+}
+
+Map<String, Object?>? _stringMap(Object? value) {
+  if (value is! Map) return null;
+  final map = <String, Object?>{};
+  for (final entry in value.entries) {
+    if (entry.key is! String || map.containsKey(entry.key)) return null;
+    map[entry.key as String] = entry.value;
+  }
+  return map;
+}
+
+bool _validId(Object? value) =>
+    value is String && RegExp(r'^[0-9a-f]{32}$').hasMatch(value);
+
+final class _ApplePinnedRpcTransport implements RpcTransport {
+  _ApplePinnedRpcTransport(this._channel, this._sessionId);
+  final ApplePinnedRpcMethodChannel _channel;
+  final String _sessionId;
+  final _frames = StreamController<String>();
+  bool _started = false;
+  bool _closed = false;
+  Future<void>? _closeFuture;
+
+  @override
+  Stream<String> get inboundFrames {
+    if (!_started) {
+      _started = true;
+      _poll();
+    }
+    return _frames.stream;
+  }
+
+  @override
+  Future<void> send(String frame) async {
+    if (_closed) {
+      throw const RpcTransportClosedException();
+    }
+    if (utf8.encode(frame).length > 1024 * 1024) {
+      await _failClosed();
+      throw const RpcTransportClosedException();
+    }
+    try {
+      final response = await _channel.invokeMethod(_pinnedSendMethod, {
+        'protocolVersion': _protocolVersion,
+        'sessionId': _sessionId,
+        'frame': frame,
+      });
+      if (!_ack(response)) throw const RpcTransportClosedException();
+    } catch (_) {
+      await _failClosed();
+      throw const RpcTransportClosedException();
+    }
+  }
+
+  void _poll() {
+    if (_closed) return;
+    Future<Object?>.sync(
+      () => _channel.invokeMethod(_pinnedReceiveMethod, {
+        'protocolVersion': _protocolVersion,
+        'sessionId': _sessionId,
+      }),
+    ).then(
+      (response) {
+        if (_closed) return;
+        final map = _stringMap(response);
+        if (map == null ||
+            map['protocolVersion'] != _protocolVersion ||
+            map['sessionId'] != _sessionId) {
+          _failClosed();
+          return;
+        }
+        if (map.length == 3 && map['frame'] is String) {
+          _frames.add(map['frame']! as String);
+          // This receive has settled before its `then` callback runs. Start
+          // the next one directly: there is still exactly one in flight.
+          _poll();
+          return;
+        }
+        if (map.length == 3 && map['closed'] == true) {
+          _failClosed();
+          return;
+        }
+        _failClosed();
+      },
+      onError: (_, _) {
+        _failClosed();
+      },
+    );
+  }
+
+  bool _ack(Object? value) {
+    final map = _stringMap(value);
+    return map != null &&
+        map.length == 2 &&
+        map['protocolVersion'] == _protocolVersion &&
+        map['sessionId'] == _sessionId;
+  }
+
+  Future<void> _failClosed() =>
+      _closeFuture ??= _finishClose(reportFailure: true, validateAck: false);
+
+  Future<void> _finishClose({
+    required bool reportFailure,
+    required bool validateAck,
+  }) async {
+    _closed = true;
+    // A stream error with no subscriber is an uncaught zone error.  The
+    // transport is still closed in that case; an attached listener receives
+    // exactly one typed error followed by done.
+    if (reportFailure && _frames.hasListener) {
+      _frames.addError(const RpcTransportClosedException());
+    }
+    var valid = true;
+    try {
+      final response = await _nativeClose();
+      valid = !validateAck || _ack(response);
+    } catch (_) {
+      valid = false;
+      // The stream boundary intentionally exposes only its typed closed
+      // error, never a platform-channel exception or message.
+    }
+    await _closeFrames();
+    if (validateAck && !valid) throw const RpcTransportClosedException();
+  }
+
+  @override
+  Future<void> close() =>
+      _closeFuture ??= _finishClose(reportFailure: false, validateAck: true);
+
+  // A single-subscription controller's close future waits until a listener
+  // observes done. Explicit close must not wait for a caller that has not yet
+  // subscribed to inboundFrames (or for a native receive that is still held).
+  // A late receive callback is ignored by _poll because _closed is set first.
+  Future<void> _closeFrames() {
+    final hadListener = _frames.hasListener;
+    final closed = _frames.close();
+    return hadListener ? closed : Future<void>.value();
+  }
+
+  Future<Object?> _nativeClose() => _channel.invokeMethod(_pinnedCloseMethod, {
+    'protocolVersion': _protocolVersion,
+    'sessionId': _sessionId,
+  });
 }
 
 final class _AppleProbeAttempt implements NativeProbeAttempt {

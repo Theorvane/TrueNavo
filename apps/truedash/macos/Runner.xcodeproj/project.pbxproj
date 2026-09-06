@@ -30,6 +30,9 @@
 		A1B2C3D40100000000000001 /* PresentedLeafProbePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40100000000000002 /* PresentedLeafProbePlugin.swift */; };
 		A1B2C3D40100000000000003 /* PresentedLeafProbeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40100000000000004 /* PresentedLeafProbeCore.swift */; };
 		A1B2C3D40100000000000005 /* PresentedLeafProbeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40100000000000004 /* PresentedLeafProbeCore.swift */; };
+		A1B2C3D40100000000000006 /* ApplePinnedRpcPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40100000000000007 /* ApplePinnedRpcPlugin.swift */; };
+		A1B2C3D40100000000000008 /* ApplePinnedRpcCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40100000000000009 /* ApplePinnedRpcCore.swift */; };
+		A1B2C3D40100000000000010 /* ApplePinnedRpcCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40100000000000009 /* ApplePinnedRpcCore.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 /* End PBXBuildFile section */
 
@@ -76,6 +79,8 @@
 		33CC11122044BFA00003C045 /* MainFlutterWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainFlutterWindow.swift; sourceTree = "<group>"; };
 		A1B2C3D40100000000000002 /* PresentedLeafProbePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentedLeafProbePlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D40100000000000004 /* PresentedLeafProbeCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PresentedLeafProbeCore.swift; path = ../../apple/PresentedLeafProbeCore.swift; sourceTree = "<group>"; };
+		A1B2C3D40100000000000007 /* ApplePinnedRpcPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplePinnedRpcPlugin.swift; sourceTree = "<group>"; };
+		A1B2C3D40100000000000009 /* ApplePinnedRpcCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ApplePinnedRpcCore.swift; path = ../../apple/ApplePinnedRpcCore.swift; sourceTree = "<group>"; };
 		33CEB47222A05771004F2AC0 /* Flutter-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Debug.xcconfig"; sourceTree = "<group>"; };
 		33CEB47422A05771004F2AC0 /* Flutter-Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Flutter-Release.xcconfig"; sourceTree = "<group>"; };
 		33CEB47722A0578A004F2AC0 /* Flutter-Generated.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = "Flutter-Generated.xcconfig"; path = "ephemeral/Flutter-Generated.xcconfig"; sourceTree = "<group>"; };
@@ -175,6 +180,8 @@
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				A1B2C3D40100000000000002 /* PresentedLeafProbePlugin.swift */,
+				A1B2C3D40100000000000007 /* ApplePinnedRpcPlugin.swift */,
+				A1B2C3D40100000000000009 /* ApplePinnedRpcCore.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
 				33CC11242044D66E0003C045 /* Resources */,
@@ -355,6 +362,7 @@
 			files = (
 				331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */,
 				A1B2C3D40100000000000005 /* PresentedLeafProbeCore.swift in Sources */,
+				A1B2C3D40100000000000010 /* ApplePinnedRpcCore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -366,6 +374,8 @@
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				A1B2C3D40100000000000001 /* PresentedLeafProbePlugin.swift in Sources */,
 				A1B2C3D40100000000000003 /* PresentedLeafProbeCore.swift in Sources */,
+				A1B2C3D40100000000000006 /* ApplePinnedRpcPlugin.swift in Sources */,
+				A1B2C3D40100000000000008 /* ApplePinnedRpcCore.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

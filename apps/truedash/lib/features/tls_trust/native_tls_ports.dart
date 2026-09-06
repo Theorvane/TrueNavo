@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'certificate_facts.dart';
 import 'models.dart';
+
+import 'package:truenas_api/truenas_api.dart';
+
 import 'native_tls_stub.dart'
     if (dart.library.io) 'native_tls_io.dart'
     if (dart.library.js_interop) 'native_tls_web.dart'
@@ -128,7 +131,10 @@ sealed class NativePinnedOutcome {
 }
 
 final class NativePinnedVerified extends NativePinnedOutcome {
-  const NativePinnedVerified();
+  const NativePinnedVerified(this.transport);
+
+  /// The caller owns this transport after a successful handoff.
+  final RpcTransport transport;
 }
 
 final class NativePinnedBrowserManagedTls extends NativePinnedOutcome {
@@ -186,6 +192,10 @@ abstract interface class NativePinnedAttempt {
   Future<NativePinnedOutcome> get outcome;
 
   Future<void> close();
+
+  /// Atomically releases a verified transport to the caller.  Implementations
+  /// must ensure subsequent attempt cleanup cannot close that transport.
+  void transferTransport();
 }
 
 /// Narrow backend seam. It has no application protocol capability.
@@ -365,6 +375,14 @@ final class BoundedNativeTlsPorts
     });
     _reconnectOutcome(attempt).then(complete);
     final outcome = await winner.future;
+    final canTransfer =
+        outcome is NativePinnedVerified &&
+        !cancelled &&
+        !cancellation.isCancelled &&
+        !timedOut;
+    if (canTransfer) {
+      attempt.transferTransport();
+    }
     try {
       await attempt.close();
     } catch (_) {

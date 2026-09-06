@@ -12,6 +12,9 @@ class MainFlutterWindow: NSWindow {
     PresentedLeafProbePlugin.register(
       with: flutterViewController.registrar(forPlugin: "PresentedLeafProbePlugin")
     )
+    ApplePinnedRpcPlugin.register(
+      with: flutterViewController.registrar(forPlugin: "ApplePinnedRpcPlugin")
+    )
 
     super.awakeFromNib()
   }

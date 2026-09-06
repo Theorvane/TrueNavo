@@ -16,5 +16,9 @@ import UIKit
       return
     }
     PresentedLeafProbePlugin.register(with: registrar)
+    guard let pinnedRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "ApplePinnedRpcPlugin") else {
+      return
+    }
+    ApplePinnedRpcPlugin.register(with: pinnedRegistrar)
   }
 }
