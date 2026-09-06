@@ -286,6 +286,8 @@ void main() {
       'Example\u200Bissuer',
       'Example\u2060issuer',
       'Example\u0085issuer',
+      'Example\u2028issuer',
+      'Example\u2029issuer',
     ]) {
       final result = assess(
         authority,

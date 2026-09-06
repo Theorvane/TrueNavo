@@ -356,13 +356,15 @@ final class CertificateFactsPolicy {
   ///
   /// This is intentionally a fail-closed display policy for untrusted issuer
   /// text. It permits normal Unicode letters but rejects C0, DEL, C1, surrogate,
-  /// bidi, and Unicode format controls.
+  /// line/paragraph separators, bidi, and Unicode format controls.
   static bool _isSafeDisplayText(String value) =>
       !value.runes.any(_isUnsafeDisplayCodePoint);
 
   static bool _isUnsafeDisplayCodePoint(int codePoint) {
     if (codePoint <= 0x1f ||
         (codePoint >= 0x7f && codePoint <= 0x9f) ||
+        codePoint == 0x2028 ||
+        codePoint == 0x2029 ||
         (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
       return true;
     }
