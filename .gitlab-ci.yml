@@ -45,10 +45,26 @@ macos_release:
     - fvm install
     - fvm flutter --version
     - fvm flutter pub get
+  # Shipping/notarization requires a real Developer ID and is outside this CI gate.
   script:
-    - (cd apps/truedash && fvm flutter build macos --release)
-    - codesign --verify --deep --strict apps/truedash/build/macos/Build/Products/Release/truedash.app
-    - >-
-      codesign -d --entitlements :- apps/truedash/build/macos/Build/Products/Release/truedash.app 2>/dev/null |
-      plutil -convert json -o - - |
-      python3 -c "import json,sys; assert json.load(sys.stdin).get('com.apple.security.network.client') is True"
+    - |
+      cd "apps/truedash"
+      task2_derived_data_path="$CI_PROJECT_DIR/build/macos-task2-derived"
+      fvm flutter build macos --release --config-only
+      rm -rf "$task2_derived_data_path"
+      xcodebuild -quiet -workspace "macos/Runner.xcworkspace" -scheme Runner -configuration Release -derivedDataPath "$task2_derived_data_path" CODE_SIGNING_ALLOWED=NO build
+      codesign --force --deep --sign - --entitlements "macos/Runner/Release.entitlements" "$task2_derived_data_path/Build/Products/Release/truedash.app"
+      codesign --verify --deep --strict "$task2_derived_data_path/Build/Products/Release/truedash.app"
+      codesign -d --entitlements :- "$task2_derived_data_path/Build/Products/Release/truedash.app" 2>/dev/null |
+        plutil -convert json -o - - |
+        python3 -c "import json,sys; entitlements=json.load(sys.stdin); assert entitlements.get('com.apple.security.network.client') is True; assert 'keychain-access-groups' in entitlements"
+      task2_ios_derived_data_path="$CI_PROJECT_DIR/build/ios-task2-derived"
+      fvm flutter build ios --simulator --debug --config-only
+      rm -rf "$task2_ios_derived_data_path"
+      xcodebuild -quiet -workspace "ios/Runner.xcworkspace" -scheme Runner -configuration Debug -sdk iphonesimulator -derivedDataPath "$task2_ios_derived_data_path" CODE_SIGNING_ALLOWED=NO build
+      codesign --force --deep --sign - --entitlements "ios/Runner/Runner.entitlements" "$task2_ios_derived_data_path/Build/Products/Debug-iphonesimulator/Runner.app"
+      codesign --verify --deep --strict "$task2_ios_derived_data_path/Build/Products/Debug-iphonesimulator/Runner.app"
+      codesign -d --entitlements :- "$task2_ios_derived_data_path/Build/Products/Debug-iphonesimulator/Runner.app" 2>/dev/null |
+        plutil -convert json -o - - |
+        python3 -c "import json,sys; entitlements=json.load(sys.stdin); assert set(entitlements) == {'keychain-access-groups'}; assert entitlements['keychain-access-groups'] == []"
+      ./tool/run_ios_keychain_restart_integration_test.sh
