@@ -207,12 +207,12 @@ void main() {
     },
   );
 
-  test('matches exact DNS and only a safe, one-label wildcard', () {
-    final wildcardFacts = parsed(dnsSans: const <String>['*.nas.example.test']);
+  test('matches exact DNS and only a supported, one-label wildcard', () {
+    final wildcardFacts = parsed(dnsSans: const <String>['*.example.test']);
 
     expect(
       assess(
-        NormalizedAuthority.parse('https://node.nas.example.test'),
+        NormalizedAuthority.parse('https://node.example.test'),
         validHostMatchingLeafDer,
         wildcardFacts,
       ).isApprovable,
@@ -220,7 +220,15 @@ void main() {
     );
     expect(
       assess(
-        NormalizedAuthority.parse('https://a.node.nas.example.test'),
+        NormalizedAuthority.parse('https://a.node.example.test'),
+        validHostMatchingLeafDer,
+        wildcardFacts,
+      ).failure,
+      CertificateTrustFailure.hostnameMismatch,
+    );
+    expect(
+      assess(
+        NormalizedAuthority.parse('https://example.test'),
         validHostMatchingLeafDer,
         wildcardFacts,
       ).failure,
@@ -238,10 +246,56 @@ void main() {
       assess(
         authority,
         validHostMatchingLeafDer,
-        parsed(dnsSans: const <String>['*.example.test']),
+        parsed(dnsSans: const <String>['*.test']),
       ).failure,
       CertificateTrustFailure.malformedCertificate,
     );
+    for (final invalidWildcard in <String>[
+      '*a.example.test',
+      '*.*.example.test',
+      '*.example..test',
+      '*.xn--bad.example.test',
+    ]) {
+      expect(
+        assess(
+          authority,
+          validHostMatchingLeafDer,
+          parsed(dnsSans: <String>[invalidWildcard]),
+        ).failure,
+        CertificateTrustFailure.malformedCertificate,
+        reason: 'must reject unsupported wildcard SAN syntax',
+      );
+    }
+  });
+
+  test('accepts normal safe Unicode issuer text', () {
+    final result = assess(
+      authority,
+      validHostMatchingLeafDer,
+      parsed(issuer: 'Émetteur 인증서'),
+    );
+
+    expect(result.isApprovable, isTrue);
+    expect(result.presentedCertificate!.facts.issuerSummary, 'Émetteur 인증서');
+  });
+
+  test('rejects display-spoofing issuer controls without exposing them', () {
+    for (final unsafeIssuer in <String>[
+      'Example\u202Eissuer',
+      'Example\u2066issuer\u2069',
+      'Example\u200Bissuer',
+      'Example\u2060issuer',
+      'Example\u0085issuer',
+    ]) {
+      final result = assess(
+        authority,
+        validHostMatchingLeafDer,
+        parsed(issuer: unsafeIssuer),
+      );
+
+      expect(result.failure, CertificateTrustFailure.malformedCertificate);
+      expect(result.toString(), isNot(contains(unsafeIssuer)));
+    }
   });
 
   test('IP authorities require an exact canonical IP SAN and never use CN', () {

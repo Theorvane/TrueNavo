@@ -206,7 +206,10 @@ final class CertificateFactsPolicy {
     if (!san.startsWith('*.')) return host == san;
     final suffix = san.substring(2);
     if (!host.endsWith('.$suffix')) return false;
-    return host.split('.').length == suffix.split('.').length + 1;
+    final hostLabels = host.split('.');
+    final suffixLabels = suffix.split('.');
+    // A supported wildcard consumes exactly one complete leftmost host label.
+    return hostLabels.length == suffixLabels.length + 1;
   }
 
   static bool _isIp(String host) =>
@@ -215,9 +218,10 @@ final class CertificateFactsPolicy {
   static String? _canonicalDnsSan(String value) {
     if (value.startsWith('*.')) {
       final suffix = _canonicalDns(value.substring(2));
-      // Without a Public Suffix List, only accept a wildcard below at least
-      // three registrable-looking labels; this rejects broad suffix wildcards.
-      if (suffix == null || suffix.split('.').length < 3) {
+      // This is a deliberately narrow syntax policy, not Public Suffix List
+      // validation: a wildcard has a complete leftmost label and its normalized
+      // suffix must contain at least two DNS labels.
+      if (suffix == null || suffix.split('.').length < 2) {
         return null;
       }
       return '*.$suffix';
@@ -255,9 +259,45 @@ final class CertificateFactsPolicy {
     if (value.isEmpty || value.length > 256 || value != value.trim()) {
       return null;
     }
-    return value.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)
-        ? null
-        : value;
+    return _isSafeDisplayText(value) ? value : null;
+  }
+
+  /// Rejects controls that can alter a security prompt's appearance or order.
+  ///
+  /// This is intentionally a fail-closed display policy for untrusted issuer
+  /// text. It permits normal Unicode letters but rejects C0, DEL, C1, surrogate,
+  /// bidi, and Unicode format controls.
+  static bool _isSafeDisplayText(String value) =>
+      !value.runes.any(_isUnsafeDisplayCodePoint);
+
+  static bool _isUnsafeDisplayCodePoint(int codePoint) {
+    if (codePoint <= 0x1f ||
+        (codePoint >= 0x7f && codePoint <= 0x9f) ||
+        (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+      return true;
+    }
+
+    // Unicode General_Category=Format ranges, including all bidi controls.
+    return codePoint == 0x00ad ||
+        (codePoint >= 0x0600 && codePoint <= 0x0605) ||
+        codePoint == 0x061c ||
+        codePoint == 0x06dd ||
+        codePoint == 0x070f ||
+        (codePoint >= 0x0890 && codePoint <= 0x0891) ||
+        codePoint == 0x08e2 ||
+        codePoint == 0x180e ||
+        (codePoint >= 0x200b && codePoint <= 0x200f) ||
+        (codePoint >= 0x202a && codePoint <= 0x202e) ||
+        (codePoint >= 0x2060 && codePoint <= 0x206f) ||
+        codePoint == 0xfeff ||
+        (codePoint >= 0xfff9 && codePoint <= 0xfffb) ||
+        codePoint == 0x110bd ||
+        codePoint == 0x110cd ||
+        (codePoint >= 0x13430 && codePoint <= 0x1343f) ||
+        (codePoint >= 0x1bca0 && codePoint <= 0x1bca3) ||
+        (codePoint >= 0x1d173 && codePoint <= 0x1d17a) ||
+        codePoint == 0xe0001 ||
+        (codePoint >= 0xe0020 && codePoint <= 0xe007f);
   }
 
   /// Checks only a canonical outer DER TLV envelope, not X.509 semantics.
