@@ -9,6 +9,10 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: '>=3.0.3 <4.0.0'
+  flutter_secure_storage: 11.0.0
+  win32: 6.4.0
+  ffi: 2.2.0
+  crypto: 3.0.7
   truenas_api:
     path: ../../packages/truenas_api
   truedash_design_system:

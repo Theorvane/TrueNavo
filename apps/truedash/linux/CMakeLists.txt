@@ -51,8 +51,12 @@ set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
 # System-level dependencies.
+# flutter_secure_storage uses libsecret. Build with libsecret-1 development
+# headers and run with an unlocked Secret Service/keyring; do not fall back to
+# plaintext storage when no keyring is available.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
+pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
