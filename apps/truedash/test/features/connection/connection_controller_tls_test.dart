@@ -702,6 +702,67 @@ void main() {
     expect(transport.closeCalls, 1);
   });
 
+  test('disposing while a displaced verified repository closes does not publish stale success', () async {
+    final firstAuthority = NormalizedAuthority.parse('https://first.example');
+    final secondAuthority = NormalizedAuthority.parse('https://second.example');
+    final store = InMemoryPinStore();
+    await _seed(store, firstAuthority, _digest);
+    await _seed(store, secondAuthority, _digest);
+    final firstTransport = _CountingTransport();
+    final secondTransport = _CountingTransport();
+    final firstClose = Completer<void>();
+    late _HeldCloseRepository firstRepository;
+    late _HeldCloseRepository secondRepository;
+    var repositoryCount = 0;
+    final container = _nativeContainer(
+      store: store,
+      probe: _AuthorityProbe(<String>[]),
+      connector: _SequenceConnector([
+        NativePinnedVerified(firstTransport),
+        NativePinnedVerified(secondTransport),
+      ]),
+      factory: ({required connector, required credentialVault}) {
+        repositoryCount++;
+        return repositoryCount == 1
+            ? firstRepository = _HeldCloseRepository(
+                connector,
+                closeGate: firstClose.future,
+              )
+            : secondRepository = _HeldCloseRepository(connector);
+      },
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionControllerProvider.notifier);
+
+    await controller.connect(
+      serverInput: 'https://first.example',
+      apiKey: _sentinel,
+    );
+    expect(
+      container.read(serverProfilesControllerProvider).profiles,
+      hasLength(1),
+    );
+
+    final second = controller.connect(
+      serverInput: 'https://second.example',
+      apiKey: _sentinel,
+    );
+    await firstRepository.closeStarted.future;
+    container.invalidate(connectionControllerProvider);
+    firstClose.complete();
+    await second;
+
+    expect(
+      container.read(serverProfilesControllerProvider).profiles,
+      hasLength(1),
+    );
+    expect(container.read(connectionControllerProvider), isA<ConnectionIdle>());
+    expect(firstRepository.closeCalls, 1);
+    expect(secondRepository.closeCalls, 1);
+    expect(firstTransport.closeCalls, 1);
+    expect(secondTransport.closeCalls, 1);
+  });
+
   test(
     'synchronous route provider failure is safe and later connect recovers',
     () async {
@@ -1506,6 +1567,42 @@ final class _DelayedRepository implements SessionRepository {
   @override
   Future<void> close() async {
     closeCalls++;
+    final transport = _transport;
+    _transport = null;
+    await transport?.close();
+  }
+}
+
+final class _HeldCloseRepository implements SessionRepository {
+  _HeldCloseRepository(this.connector, {this.closeGate});
+
+  final RpcConnector connector;
+  final Future<void>? closeGate;
+  final closeStarted = Completer<void>();
+  RpcTransport? _transport;
+  var closeCalls = 0;
+
+  @override
+  Future<ServerSummary> connect({
+    required String serverInput,
+    required String apiKey,
+  }) async {
+    final endpoint = Uri.parse(serverInput);
+    _transport = await connector.connect(endpoint);
+    return ServerSummary(
+      originalHostInput: serverInput,
+      endpointUri: endpoint,
+      identity: 'admin',
+      version: '1',
+      availableMethodNames: const {},
+    );
+  }
+
+  @override
+  Future<void> close() async {
+    closeCalls++;
+    closeStarted.complete();
+    await closeGate;
     final transport = _transport;
     _transport = null;
     await transport?.close();

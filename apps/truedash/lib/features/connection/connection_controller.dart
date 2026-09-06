@@ -369,6 +369,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
           await _closeSafely(displaced);
         }
       }
+      if (!_current(generation)) return;
       ref
           .read(serverProfilesControllerProvider.notifier)
           .registerAndSelect(
