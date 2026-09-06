@@ -17,6 +17,7 @@ typealias PresentedLeafConnectionFactory = (
   _ state: @escaping (NWConnection.State) -> Void
 ) -> PresentedLeafConnection
 typealias PresentedLeafCopier = (SecTrust?) -> Data?
+typealias PlatformTrustEvaluator = (SecTrust?) -> Bool
 
 final class PresentedLeafProbeCore {
   static let protocolVersion = 1
@@ -25,14 +26,17 @@ final class PresentedLeafProbeCore {
   private let queue = DispatchQueue(label: "com.truedash.presented-leaf-probe")
   private let makeConnection: PresentedLeafConnectionFactory
   private let copyLeaf: PresentedLeafCopier
+  private let evaluatePlatformTrust: PlatformTrustEvaluator
   private var operations: [String: Operation] = [:]
 
   init(
     factory: @escaping PresentedLeafConnectionFactory = PresentedLeafProbeCore.networkConnection,
-    leafCopier: @escaping PresentedLeafCopier = PresentedLeafProbeCore.copyPresentedLeaf
+    leafCopier: @escaping PresentedLeafCopier = PresentedLeafProbeCore.copyPresentedLeaf,
+    platformTrustEvaluator: @escaping PlatformTrustEvaluator = PresentedLeafProbeCore.evaluatePlatformTrust
   ) {
     makeConnection = factory
     copyLeaf = leafCopier
+    evaluatePlatformTrust = platformTrustEvaluator
   }
 
   func capture(_ arguments: Any?, completion: @escaping ([String: Any]) -> Void) {
@@ -56,7 +60,10 @@ final class PresentedLeafProbeCore {
           // capture-only connection. Copy and queue the leaf before rejecting:
           // rejection may synchronously emit a terminal connection state.
           let leaf = self?.copyLeaf(trust)
-          self?.queue.async { self?.verified(operation, leaf: leaf) }
+          // This is informational only. The capture connection is rejected
+          // below regardless of this result and can never be reused.
+          let platformTrustPassed = self?.evaluatePlatformTrust(trust) ?? false
+          self?.queue.async { self?.verified(operation, leaf: leaf, platformTrustPassed: platformTrustPassed) }
           // Every callback gets exactly one reject.
           decision(false)
         },
@@ -86,7 +93,7 @@ final class PresentedLeafProbeCore {
     }
   }
 
-  private func verified(_ operation: Operation?, leaf: Data?) {
+  private func verified(_ operation: Operation?, leaf: Data?, platformTrustPassed: Bool) {
     guard let operation, operations[operation.request.operationId] === operation else { return }
     guard let leaf, !leaf.isEmpty, leaf.count <= Self.maximumDerBytes else {
       finish(operation, Self.failure("captureFailed", operationId: operation.request.operationId))
@@ -97,6 +104,7 @@ final class PresentedLeafProbeCore {
       "protocolVersion": Self.protocolVersion,
       "operationId": operation.request.operationId,
       "leafDerBase64": leaf.base64EncodedString(),
+      "platformTrust": platformTrustPassed ? "passed" : "didNotPass",
     ])
   }
 
@@ -128,6 +136,11 @@ final class PresentedLeafProbeCore {
           let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
           let certificate = chain.first else { return nil }
     return SecCertificateCopyData(certificate) as Data
+  }
+
+  private static func evaluatePlatformTrust(_ trust: SecTrust?) -> Bool {
+    guard let trust else { return false }
+    return SecTrustEvaluateWithError(trust, nil)
   }
 
   private static func networkConnection(

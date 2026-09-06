@@ -598,6 +598,7 @@ final class _AppleProbeAttempt implements NativeProbeAttempt {
         _policy.assess(
           authority,
           NativePresentedLeaf(leafDer: leaf.der, parsedFacts: facts),
+          platformTrust: leaf.platformTrust,
         ),
       );
     } catch (_) {
@@ -634,8 +635,9 @@ sealed class _DecodedResponse {
 }
 
 final class _DecodedLeaf extends _DecodedResponse {
-  const _DecodedLeaf(this.der);
+  const _DecodedLeaf(this.der, this.platformTrust);
   final Uint8List der;
+  final PlatformTrust platformTrust;
 }
 
 final class _DecodedFailure extends _DecodedResponse {
@@ -663,7 +665,12 @@ _DecodedResponse _decodeResponse(Object? response, String expectedOperationId) {
   final hasLeaf = map.containsKey('leafDerBase64');
   final hasFailure = map.containsKey('failureCode');
   final expected = hasLeaf
-      ? const {'protocolVersion', 'operationId', 'leafDerBase64'}
+      ? const {
+          'protocolVersion',
+          'operationId',
+          'leafDerBase64',
+          'platformTrust',
+        }
       : const {'protocolVersion', 'operationId', 'failureCode'};
   if (hasLeaf == hasFailure ||
       map.keys.toSet().length != expected.length ||
@@ -680,7 +687,13 @@ _DecodedResponse _decodeResponse(Object? response, String expectedOperationId) {
     };
   }
   final encoded = map['leafDerBase64'];
+  final platformTrust = switch (map['platformTrust']) {
+    'passed' => PlatformTrust.passed,
+    'didNotPass' => PlatformTrust.didNotPass,
+    _ => null,
+  };
   if (encoded is! String ||
+      platformTrust == null ||
       encoded.isEmpty ||
       encoded.length > ((_maximumDerBytes + 2) ~/ 3) * 4) {
     return const _DecodedFailure(CertificateTrustFailure.malformedCertificate);
@@ -694,7 +707,7 @@ _DecodedResponse _decodeResponse(Object? response, String expectedOperationId) {
         CertificateTrustFailure.malformedCertificate,
       );
     }
-    return _DecodedLeaf(Uint8List.fromList(bytes));
+    return _DecodedLeaf(Uint8List.fromList(bytes), platformTrust);
   } catch (_) {
     return const _DecodedFailure(CertificateTrustFailure.malformedCertificate);
   }
