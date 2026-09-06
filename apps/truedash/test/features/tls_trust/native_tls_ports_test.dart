@@ -109,6 +109,36 @@ void main() {
     });
 
     test(
+      'probe rejects a valid certificate bound to another authority',
+      () async {
+        final otherAuthority = NormalizedAuthority.parse(
+          'https://other.example.test',
+        );
+        final backend = ScriptedBackend()
+          ..probeScript = CertificateProbeResult.approvable(
+            _certificate(otherAuthority),
+          );
+
+        final outcome = await BoundedNativeTlsPorts(backend: backend).probe(
+          authority: authority,
+          timeout: const Duration(seconds: 1),
+          cancellation: CancellationSource().token,
+        );
+
+        expect(
+          outcome,
+          const NativeProbeFailure(
+            CertificateTrustFailure.malformedCertificate,
+          ),
+        );
+        expect(outcome, isNot(isA<NativeProbeCertificate>()));
+        expect(backend.probeAuthorities, [authority]);
+        expect(backend.probeCloses, 1);
+        _expectNoApplicationWork(backend);
+      },
+    );
+
+    test(
       'overlapping operations close each distinct attempt exactly once',
       () async {
         final backend = ScriptedBackend()..holdProbe = true;
@@ -154,6 +184,56 @@ void main() {
         );
         expect(backend.probeAttemptHandles[0].closed, isTrue);
         expect(backend.probeAttemptHandles[1].closed, isTrue);
+      },
+    );
+
+    test(
+      'cross-wired overlapping probes reject both certificates and close once',
+      () async {
+        final otherAuthority = NormalizedAuthority.parse(
+          'https://other.example.test',
+        );
+        final backend = ScriptedBackend()..holdProbe = true;
+        final ports = BoundedNativeTlsPorts(backend: backend);
+        final first = ports.probe(
+          authority: authority,
+          timeout: const Duration(seconds: 1),
+          cancellation: CancellationSource().token,
+        );
+        final second = ports.probe(
+          authority: otherAuthority,
+          timeout: const Duration(seconds: 1),
+          cancellation: CancellationSource().token,
+        );
+
+        await Future<void>.delayed(Duration.zero);
+        backend.completeProbe(
+          backend.probeAttemptHandles[0],
+          CertificateProbeResult.approvable(_certificate(otherAuthority)),
+        );
+        backend.completeProbe(
+          backend.probeAttemptHandles[1],
+          CertificateProbeResult.approvable(_certificate(authority)),
+        );
+
+        expect(
+          await first,
+          const NativeProbeFailure(
+            CertificateTrustFailure.malformedCertificate,
+          ),
+        );
+        expect(
+          await second,
+          const NativeProbeFailure(
+            CertificateTrustFailure.malformedCertificate,
+          ),
+        );
+        expect(
+          backend.probeAttemptHandles.map((attempt) => attempt.closeCalls),
+          [1, 1],
+        );
+        expect(backend.probeAuthorities, [authority, otherAuthority]);
+        _expectNoApplicationWork(backend);
       },
     );
 
@@ -218,8 +298,31 @@ void main() {
         expect(backend.attempt.outcomeSettled, isTrue);
         await Future<void>.delayed(const Duration(milliseconds: 30));
         expect(backend.resourceCreations, 0);
+        expect(backend.attempt.closeCalls, 1);
       },
     );
+
+    test('reconnect timeout closes a deferred attempt before it can create a resource', () async {
+      final backend = DeferredResourceReconnectBackend();
+      final outcome = await BoundedNativeTlsPorts(backend: backend).reconnect(
+        authority: authority,
+        pin: pin,
+        timeout: const Duration(milliseconds: 1),
+        cancellation: CancellationSource().token,
+      );
+
+      expect(
+        outcome,
+        const NativePinnedFailure(
+          CertificateTrustFailure.pinnedReconnectFailed,
+        ),
+      );
+      expect(backend.attempt.closeCalls, 1);
+      expect(backend.attempt.outcomeSettled, isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(backend.resourceCreations, 0);
+      expect(backend.attempt.closeCalls, 1);
+    });
 
     test(
       'cancellation during cleanup invalidates successful results',
@@ -883,6 +986,7 @@ final class ScriptedBackend implements NativeTlsAttemptBackend {
       reconnectCloses = 0;
   int upgrades = 0, frames = 0, apiKeyHandoffs = 0;
   final events = <String>[];
+  final probeAuthorities = <NormalizedAuthority>[];
   final probeAttemptHandles = <ScriptedProbeAttempt>[];
   final reconnectAttemptHandles = <ScriptedPinnedAttempt>[];
   final closedProbeAttempts = <ScriptedProbeAttempt>[];
@@ -898,6 +1002,7 @@ final class ScriptedBackend implements NativeTlsAttemptBackend {
     required CancellationToken cancellation,
   }) {
     probeAttempts++;
+    probeAuthorities.add(authority);
     events.add('probe');
     if (throwOnProbe) throw StateError('scripted');
     final attempt = ScriptedProbeAttempt(this);
@@ -1011,6 +1116,65 @@ final class DeferredResourceProbeAttempt implements NativeProbeAttempt {
       _outcome.complete(
         CertificateProbeResult.failed(
           CertificateTrustFailure.malformedCertificate,
+        ),
+      );
+    }
+  }
+}
+
+final class DeferredResourceReconnectBackend
+    implements NativeTlsAttemptBackend {
+  late final DeferredResourcePinnedAttempt attempt;
+  int resourceCreations = 0;
+
+  @override
+  NativeProbeAttempt startProbe({
+    required NormalizedAuthority authority,
+    required CancellationToken cancellation,
+  }) => throw UnimplementedError();
+
+  @override
+  NativePinnedAttempt startReconnect({
+    required NormalizedAuthority authority,
+    required PinRecord pin,
+    required CancellationToken cancellation,
+  }) {
+    attempt = DeferredResourcePinnedAttempt(this);
+    Future<void>.delayed(const Duration(milliseconds: 20), attempt.start);
+    return attempt;
+  }
+}
+
+final class DeferredResourcePinnedAttempt implements NativePinnedAttempt {
+  DeferredResourcePinnedAttempt(this._backend);
+
+  final DeferredResourceReconnectBackend _backend;
+  final _outcome = Completer<NativePinnedOutcome>();
+  bool _closed = false;
+  int closeCalls = 0;
+
+  bool get outcomeSettled => _outcome.isCompleted;
+
+  @override
+  Future<NativePinnedOutcome> get outcome => _outcome.future;
+
+  void start() {
+    if (_closed) return;
+    _backend.resourceCreations++;
+  }
+
+  @override
+  void transferTransport() {}
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    closeCalls++;
+    if (!_outcome.isCompleted) {
+      _outcome.complete(
+        const NativePinnedFailure(
+          CertificateTrustFailure.pinnedReconnectFailed,
         ),
       );
     }

@@ -291,7 +291,7 @@ final class BoundedNativeTlsPorts
       cancelled = true;
       complete(const NativeProbeFailure(CertificateTrustFailure.cancelled));
     });
-    _probeOutcome(attempt).then(complete);
+    _probeOutcome(attempt, authority).then(complete);
     final outcome = await winner.future;
     try {
       await attempt.close();
@@ -314,12 +314,17 @@ final class BoundedNativeTlsPorts
     return outcome;
   }
 
-  Future<NativeProbeOutcome> _probeOutcome(NativeProbeAttempt attempt) async {
+  Future<NativeProbeOutcome> _probeOutcome(
+    NativeProbeAttempt attempt,
+    NormalizedAuthority authority,
+  ) async {
     try {
       final result = await attempt.outcome;
       final certificate = result.presentedCertificate;
       final failure = result.failure;
-      if (certificate != null && failure == null) {
+      if (certificate != null &&
+          failure == null &&
+          certificate.authority == authority) {
         return NativeProbeCertificate(certificate);
       }
       if (certificate == null && failure != null) {
