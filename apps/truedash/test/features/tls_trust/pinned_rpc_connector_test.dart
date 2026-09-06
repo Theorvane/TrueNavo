@@ -21,6 +21,60 @@ void main() {
   );
 
   group('Apple exact-pin reconnect', () {
+    test(
+      'probe cancellation requires an exact operation-bound acknowledgement',
+      () async {
+        for (final response in <Object?>[
+          StateError('native cancel detail'),
+          null,
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': 'wrong',
+            'failureCode': 'cancelled',
+          },
+          <String, Object>{
+            'protocolVersion': 2,
+            'operationId': '0' * 32,
+            'failureCode': 'cancelled',
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': '0' * 32,
+            'failureCode': 'pinMismatch',
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': '0' * 32,
+            'failureCode': 'cancelled',
+            'extra': true,
+          },
+          <String, Object>{'protocolVersion': 1, 'operationId': '0' * 32},
+        ]) {
+          final cancellation = CancellationSource();
+          final channel = _FakeCaptureChannel()..cancelResult = response;
+          final probe =
+              createProbeForNativeTlsPlatform(
+                NativeTlsPlatform.apple,
+                appleChannel: channel,
+              ).probe(
+                authority: authority,
+                timeout: const Duration(milliseconds: 100),
+                cancellation: cancellation.token,
+              );
+
+          cancellation.cancel();
+
+          expect(
+            await probe,
+            const NativeProbeBoundaryFailure(
+              NativeTlsBoundaryFailure.cleanupFailed,
+            ),
+          );
+          expect(channel.cancelCalls, hasLength(1));
+        }
+      },
+    );
+
     test('is bounded on Apple and unavailable everywhere else', () async {
       final apple = _FakePinnedChannel();
       final connector = createReconnectForNativeTlsPlatform(
@@ -685,31 +739,40 @@ void main() {
       }
     });
 
-    test('a late valid session after cancellation is closed once', () async {
-      final source = CancellationSource();
-      final channel = _FakePinnedChannel()..holdCancel = true;
-      final reconnect =
-          createReconnectForNativeTlsPlatform(
-            NativeTlsPlatform.apple,
-            appleChannel: channel,
-          ).reconnect(
-            authority: authority,
-            pin: pin,
-            timeout: const Duration(milliseconds: 100),
-            cancellation: source.token,
-          );
+    test(
+      'a late valid session close failure before cancel ACK is cleanupFailed',
+      () async {
+        final source = CancellationSource();
+        final channel = _FakePinnedChannel()
+          ..holdCancel = true
+          ..holdClose = true;
+        final reconnect =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              appleChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: source.token,
+            );
 
-      source.cancel();
-      await channel.heldCancelStarted.future;
-      channel.completeConnect(channel.calls.single.operationId);
-      channel.completeCancel();
-      expect(
-        await reconnect,
-        const NativePinnedFailure(CertificateTrustFailure.cancelled),
-      );
-      await Future<void>.delayed(Duration.zero);
-      expect(channel.closeCalls, hasLength(1));
-    });
+        source.cancel();
+        await channel.heldCancelStarted.future;
+        channel.completeConnect(channel.calls.single.operationId);
+        await Future<void>.delayed(Duration.zero);
+        expect(channel.closeCalls, hasLength(1));
+        channel.completeClose(StateError('late close detail'));
+        channel.completeCancel();
+        expect(
+          await reconnect,
+          const NativePinnedBoundaryFailure(
+            NativeTlsBoundaryFailure.cleanupFailed,
+          ),
+        );
+        expect(channel.closeCalls, hasLength(1));
+      },
+    );
 
     test('maps fixed native failures separately, isolates probe identity, and retains normal public trust source', () async {
       final failureCodes = <String, CertificateTrustFailure>{
@@ -951,7 +1014,34 @@ final class _FakeProbeChannel implements AppleTlsMethodChannel {
   @override
   Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) {
     calls.add(_Message(method, Map<String, Object>.from(arguments)));
+    if (method == 'truedash.cancelPresentedLeaf') {
+      return Future<Object?>.value(<String, Object>{
+        'protocolVersion': 1,
+        'operationId': arguments['operationId']! as String,
+        'failureCode': 'cancelled',
+      });
+    }
     return Future<Object?>.value(null);
+  }
+}
+
+final class _FakeCaptureChannel implements AppleTlsMethodChannel {
+  final cancelCalls = <_Message>[];
+  Object? cancelResult;
+
+  @override
+  Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) {
+    if (method == 'truedash.capturePresentedLeaf') {
+      return Completer<Object?>().future;
+    }
+    if (method == 'truedash.cancelPresentedLeaf') {
+      cancelCalls.add(_Message(method, Map<String, Object>.from(arguments)));
+      final result = cancelResult;
+      return result is StateError
+          ? Future<Object?>.error(result)
+          : Future<Object?>.value(result);
+    }
+    throw StateError('unexpected method');
   }
 }
 

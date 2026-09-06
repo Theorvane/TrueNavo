@@ -213,6 +213,7 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   Future<void>? _closeFuture;
   Future<void>? _discardFuture;
   Future<void>? _transportCloseFuture;
+  Future<void>? _lateTransportCloseFuture;
   _ApplePinnedRpcTransport? _transport;
   var _transferred = false;
   var _discardRequested = false;
@@ -281,14 +282,21 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
 
   void _closeLateTransport(String sessionId) {
     final transport = _ApplePinnedRpcTransport(channel, sessionId);
-    unawaited(_ignoreLateTransportClose(transport));
+    final close = _closeTransport(transport);
+    // A session delivered while cleanup is still pending remains owned by this
+    // attempt, so its close failure must remain observable to the boundary.
+    if (!_closeSettled) {
+      _lateTransportCloseFuture ??= close;
+      return;
+    }
+    unawaited(_ignoreLateTransportClose(close));
   }
 
-  Future<void> _ignoreLateTransportClose(
-    _ApplePinnedRpcTransport transport,
-  ) async {
+  var _closeSettled = false;
+
+  Future<void> _ignoreLateTransportClose(Future<void> close) async {
     try {
-      await _closeTransport(transport);
+      await close;
     } catch (_) {
       // A late native response cannot surface an asynchronous platform error.
     }
@@ -300,27 +308,34 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   @override
   Future<void> close() => _closeFuture ??= _close();
   Future<void> _close() async {
-    _registration?.dispose();
-    if (_transferred) return;
-    final transport = _transport;
-    if (transport != null) {
-      if (cancellation.isCancelled || _discardRequested) {
-        await _closeTransport(transport);
+    try {
+      _registration?.dispose();
+      if (_transferred) return;
+      final transport = _transport;
+      if (transport != null) {
+        if (cancellation.isCancelled || _discardRequested) {
+          await _closeTransport(transport);
+        }
+        _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
+        return;
       }
+      final response = await channel.invokeMethod(
+        _pinnedCancelMethod,
+        <String, Object?>{
+          'protocolVersion': _protocolVersion,
+          'operationId': operationId,
+        },
+      );
+      if (!_cancelAcknowledged(response, operationId)) {
+        throw StateError('Invalid cancel acknowledgement.');
+      }
+      // By the operation ACK, every late session that began before the
+      // cancellation boundary settles has registered its shared close future.
+      await _lateTransportCloseFuture;
       _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
-      return;
+    } finally {
+      _closeSettled = true;
     }
-    final response = await channel.invokeMethod(
-      _pinnedCancelMethod,
-      <String, Object?>{
-        'protocolVersion': _protocolVersion,
-        'operationId': operationId,
-      },
-    );
-    if (!_cancelAcknowledged(response, operationId)) {
-      throw StateError('Invalid cancel acknowledgement.');
-    }
-    _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
   }
 }
 
@@ -598,6 +613,7 @@ final class _AppleProbeAttempt implements NativeProbeAttempt {
         _policy.assess(
           authority,
           NativePresentedLeaf(leafDer: leaf.der, parsedFacts: facts),
+          platformTrust: leaf.platformTrust,
         ),
       );
     } catch (_) {
@@ -622,10 +638,16 @@ final class _AppleProbeAttempt implements NativeProbeAttempt {
   Future<void> _close() async {
     _registration?.dispose();
     _complete(CertificateProbeResult.failed(CertificateTrustFailure.cancelled));
-    await _channel.invokeMethod(_cancelMethod, <String, Object?>{
-      'protocolVersion': _protocolVersion,
-      'operationId': operationId,
-    });
+    final response = await _channel.invokeMethod(
+      _cancelMethod,
+      <String, Object?>{
+        'protocolVersion': _protocolVersion,
+        'operationId': operationId,
+      },
+    );
+    if (!_cancelAcknowledged(response, operationId)) {
+      throw StateError('Invalid cancel acknowledgement.');
+    }
   }
 }
 
@@ -634,8 +656,9 @@ sealed class _DecodedResponse {
 }
 
 final class _DecodedLeaf extends _DecodedResponse {
-  const _DecodedLeaf(this.der);
+  const _DecodedLeaf(this.der, this.platformTrust);
   final Uint8List der;
+  final PlatformTrust platformTrust;
 }
 
 final class _DecodedFailure extends _DecodedResponse {
@@ -663,7 +686,12 @@ _DecodedResponse _decodeResponse(Object? response, String expectedOperationId) {
   final hasLeaf = map.containsKey('leafDerBase64');
   final hasFailure = map.containsKey('failureCode');
   final expected = hasLeaf
-      ? const {'protocolVersion', 'operationId', 'leafDerBase64'}
+      ? const {
+          'protocolVersion',
+          'operationId',
+          'leafDerBase64',
+          'platformTrust',
+        }
       : const {'protocolVersion', 'operationId', 'failureCode'};
   if (hasLeaf == hasFailure ||
       map.keys.toSet().length != expected.length ||
@@ -680,7 +708,13 @@ _DecodedResponse _decodeResponse(Object? response, String expectedOperationId) {
     };
   }
   final encoded = map['leafDerBase64'];
+  final platformTrust = switch (map['platformTrust']) {
+    'passed' => PlatformTrust.passed,
+    'didNotPass' => PlatformTrust.didNotPass,
+    _ => null,
+  };
   if (encoded is! String ||
+      platformTrust == null ||
       encoded.isEmpty ||
       encoded.length > ((_maximumDerBytes + 2) ~/ 3) * 4) {
     return const _DecodedFailure(CertificateTrustFailure.malformedCertificate);
@@ -694,7 +728,7 @@ _DecodedResponse _decodeResponse(Object? response, String expectedOperationId) {
         CertificateTrustFailure.malformedCertificate,
       );
     }
-    return _DecodedLeaf(Uint8List.fromList(bytes));
+    return _DecodedLeaf(Uint8List.fromList(bytes), platformTrust);
   } catch (_) {
     return const _DecodedFailure(CertificateTrustFailure.malformedCertificate);
   }

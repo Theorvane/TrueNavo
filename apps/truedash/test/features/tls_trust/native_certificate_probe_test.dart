@@ -115,6 +115,10 @@ void main() {
         final result = await attempt.outcome;
         expect(result.isApprovable, isTrue);
         expect(
+          result.presentedCertificate!.platformTrust,
+          PlatformTrust.didNotPass,
+        );
+        expect(
           result.presentedCertificate!.facts.leafDerSha256,
           sha256.convert(validHostMatchingLeafDer).toString().toUpperCase(),
         );
@@ -122,6 +126,32 @@ void main() {
         await attempt.close();
       },
     );
+
+    test('decodes a measured passing platform-trust fact', () async {
+      final channel = _FakeAppleTlsMethodChannel();
+      final backend = ApplePresentedLeafProbeBackend(
+        channel: channel,
+        now: () => now,
+      );
+      final attempt = backend.startProbe(
+        authority: authority,
+        cancellation: CancellationSource().token,
+      );
+      final operationId = channel.outbound.single.operationId;
+      channel.completeCapture(
+        operationId,
+        _successResponse(
+          operationId,
+          validHostMatchingLeafDer,
+          platformTrust: 'passed',
+        ),
+      );
+
+      final result = await attempt.outcome;
+      expect(result.isApprovable, isTrue);
+      expect(result.presentedCertificate!.platformTrust, PlatformTrust.passed);
+      await attempt.close();
+    });
 
     test('fails closed for a stale response operation id', () async {
       final channel = _FakeAppleTlsMethodChannel();
@@ -162,7 +192,20 @@ void main() {
           'protocolVersion': 1,
           'operationId': 'placeholder',
           'leafDerBase64': base64Encode(validHostMatchingLeafDer),
+          'platformTrust': 'didNotPass',
           'nativeError': 'do-not-reflect',
+        },
+        'unknown platform trust': <String, Object>{
+          'protocolVersion': 1,
+          'operationId': 'placeholder',
+          'leafDerBase64': base64Encode(validHostMatchingLeafDer),
+          'platformTrust': 'unknown',
+        },
+        'wrong platform trust type': <String, Object>{
+          'protocolVersion': 1,
+          'operationId': 'placeholder',
+          'leafDerBase64': base64Encode(validHostMatchingLeafDer),
+          'platformTrust': true,
         },
         'wrong version type': <String, Object>{
           'protocolVersion': '1',
@@ -677,12 +720,16 @@ void main() {
   );
 }
 
-Map<String, Object> _successResponse(String operationId, Uint8List der) =>
-    <String, Object>{
-      'protocolVersion': 1,
-      'operationId': operationId,
-      'leafDerBase64': base64Encode(der),
-    };
+Map<String, Object> _successResponse(
+  String operationId,
+  Uint8List der, {
+  String platformTrust = 'didNotPass',
+}) => <String, Object>{
+  'protocolVersion': 1,
+  'operationId': operationId,
+  'leafDerBase64': base64Encode(der),
+  'platformTrust': platformTrust,
+};
 
 int _indexOf(Uint8List bytes, List<int> needle) {
   for (var start = 0; start <= bytes.length - needle.length; start++) {
@@ -809,7 +856,11 @@ final class _FakeAppleTlsMethodChannel implements AppleTlsMethodChannel {
       if (failCancel) {
         return Future<Object?>.error(StateError('cancel failure'));
       }
-      return Future.value(null);
+      return Future<Object?>.value(<String, Object>{
+        'protocolVersion': 1,
+        'operationId': call.operationId,
+        'failureCode': 'cancelled',
+      });
     }
     return Future<Object?>.error(StateError('unexpected native method'));
   }

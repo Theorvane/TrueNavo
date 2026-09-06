@@ -42,11 +42,21 @@ final class NativePresentedLeaf {
 }
 
 /// A display-safe certificate candidate. It deliberately has no DER field.
+///
+/// `notAvailable` is used only by non-Apple/test adapters which did not
+/// evaluate platform trust. Apple capture always reports a measured result.
+enum PlatformTrust { passed, didNotPass, notAvailable }
+
 final class PresentedCertificate {
-  const PresentedCertificate({required this.authority, required this.facts});
+  const PresentedCertificate({
+    required this.authority,
+    required this.facts,
+    this.platformTrust = PlatformTrust.notAvailable,
+  });
 
   final NormalizedAuthority authority;
   final CertificateFacts facts;
+  final PlatformTrust platformTrust;
 
   String get groupedFingerprint => facts.leafDerSha256
       .replaceAllMapped(RegExp(r'.{4}'), (match) => '${match.group(0)} ')
@@ -88,8 +98,9 @@ final class CertificateFactsPolicy {
 
   CertificateProbeResult assess(
     NormalizedAuthority authority,
-    NativePresentedLeaf leaf,
-  ) {
+    NativePresentedLeaf leaf, {
+    PlatformTrust platformTrust = PlatformTrust.notAvailable,
+  }) {
     if (!_hasDerEnvelope(leaf.leafDer)) {
       return CertificateProbeResult.failed(
         CertificateTrustFailure.malformedCertificate,
@@ -134,6 +145,7 @@ final class CertificateFactsPolicy {
     return CertificateProbeResult.approvable(
       PresentedCertificate(
         authority: authority,
+        platformTrust: platformTrust,
         facts: CertificateFacts(
           subjectSummary: subject,
           issuerSummary: validation.issuer,
