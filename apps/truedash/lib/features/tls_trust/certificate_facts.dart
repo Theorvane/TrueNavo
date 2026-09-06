@@ -233,26 +233,116 @@ final class CertificateFactsPolicy {
       _canonicalDns(value) ?? _canonicalIp(value);
 
   static String? _canonicalDns(String value) {
-    if (value.isEmpty || value != value.trim() || value.contains('*')) {
+    if (value.isEmpty ||
+        value.length > 253 ||
+        !value.codeUnits.every((unit) => unit <= 0x7f) ||
+        RegExp(r'^[0-9.]+$').hasMatch(value)) {
       return null;
     }
-    try {
-      final host = NormalizedAuthority.parse('https://$value').host;
-      return _isIp(host) ? null : host;
-    } on AuthorityValidationException {
-      return null;
+    final labels = value.split('.');
+    if (labels.any((label) => !_isValidDnsLabel(label))) return null;
+    return value.toLowerCase();
+  }
+
+  static bool _isValidDnsLabel(String label) {
+    if (label.isEmpty || label.length > 63) return false;
+    if (!RegExp(r'^[a-zA-Z0-9-]+$').hasMatch(label) ||
+        label.startsWith('-') ||
+        label.endsWith('-')) {
+      return false;
     }
+    // A shape-only validator cannot establish that an ACE label is valid
+    // Punycode, so preserve the app's existing fail-closed IDNA policy.
+    return !label.toLowerCase().startsWith('xn--');
   }
 
   static String? _canonicalIp(String value) {
-    if (value.isEmpty || value != value.trim()) return null;
-    try {
-      final uriHost = value.contains(':') ? '[$value]' : value;
-      final host = NormalizedAuthority.parse('https://$uriHost').host;
-      return _isIp(host) ? host : null;
-    } on AuthorityValidationException {
+    if (value.isEmpty ||
+        !value.codeUnits.every((unit) => unit <= 0x7f) ||
+        value.contains(RegExp(r'[\[\]@/?#\\%\s]'))) {
       return null;
     }
+    if (!value.contains(':')) {
+      return _isValidIpv4(value) ? value : null;
+    }
+    return _canonicalizeIpv6(value);
+  }
+
+  static bool _isValidIpv4(String value) {
+    final parts = value.split('.');
+    return parts.length == 4 &&
+        parts.every((part) {
+          if (!RegExp(r'^(0|[1-9][0-9]{0,2})$').hasMatch(part)) {
+            return false;
+          }
+          return int.parse(part) <= 255;
+        });
+  }
+
+  static String? _canonicalizeIpv6(String value) {
+    final compressionIndex = value.indexOf('::');
+    if (compressionIndex != value.lastIndexOf('::')) return null;
+    final hasCompression = compressionIndex >= 0;
+    final beforeCompression = hasCompression && compressionIndex > 0
+        ? value.substring(0, compressionIndex).split(':')
+        : const <String>[];
+    final afterCompression =
+        hasCompression && compressionIndex + 2 < value.length
+        ? value.substring(compressionIndex + 2).split(':')
+        : const <String>[];
+    final parts = hasCompression
+        ? <String>[...beforeCompression, ...afterCompression]
+        : value.split(':');
+    final groups = <int>[];
+    for (var index = 0; index < parts.length; index++) {
+      final part = parts[index];
+      if (part.isEmpty) return null;
+      if (part.contains('.')) {
+        if (index != parts.length - 1 || !_isValidIpv4(part)) return null;
+        final octets = part.split('.').map(int.parse).toList();
+        groups
+          ..add((octets[0] << 8) | octets[1])
+          ..add((octets[2] << 8) | octets[3]);
+      } else if (!RegExp(r'^[0-9a-fA-F]{1,4}$').hasMatch(part)) {
+        return null;
+      } else {
+        groups.add(int.parse(part, radix: 16));
+      }
+    }
+    if (hasCompression) {
+      if (groups.length >= 8) return null;
+      groups.insertAll(
+        beforeCompression.length,
+        List<int>.filled(8 - groups.length, 0),
+      );
+    } else if (groups.length != 8) {
+      return null;
+    }
+
+    var zeroRunStart = -1;
+    var zeroRunLength = 0;
+    for (var index = 0; index < groups.length;) {
+      if (groups[index] != 0) {
+        index++;
+        continue;
+      }
+      final start = index;
+      while (index < groups.length && groups[index] == 0) {
+        index++;
+      }
+      final length = index - start;
+      if (length > zeroRunLength && length >= 2) {
+        zeroRunStart = start;
+        zeroRunLength = length;
+      }
+    }
+    final textGroups = groups.map((group) => group.toRadixString(16)).toList();
+    if (zeroRunStart < 0) return textGroups.join(':');
+    final before = textGroups.take(zeroRunStart).join(':');
+    final after = textGroups.skip(zeroRunStart + zeroRunLength).join(':');
+    if (before.isEmpty) return '::$after';
+    if (after.isEmpty) return '$before::';
+    return '$before::$after';
   }
 
   static String? _safeSummary(String value) {

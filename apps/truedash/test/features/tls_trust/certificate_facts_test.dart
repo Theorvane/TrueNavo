@@ -336,6 +336,176 @@ void main() {
   });
 
   test(
+    'accepts canonical IPv6 SAN equivalents and rejects malformed forms',
+    () {
+      final canonicalIpv6 = NormalizedAuthority.parse(
+        'https://[2001:db8::c000:20a]',
+      );
+      final unspecifiedIpv6 = NormalizedAuthority.parse('https://[::]');
+      final loopbackIpv6 = NormalizedAuthority.parse('https://[::1]');
+
+      for (final san in <String>[
+        '2001:0DB8:0000:0000:0000:0000:C000:020A',
+        '2001:db8::c000:20a',
+        '2001:db8::192.0.2.10',
+      ]) {
+        expect(
+          assess(
+            canonicalIpv6,
+            validHostMatchingLeafDer,
+            parsed(dnsSans: const <String>[], ipSans: <String>[san]),
+          ).isApprovable,
+          isTrue,
+          reason: 'IPv6 SAN $san must match its canonical hex authority',
+        );
+      }
+      expect(
+        assess(
+          unspecifiedIpv6,
+          validHostMatchingLeafDer,
+          parsed(dnsSans: const <String>[], ipSans: const <String>['::']),
+        ).isApprovable,
+        isTrue,
+      );
+      expect(
+        assess(
+          loopbackIpv6,
+          validHostMatchingLeafDer,
+          parsed(
+            dnsSans: const <String>[],
+            ipSans: const <String>['0:0:0:0:0:0:0:1'],
+          ),
+        ).isApprovable,
+        isTrue,
+      );
+
+      for (final san in <String>[
+        '2001::db8::1',
+        '2001:::db8',
+        '2001:db8:0:0:0:0:1',
+        '1:2:3:4:5:6:7:8:9',
+        '1:2:3:4:5:6:7:8::',
+        '20001:db8::1',
+        '2001:db8::g',
+        '2001:db8::192.0.2.256',
+        '2001:db8::192.0.2.010',
+      ]) {
+        expect(
+          assess(
+            canonicalIpv6,
+            validHostMatchingLeafDer,
+            parsed(dnsSans: const <String>[], ipSans: <String>[san]),
+          ).failure,
+          CertificateTrustFailure.malformedCertificate,
+          reason: 'IPv6 SAN $san must be malformed',
+        );
+      }
+    },
+  );
+
+  test(
+    'rejects URL syntax in DNS SANs, CN fallback, and wildcard suffixes',
+    () {
+      final invalidDnsIdentities = <String>[
+        'nas.example.test/path',
+        'nas.example.test:443',
+        '[nas.example.test]',
+        'user@nas.example.test',
+        'nas.example.test?query',
+        'nas.example.test#fragment',
+        r'nas.example.test\path',
+        ' nas.example.test',
+        'nas.example.test ',
+      ];
+
+      for (final identity in invalidDnsIdentities) {
+        expect(
+          assess(
+            authority,
+            validHostMatchingLeafDer,
+            parsed(dnsSans: <String>[identity]),
+          ).failure,
+          CertificateTrustFailure.malformedCertificate,
+          reason: 'DNS SAN must reject $identity',
+        );
+        expect(
+          assess(
+            authority,
+            validHostMatchingLeafDer,
+            parsed(
+              hasSubjectAlternativeNames: false,
+              dnsSans: const <String>[],
+              commonName: identity,
+            ),
+          ).failure,
+          CertificateTrustFailure.malformedCertificate,
+          reason: 'CN fallback must reject $identity',
+        );
+        expect(
+          assess(
+            authority,
+            validHostMatchingLeafDer,
+            parsed(dnsSans: <String>['*.$identity']),
+          ).failure,
+          CertificateTrustFailure.malformedCertificate,
+          reason: 'wildcard suffix must reject $identity',
+        );
+      }
+    },
+  );
+
+  test('rejects URL syntax in IPv4 and IPv6 SANs', () {
+    final ipv4 = NormalizedAuthority.parse('https://192.0.2.10');
+    final ipv6 = NormalizedAuthority.parse('https://[2001:db8::10]');
+    final invalidIpv4 = <String>[
+      '192.0.2.10/path',
+      '192.0.2.10:443',
+      '[192.0.2.10]',
+      'user@192.0.2.10',
+      '192.0.2.10?query',
+      '192.0.2.10#fragment',
+      r'192.0.2.10\path',
+      '192.0.2.010',
+      '+192.0.2.10',
+      '0xc0.0.2.10',
+    ];
+    final invalidIpv6 = <String>[
+      '[2001:db8::10]',
+      '[2001:db8::10]:443',
+      '2001:db8::10/path',
+      '2001:db8::10%en0',
+      'user@2001:db8::10',
+      '2001:db8::10?query',
+      '2001:db8::10#fragment',
+      r'2001:db8::10\path',
+      ' 2001:db8::10',
+    ];
+
+    for (final identity in invalidIpv4) {
+      expect(
+        assess(
+          ipv4,
+          validHostMatchingLeafDer,
+          parsed(dnsSans: const <String>[], ipSans: <String>[identity]),
+        ).failure,
+        CertificateTrustFailure.malformedCertificate,
+        reason: 'IPv4 SAN must reject $identity',
+      );
+    }
+    for (final identity in invalidIpv6) {
+      expect(
+        assess(
+          ipv6,
+          validHostMatchingLeafDer,
+          parsed(dnsSans: const <String>[], ipSans: <String>[identity]),
+        ).failure,
+        CertificateTrustFailure.malformedCertificate,
+        reason: 'IPv6 SAN must reject $identity',
+      );
+    }
+  });
+
+  test(
     'fails closed for malformed data, mismatched host, and invalid validity',
     () {
       expect(
