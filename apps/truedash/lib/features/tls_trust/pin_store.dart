@@ -65,7 +65,7 @@ final class PinStoreSuccess extends PinStoreResult {
   int get hashCode => 0;
 }
 
-final class PinStoreOperationFailure extends PinStoreResult {
+class PinStoreOperationFailure extends PinStoreResult {
   const PinStoreOperationFailure(this.failure);
   final PinStoreFailure failure;
   @override
@@ -73,6 +73,13 @@ final class PinStoreOperationFailure extends PinStoreResult {
       other is PinStoreOperationFailure && other.failure == failure;
   @override
   int get hashCode => failure.hashCode;
+}
+
+/// A failed atomic active write that is known not to have changed active.
+/// The transaction remains open and may be safely aborted to release pending
+/// state and same-process ownership.
+final class PinStorePreActiveWriteFailure extends PinStoreOperationFailure {
+  const PinStorePreActiveWriteFailure(super.failure);
 }
 
 sealed class PinStageResult {
@@ -405,11 +412,13 @@ final class _PersistentTransaction implements PinStoreTransaction {
       );
       if (write is RawPinStorageOperationFailure) {
         _state = _TransactionState.open;
-        return PinStoreResult.failure(_store._map(write.failure));
+        return PinStorePreActiveWriteFailure(_store._map(write.failure));
       }
       if (write is RawPinStorageNotMatched) {
         _state = _TransactionState.open;
-        return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
+        return const PinStorePreActiveWriteFailure(
+          PinStoreFailure.replacementChanged,
+        );
       }
       _state = _TransactionState.activeWritten;
     }

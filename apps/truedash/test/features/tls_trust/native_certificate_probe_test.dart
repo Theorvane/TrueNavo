@@ -856,7 +856,11 @@ final class _FakeAppleTlsMethodChannel implements AppleTlsMethodChannel {
       if (failCancel) {
         return Future<Object?>.error(StateError('cancel failure'));
       }
-      return Future.value(null);
+      return Future<Object?>.value(<String, Object>{
+        'protocolVersion': 1,
+        'operationId': call.operationId,
+        'failureCode': 'cancelled',
+      });
     }
     return Future<Object?>.error(StateError('unexpected native method'));
   }

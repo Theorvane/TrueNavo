@@ -213,6 +213,7 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   Future<void>? _closeFuture;
   Future<void>? _discardFuture;
   Future<void>? _transportCloseFuture;
+  Future<void>? _lateTransportCloseFuture;
   _ApplePinnedRpcTransport? _transport;
   var _transferred = false;
   var _discardRequested = false;
@@ -281,14 +282,21 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
 
   void _closeLateTransport(String sessionId) {
     final transport = _ApplePinnedRpcTransport(channel, sessionId);
-    unawaited(_ignoreLateTransportClose(transport));
+    final close = _closeTransport(transport);
+    // A session delivered while cleanup is still pending remains owned by this
+    // attempt, so its close failure must remain observable to the boundary.
+    if (!_closeSettled) {
+      _lateTransportCloseFuture ??= close;
+      return;
+    }
+    unawaited(_ignoreLateTransportClose(close));
   }
 
-  Future<void> _ignoreLateTransportClose(
-    _ApplePinnedRpcTransport transport,
-  ) async {
+  var _closeSettled = false;
+
+  Future<void> _ignoreLateTransportClose(Future<void> close) async {
     try {
-      await _closeTransport(transport);
+      await close;
     } catch (_) {
       // A late native response cannot surface an asynchronous platform error.
     }
@@ -300,27 +308,34 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   @override
   Future<void> close() => _closeFuture ??= _close();
   Future<void> _close() async {
-    _registration?.dispose();
-    if (_transferred) return;
-    final transport = _transport;
-    if (transport != null) {
-      if (cancellation.isCancelled || _discardRequested) {
-        await _closeTransport(transport);
+    try {
+      _registration?.dispose();
+      if (_transferred) return;
+      final transport = _transport;
+      if (transport != null) {
+        if (cancellation.isCancelled || _discardRequested) {
+          await _closeTransport(transport);
+        }
+        _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
+        return;
       }
+      final response = await channel.invokeMethod(
+        _pinnedCancelMethod,
+        <String, Object?>{
+          'protocolVersion': _protocolVersion,
+          'operationId': operationId,
+        },
+      );
+      if (!_cancelAcknowledged(response, operationId)) {
+        throw StateError('Invalid cancel acknowledgement.');
+      }
+      // By the operation ACK, every late session that began before the
+      // cancellation boundary settles has registered its shared close future.
+      await _lateTransportCloseFuture;
       _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
-      return;
+    } finally {
+      _closeSettled = true;
     }
-    final response = await channel.invokeMethod(
-      _pinnedCancelMethod,
-      <String, Object?>{
-        'protocolVersion': _protocolVersion,
-        'operationId': operationId,
-      },
-    );
-    if (!_cancelAcknowledged(response, operationId)) {
-      throw StateError('Invalid cancel acknowledgement.');
-    }
-    _complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
   }
 }
 
@@ -623,10 +638,16 @@ final class _AppleProbeAttempt implements NativeProbeAttempt {
   Future<void> _close() async {
     _registration?.dispose();
     _complete(CertificateProbeResult.failed(CertificateTrustFailure.cancelled));
-    await _channel.invokeMethod(_cancelMethod, <String, Object?>{
-      'protocolVersion': _protocolVersion,
-      'operationId': operationId,
-    });
+    final response = await _channel.invokeMethod(
+      _cancelMethod,
+      <String, Object?>{
+        'protocolVersion': _protocolVersion,
+        'operationId': operationId,
+      },
+    );
+    if (!_cancelAcknowledged(response, operationId)) {
+      throw StateError('Invalid cancel acknowledgement.');
+    }
   }
 }
 

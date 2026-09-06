@@ -1267,6 +1267,48 @@ void main() {
     expect(connector.pin, pin);
     expect(transport.closeCount, 0);
   });
+
+  test('pre-active-write commit failure releases persistent transaction ownership for retry', () async {
+    final raw = _FailActiveWriteRawPinStorage();
+    final store = PersistentPinStore(raw);
+    final old = PinRecord(leafDerSha256: digest, createdAt: DateTime.utc(2026));
+    expect(
+      await (await store.stageReplacement(authority, old) as PinStageSuccess)
+          .transaction
+          .commit(),
+      const PinStoreResult.success(),
+    );
+    final events = <String>[];
+    final coordinator = _persistentCoordinator(
+      store,
+      events,
+      authority: authority,
+      facts: CertificateFacts(
+        subjectSummary: facts.subjectSummary,
+        issuerSummary: facts.issuerSummary,
+        leafDerSha256: 'E' * 64,
+        notValidBefore: facts.notValidBefore,
+        notValidAfter: facts.notValidAfter,
+      ),
+    );
+    final review = await coordinator.checkForReplacement(
+      authority,
+    ) as ReplacementTrustReview;
+    raw.failNextActiveWrite();
+
+    expect(
+      await coordinator.approve(review.token),
+      _blocked(CertificateTrustCoordinatorFailure.pinStore),
+    );
+    expect(await store.read(authority), PinReadResult.record(old));
+    expect(raw.values[PersistentPinStore.pendingKey(authority)], isNull);
+
+    final retried = await coordinator.retry(review.token);
+    expect(retried, isA<VerifiedTrustTransport>());
+    expect(await store.read(authority), PinReadResult.record(old));
+    expect(raw.values[PersistentPinStore.pendingKey(authority)], isNull);
+    expect(events.where((event) => event == 'probe'), hasLength(1));
+  });
 }
 
 CertificateTrustCoordinator _coordinator(
@@ -1491,5 +1533,52 @@ final class _Transport implements RpcTransport {
   Future<void> close() async {
     closeCount++;
     if (throwClose) throw StateError('secret close detail');
+  }
+}
+
+final class _FailActiveWriteRawPinStorage implements RawPinStorage {
+  final _delegate = InMemoryRawPinStorage();
+  bool _failNextActiveWrite = false;
+
+  Map<String, String> get values => _delegate.values;
+  void failNextActiveWrite() => _failNextActiveWrite = true;
+
+  @override
+  Future<RawPinReadResult> read(String key) => _delegate.read(key);
+  @override
+  Future<RawPinStorageResult> write(String key, String value) =>
+      _delegate.write(key, value);
+  @override
+  Future<RawPinStorageResult> delete(String key) => _delegate.delete(key);
+  @override
+  Future<RawPinStorageResult> deleteIfValue(String key, String expectedValue) =>
+      _delegate.deleteIfValue(key, expectedValue);
+  @override
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  ) => _delegate.writeIfValue(key, expectedValue, value);
+  @override
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  ) {
+    if (_failNextActiveWrite) {
+      _failNextActiveWrite = false;
+      return Future.value(
+        const RawPinStorageOperationFailure(RawPinStorageFailure.writeFailed),
+      );
+    }
+    return _delegate.writeIfValues(
+      key,
+      expectedValue,
+      guardKey,
+      expectedGuardValue,
+      value,
+    );
   }
 }
