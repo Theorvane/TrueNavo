@@ -1,8 +1,216 @@
 import Foundation
 import Network
+import CryptoKit
 import XCTest
 
 final class RunnerTests: XCTestCase {
+  func testPinnedValidityUsesOnlyTBSCertificateValidity() {
+    let der = pinnedValidityDER(issuerTime: "500101000000Z", before: "260101000000Z", after: "270101000000Z")
+    let validity = DERValidity(der)
+    XCTAssertNotNil(validity)
+    XCTAssertTrue(validity!.contains(Date(timeIntervalSince1970: 1_790_000_000)))
+    XCTAssertTrue(validity!.isNotYetValid(at: Date(timeIntervalSince1970: 1_700_000_000)))
+    XCTAssertNil(DERValidity(pinnedValidityDER(issuerTime: nil, before: "270101000000Z", after: "260101000000Z")))
+    var nonCanonical = pinnedValidityDER(issuerTime: nil, before: "260101000000Z", after: "270101000000Z")
+    nonCanonical[1] = 0x81
+    XCTAssertNil(DERValidity(nonCanonical))
+  }
+
+  func testPinnedRequestAllowsCanonicalSingleLabelAndRejectsAuthorityTricks() {
+    let id = "0123456789abcdef0123456789abcdef"
+    func request(_ host: String, _ path: String = "/rpc", _ digest: String = String(repeating: "A", count: 64)) -> [String: Any] { ["protocolVersion": 1, "operationId": id, "host": host, "port": 443, "rpcPath": path, "leafDerSha256": digest] }
+    XCTAssertNotNil(PinnedRpcRequest(request("nas")))
+    let ipv6 = PinnedRpcRequest(request("2001:db8::1"))
+    XCTAssertEqual(ipv6?.host, "2001:db8::1")
+    XCTAssertEqual(ipv6?.url.absoluteString, "wss://[2001:db8::1]:443/rpc")
+    XCTAssertEqual(PinnedRpcRequest(request("::1"))?.url.absoluteString, "wss://[::1]:443/rpc")
+    for host in ["-nas", "nas-", "na s", "nas..test", "[::1]", "127.000.000.001", "2001:0db8::1", "nas%2ftest"] { XCTAssertNil(PinnedRpcRequest(request(host))) }
+    for path in ["rpc", "/../rpc", "/rpc?x", "/rpc#x", "/rpc%2fnext", "/rpc path", "/r\u{00e9}", "/rpc\n"] { XCTAssertNil(PinnedRpcRequest(request("nas", path))) }
+    XCTAssertNil(PinnedRpcRequest(request("nas", "/rpc", String(repeating: "a", count: 64))))
+    XCTAssertNil(PinnedRpcRequest(request(String(repeating: "a", count: 64) + "." + String(repeating: "b", count: 64) + "." + String(repeating: "c", count: 64) + "." + String(repeating: "d", count: 64))))
+  }
+
+  func testPinnedTrustPolicyRejectsEveryFailureBeforeSSLAndAcceptsExactLeaf() {
+    let der = pinnedValidityDER(issuerTime: nil, before: "260101000000Z", after: "270101000000Z")
+    let digest = SHA256.hash(data: der).map { String(format: "%02X", $0) }.joined()
+    let raw: [String: Any] = ["protocolVersion": 1, "operationId": "0123456789abcdef0123456789abcdef", "host": "nas.example.test", "port": 443, "rpcPath": "/rpc", "leafDerSha256": digest]
+    let request = PinnedRpcRequest(raw)!
+    let date = Date(timeIntervalSince1970: 1_780_000_000)
+    var sslCalls = 0
+    XCTAssertNil(PinnedLeafTrustPolicy.evaluate(request: request, presentedHost: "nas.example.test", leafDER: der, verifyDate: date) { sslCalls += 1; return nil })
+    XCTAssertEqual(sslCalls, 1)
+    for (host, leaf, when, expected) in [("other.example.test", der, date, "hostnameMismatch"), ("nas.example.test", Data([0]), date, "pinMismatch"), ("nas.example.test", der, Date(timeIntervalSince1970: 1_900_000_000), "expiredCertificate"), ("nas.example.test", der, Date(timeIntervalSince1970: 1_700_000_000), "notYetValidCertificate")] {
+      sslCalls = 0
+      XCTAssertEqual(PinnedLeafTrustPolicy.evaluate(request: request, presentedHost: host, leafDER: leaf, verifyDate: when) { sslCalls += 1; return nil }, expected)
+      XCTAssertEqual(sslCalls, 0)
+    }
+    XCTAssertEqual(PinnedLeafTrustPolicy.evaluate(request: request, presentedHost: "nas.example.test", leafDER: der, verifyDate: date) { "malformedCertificate" }, "malformedCertificate")
+    let malformed = Data([0])
+    let malformedDigest = SHA256.hash(data: malformed).map { String(format: "%02X", $0) }.joined()
+    let malformedRequest = PinnedRpcRequest(["protocolVersion": 1, "operationId": "fedcba9876543210fedcba9876543210", "host": "nas.example.test", "port": 443, "rpcPath": "/rpc", "leafDerSha256": malformedDigest])!
+    XCTAssertEqual(PinnedLeafTrustPolicy.evaluate(request: malformedRequest, presentedHost: "nas.example.test", leafDER: malformed, verifyDate: date) { XCTFail("must not evaluate malformed DER"); return nil }, "malformedCertificate")
+  }
+
+  func testPinnedOperationStateEmitsSuccessOnlyAfterOpenAndOnlyOnce() {
+    let state = PinnedOperationState()
+    XCTAssertFalse(state.finishOpen())
+    state.acceptTrust()
+    XCTAssertTrue(state.finishOpen())
+    XCTAssertFalse(state.finishOpen())
+    XCTAssertFalse(state.finishFailure())
+    let cancelled = PinnedOperationState()
+    XCTAssertTrue(cancelled.finishFailure())
+    cancelled.acceptTrust()
+    XCTAssertFalse(cancelled.finishOpen())
+  }
+  func testPinnedRpcRejectsStrictRequestsBeforeNetworkCreation() {
+    let core = ApplePinnedRpcCore()
+    let id = "0123456789abcdef0123456789abcdef"
+    let invalid: [[String: Any]] = [
+      ["protocolVersion": 1, "operationId": id, "host": "NAS.example.test", "port": 443, "rpcPath": "/rpc", "leafDerSha256": String(repeating: "a", count: 64)],
+      ["protocolVersion": 1, "operationId": id, "host": "nas.example.test", "port": 443, "rpcPath": "/../rpc", "leafDerSha256": String(repeating: "a", count: 64)],
+      ["protocolVersion": 1, "operationId": id, "host": "127.000.000.001", "port": 443, "rpcPath": "/rpc", "leafDerSha256": String(repeating: "a", count: 64)],
+      ["protocolVersion": 1, "operationId": id, "host": "nas.example.test", "port": 443, "rpcPath": "/rpc?x", "leafDerSha256": String(repeating: "a", count: 64)],
+    ]
+    for (index, request) in invalid.enumerated() {
+      let done = expectation(description: "pinned invalid \(index)")
+      core.connect(request) { response in
+        XCTAssertEqual(response["failureCode"] as? String, "malformedCertificate")
+        done.fulfill()
+      }
+      wait(for: [done], timeout: 1)
+    }
+  }
+
+  func testPinnedRpcRejectsMalformedSessionMethodsWithFixedClosedMap() {
+    let core = ApplePinnedRpcCore()
+    for call in [core.send, core.receive, core.close] {
+      let done = expectation(description: "bad session")
+      call(["protocolVersion": 1, "sessionId": "BAD"]) { response in
+        XCTAssertEqual(response["closed"] as? Bool, true)
+        XCTAssertEqual(response["sessionId"] as? String, String(repeating: "0", count: 32))
+        done.fulfill()
+      }
+      wait(for: [done], timeout: 1)
+    }
+  }
+
+  #if DEBUG
+  func testPinnedRpcCancelRemovesEstablishedOperationAndSession() {
+    let core = ApplePinnedRpcCore()
+    let id = "11111111111111111111111111111111"
+    let opened = expectation(description: "opened")
+    guard let fixture = core.debugInstallAcceptedOperation(operationId: id, completion: { response in
+      XCTAssertEqual(response["operationId"] as? String, id)
+      opened.fulfill()
+    }) else { return XCTFail("fixture must install") }
+
+    core.urlSession(fixture.session, webSocketTask: fixture.task, didOpenWithProtocol: nil)
+    wait(for: [opened], timeout: 1)
+    XCTAssertEqual(core.debugStateSnapshot, ApplePinnedRpcDebugStateSnapshot(operationCount: 1, taskCount: 1, sessionCount: 1))
+
+    let cancelled = expectation(description: "cancelled")
+    core.cancel(["protocolVersion": 1, "operationId": id]) { response in
+      XCTAssertEqual(response["failureCode"] as? String, "cancelled")
+      cancelled.fulfill()
+    }
+    wait(for: [cancelled], timeout: 1)
+    XCTAssertEqual(core.debugStateSnapshot, .init(operationCount: 0, taskCount: 0, sessionCount: 0))
+  }
+
+  func testPinnedRpcCompletionRemovesAcceptedSessionAndResolvesPendingReceiveOnce() {
+    let core = ApplePinnedRpcCore()
+    let id = "22222222222222222222222222222222"
+    let opened = expectation(description: "opened")
+    guard let fixture = core.debugInstallAcceptedOperation(operationId: id, completion: { _ in opened.fulfill() }) else { return XCTFail("fixture must install") }
+    core.urlSession(fixture.session, webSocketTask: fixture.task, didOpenWithProtocol: nil)
+    wait(for: [opened], timeout: 1)
+    guard let sessionId = core.debugSessionId(for: id) else { return XCTFail("open must create session") }
+
+    let received = expectation(description: "pending receive resolves once")
+    received.expectedFulfillmentCount = 1
+    var receiveCount = 0
+    core.receive(["protocolVersion": 1, "sessionId": sessionId]) { response in
+      receiveCount += 1
+      XCTAssertEqual(response["sessionId"] as? String, sessionId)
+      XCTAssertEqual(response["closed"] as? Bool, true)
+      received.fulfill()
+    }
+    core.urlSession(fixture.session, task: fixture.task, didCompleteWithError: nil)
+    wait(for: [received], timeout: 1)
+    XCTAssertEqual(receiveCount, 1)
+    XCTAssertEqual(core.debugStateSnapshot, .init(operationCount: 0, taskCount: 0, sessionCount: 0))
+  }
+
+  func testPinnedRpcRedirectReturnsNilAndTearsDownEstablishedState() {
+    let core = ApplePinnedRpcCore()
+    let id = "33333333333333333333333333333333"
+    let opened = expectation(description: "opened")
+    guard let fixture = core.debugInstallAcceptedOperation(operationId: id, completion: { _ in opened.fulfill() }) else { return XCTFail("fixture must install") }
+    core.urlSession(fixture.session, webSocketTask: fixture.task, didOpenWithProtocol: nil)
+    wait(for: [opened], timeout: 1)
+
+    let response = HTTPURLResponse(url: URL(string: "https://nas.example.test/rpc")!, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: nil)!
+    var redirect: URLRequest? = URLRequest(url: URL(string: "https://other.example.test/rpc")!)
+    core.urlSession(fixture.session, task: fixture.task, willPerformHTTPRedirection: response, newRequest: redirect!) { redirect = $0 }
+    XCTAssertNil(redirect)
+    XCTAssertEqual(core.debugStateSnapshot, .init(operationCount: 0, taskCount: 0, sessionCount: 0))
+  }
+
+  func testPinnedRpcLateOpenAndCompletionAfterCleanupCannotRecreateOrCompleteTwice() {
+    let core = ApplePinnedRpcCore()
+    let id = "44444444444444444444444444444444"
+    let completed = expectation(description: "cancel completion")
+    completed.expectedFulfillmentCount = 1
+    var completionCount = 0
+    guard let fixture = core.debugInstallAcceptedOperation(operationId: id, completion: { response in
+      completionCount += 1
+      XCTAssertEqual(response["failureCode"] as? String, "cancelled")
+      completed.fulfill()
+    }) else { return XCTFail("fixture must install") }
+
+    let cancelled = expectation(description: "cancel acknowledgement")
+    core.cancel(["protocolVersion": 1, "operationId": id]) { _ in cancelled.fulfill() }
+    wait(for: [completed, cancelled], timeout: 1)
+    core.urlSession(fixture.session, webSocketTask: fixture.task, didOpenWithProtocol: nil)
+    core.urlSession(fixture.session, task: fixture.task, didCompleteWithError: nil)
+    XCTAssertEqual(core.debugStateSnapshot, .init(operationCount: 0, taskCount: 0, sessionCount: 0))
+    XCTAssertEqual(completionCount, 1)
+  }
+
+  func testPinnedRpcLateSuccessfulSendAfterCloseReturnsFixedClosedResponseOnce() {
+    let core = ApplePinnedRpcCore()
+    let id = "55555555555555555555555555555555"
+    let opened = expectation(description: "opened")
+    guard let fixture = core.debugInstallAcceptedOperation(operationId: id, completion: { _ in opened.fulfill() }) else { return XCTFail("fixture must install") }
+    core.urlSession(fixture.session, webSocketTask: fixture.task, didOpenWithProtocol: nil)
+    wait(for: [opened], timeout: 1)
+    guard let sessionId = core.debugSessionId(for: id) else { return XCTFail("open must create session") }
+
+    let sendStarted = expectation(description: "send held")
+    var releaseSend: ((Error?) -> Void)?
+    core.debugSend = { _, _, completion in releaseSend = completion; sendStarted.fulfill() }
+    let sent = expectation(description: "send closed response")
+    sent.expectedFulfillmentCount = 1
+    var sendCount = 0
+    core.send(["protocolVersion": 1, "sessionId": sessionId, "frame": "x"]) { response in
+      sendCount += 1
+      XCTAssertEqual(response["protocolVersion"] as? Int, 1)
+      XCTAssertEqual(response["sessionId"] as? String, sessionId)
+      XCTAssertEqual(response["closed"] as? Bool, true)
+      XCTAssertEqual(response.count, 3)
+      sent.fulfill()
+    }
+    wait(for: [sendStarted], timeout: 1)
+    let closed = expectation(description: "closed")
+    core.close(["protocolVersion": 1, "sessionId": sessionId]) { _ in closed.fulfill() }
+    wait(for: [closed], timeout: 1)
+    releaseSend?(nil)
+    wait(for: [sent], timeout: 1)
+    XCTAssertEqual(sendCount, 1)
+  }
+  #endif
+
   func testRejectsMalformedProtocolWithoutTransport() {
     var called = false
     let core = PresentedLeafProbeCore(factory: { _, _, _, _ in called = true; return FakeConnection() })
@@ -166,6 +374,15 @@ final class RunnerTests: XCTestCase {
       XCTAssertEqual(decisions, [false, false]); XCTAssertEqual(responses, 1)
     }
   }
+}
+
+// Synthetic DER structure only; no certificate or private-key material.
+private func pinnedValidityDER(issuerTime: String?, before: String, after: String) -> Data {
+  func tlv(_ tag: UInt8, _ body: [UInt8]) -> [UInt8] { [tag, UInt8(body.count)] + body }
+  let issuer = tlv(0x30, issuerTime.map { tlv(0x17, Array($0.utf8)) } ?? [])
+  let validity = tlv(0x30, tlv(0x17, Array(before.utf8)) + tlv(0x17, Array(after.utf8)))
+  let tbs = tlv(0x30, tlv(0x02, [1]) + tlv(0x30, []) + issuer + validity)
+  return Data(tlv(0x30, tbs + tlv(0x30, []) + tlv(0x03, [0])))
 }
 
 private func request(_ id: String) -> [String: Any] { ["protocolVersion": 1, "operationId": id, "host": "nas.example.test", "port": 443] }

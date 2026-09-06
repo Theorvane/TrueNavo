@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'certificate_facts.dart';
 import 'models.dart';
+
+import 'package:truenas_api/truenas_api.dart';
+
 import 'native_tls_stub.dart'
     if (dart.library.io) 'native_tls_io.dart'
     if (dart.library.js_interop) 'native_tls_web.dart'
@@ -128,7 +131,10 @@ sealed class NativePinnedOutcome {
 }
 
 final class NativePinnedVerified extends NativePinnedOutcome {
-  const NativePinnedVerified();
+  const NativePinnedVerified(this.transport);
+
+  /// The caller owns this transport after a successful handoff.
+  final RpcTransport transport;
 }
 
 final class NativePinnedBrowserManagedTls extends NativePinnedOutcome {
@@ -179,13 +185,26 @@ abstract interface class NativeProbeAttempt {
 
 /// A registered, closeable pinned-reconnect attempt.
 ///
-/// [close] is idempotent, operation-specific, waits for cleanup, and prevents
-/// future activity, releases resources, and settles or releases any pending
-/// [outcome].
+/// [close] is idempotent, operation-specific, waits for operation-metadata
+/// cleanup, prevents future connection activity, and settles or releases any
+/// pending [outcome]. A verified transport remains staged after [close] until
+/// the bounded owner invokes exactly one of [transferTransport] or
+/// [discardTransport].
 abstract interface class NativePinnedAttempt {
   Future<NativePinnedOutcome> get outcome;
 
   Future<void> close();
+
+  /// Disposes a verified transport that was never handed to the caller.
+  ///
+  /// This is separate from [close] so an attempt can finish its operation
+  /// metadata cleanup before the bounded owner makes its final handoff
+  /// decision.
+  Future<void> discardTransport();
+
+  /// Atomically releases a verified transport to the caller.  Implementations
+  /// must ensure subsequent attempt cleanup cannot close that transport.
+  void transferTransport();
 }
 
 /// Narrow backend seam. It has no application protocol capability.
@@ -281,7 +300,7 @@ final class BoundedNativeTlsPorts
       cancelled = true;
       complete(const NativeProbeFailure(CertificateTrustFailure.cancelled));
     });
-    _probeOutcome(attempt).then(complete);
+    _probeOutcome(attempt, authority).then(complete);
     final outcome = await winner.future;
     try {
       await attempt.close();
@@ -304,12 +323,17 @@ final class BoundedNativeTlsPorts
     return outcome;
   }
 
-  Future<NativeProbeOutcome> _probeOutcome(NativeProbeAttempt attempt) async {
+  Future<NativeProbeOutcome> _probeOutcome(
+    NativeProbeAttempt attempt,
+    NormalizedAuthority authority,
+  ) async {
     try {
       final result = await attempt.outcome;
       final certificate = result.presentedCertificate;
       final failure = result.failure;
-      if (certificate != null && failure == null) {
+      if (certificate != null &&
+          failure == null &&
+          certificate.authority == authority) {
         return NativeProbeCertificate(certificate);
       }
       if (certificate == null && failure != null) {
@@ -368,6 +392,11 @@ final class BoundedNativeTlsPorts
     try {
       await attempt.close();
     } catch (_) {
+      try {
+        await attempt.discardTransport();
+      } catch (_) {
+        // The cleanup failure below intentionally takes precedence.
+      }
       return const NativePinnedBoundaryFailure(
         NativeTlsBoundaryFailure.cleanupFailed,
       );
@@ -376,12 +405,29 @@ final class BoundedNativeTlsPorts
       registration.dispose();
     }
     if (cancelled || cancellation.isCancelled) {
+      try {
+        await attempt.discardTransport();
+      } catch (_) {
+        return const NativePinnedBoundaryFailure(
+          NativeTlsBoundaryFailure.cleanupFailed,
+        );
+      }
       return const NativePinnedFailure(CertificateTrustFailure.cancelled);
     }
     if (timedOut) {
+      try {
+        await attempt.discardTransport();
+      } catch (_) {
+        return const NativePinnedBoundaryFailure(
+          NativeTlsBoundaryFailure.cleanupFailed,
+        );
+      }
       return const NativePinnedFailure(
         CertificateTrustFailure.pinnedReconnectFailed,
       );
+    }
+    if (outcome is NativePinnedVerified) {
+      attempt.transferTransport();
     }
     return outcome;
   }
