@@ -267,35 +267,39 @@ final class BoundedNativeTlsPorts
       );
     }
     final winner = Completer<NativeProbeOutcome>();
+    var timedOut = false;
+    var cancelled = false;
     void complete(NativeProbeOutcome outcome) {
       if (!winner.isCompleted) winner.complete(outcome);
     }
 
-    final timer = Timer(
-      timeout,
-      () => complete(
-        const NativeProbeFailure(CertificateTrustFailure.probeTimedOut),
-      ),
-    );
-    final registration = cancellation.register(
-      () =>
-          complete(const NativeProbeFailure(CertificateTrustFailure.cancelled)),
-    );
+    final timer = Timer(timeout, () {
+      timedOut = true;
+      complete(const NativeProbeFailure(CertificateTrustFailure.probeTimedOut));
+    });
+    final registration = cancellation.register(() {
+      cancelled = true;
+      complete(const NativeProbeFailure(CertificateTrustFailure.cancelled));
+    });
     _probeOutcome(attempt).then(complete);
     final outcome = await winner.future;
-    timer.cancel();
-    registration.dispose();
     try {
       await attempt.close();
     } catch (_) {
       return const NativeProbeBoundaryFailure(
         NativeTlsBoundaryFailure.cleanupFailed,
       );
+    } finally {
+      timer.cancel();
+      registration.dispose();
     }
     // Cancellation invalidates a result even if it races with backend
     // completion while operation-specific cleanup is in progress.
-    if (cancellation.isCancelled) {
+    if (cancelled || cancellation.isCancelled) {
       return const NativeProbeFailure(CertificateTrustFailure.cancelled);
+    }
+    if (timedOut) {
+      return const NativeProbeFailure(CertificateTrustFailure.probeTimedOut);
     }
     return outcome;
   }
@@ -341,36 +345,43 @@ final class BoundedNativeTlsPorts
       );
     }
     final winner = Completer<NativePinnedOutcome>();
+    var timedOut = false;
+    var cancelled = false;
     void complete(NativePinnedOutcome outcome) {
       if (!winner.isCompleted) winner.complete(outcome);
     }
 
-    final timer = Timer(
-      timeout,
-      () => complete(
+    final timer = Timer(timeout, () {
+      timedOut = true;
+      complete(
         const NativePinnedFailure(
           CertificateTrustFailure.pinnedReconnectFailed,
         ),
-      ),
-    );
-    final registration = cancellation.register(
-      () => complete(
-        const NativePinnedFailure(CertificateTrustFailure.cancelled),
-      ),
-    );
+      );
+    });
+    final registration = cancellation.register(() {
+      cancelled = true;
+      complete(const NativePinnedFailure(CertificateTrustFailure.cancelled));
+    });
     _reconnectOutcome(attempt).then(complete);
     final outcome = await winner.future;
-    timer.cancel();
-    registration.dispose();
     try {
       await attempt.close();
     } catch (_) {
       return const NativePinnedBoundaryFailure(
         NativeTlsBoundaryFailure.cleanupFailed,
       );
+    } finally {
+      timer.cancel();
+      registration.dispose();
     }
-    if (cancellation.isCancelled) {
+    if (cancelled || cancellation.isCancelled) {
       return const NativePinnedFailure(CertificateTrustFailure.cancelled);
+    }
+    if (timedOut) {
+      return const NativePinnedFailure(
+        CertificateTrustFailure.pinnedReconnectFailed,
+      );
     }
     return outcome;
   }

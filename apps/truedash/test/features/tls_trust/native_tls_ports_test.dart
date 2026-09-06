@@ -265,6 +265,33 @@ void main() {
       },
     );
 
+    test(
+      'probe timeout remains authoritative while successful cleanup runs',
+      () async {
+        final backend = ScriptedBackend()
+          ..probeScript = CertificateProbeResult.approvable(
+            _certificate(authority),
+          )
+          ..holdCloseProbe = true;
+        final future = BoundedNativeTlsPorts(backend: backend).probe(
+          authority: authority,
+          timeout: const Duration(milliseconds: 1),
+          cancellation: CancellationSource().token,
+        );
+
+        await backend.probeCloseStarted.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        backend.releaseProbeClose();
+
+        expect(
+          await future,
+          const NativeProbeFailure(CertificateTrustFailure.probeTimedOut),
+        );
+        expect(backend.probeCloses, 1);
+        _expectNoApplicationWork(backend);
+      },
+    );
+
     test('pre-cancel and invalid probe timeout fail before activity', () async {
       final source = CancellationSource()..cancel();
       final backend = ScriptedBackend();
@@ -440,6 +467,34 @@ void main() {
       );
       expect(untouched.reconnectAttempts, 0);
     });
+
+    test(
+      'reconnect timeout remains authoritative while successful cleanup runs',
+      () async {
+        final backend = ScriptedBackend()
+          ..reconnectScript = const NativePinnedVerified()
+          ..holdCloseReconnect = true;
+        final future = BoundedNativeTlsPorts(backend: backend).reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(milliseconds: 1),
+          cancellation: CancellationSource().token,
+        );
+
+        await backend.reconnectCloseStarted.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        backend.releaseReconnectClose();
+
+        expect(
+          await future,
+          const NativePinnedFailure(
+            CertificateTrustFailure.pinnedReconnectFailed,
+          ),
+        );
+        expect(backend.reconnectCloses, 1);
+        _expectNoApplicationWork(backend);
+      },
+    );
 
     test('all platform modules provide their exact Task 4 result', () async {
       final token = CancellationSource().token;
