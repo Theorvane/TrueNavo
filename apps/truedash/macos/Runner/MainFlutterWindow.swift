@@ -9,6 +9,9 @@ class MainFlutterWindow: NSWindow {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    PresentedLeafProbePlugin.register(
+      with: flutterViewController.registrar(forPlugin: "PresentedLeafProbePlugin")
+    )
 
     super.awakeFromNib()
   }
