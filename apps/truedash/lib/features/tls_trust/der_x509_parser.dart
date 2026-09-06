@@ -49,13 +49,13 @@ NativeParsedLeafFacts parsePresentedLeafDer(Uint8List der) {
             throw const FormatException();
           }
           issuerUniqueIdSeen = true;
-          reader.take(0x81);
+          _uniqueId(reader.take(0x81));
         case 0x82:
           if (subjectUniqueIdSeen || extensionsSeen) {
             throw const FormatException();
           }
           subjectUniqueIdSeen = true;
-          reader.take(0x82);
+          _uniqueId(reader.take(0x82));
         case 0xa3:
           if (extensionsSeen) throw const FormatException();
           extensionsSeen = true;
@@ -156,6 +156,21 @@ void _subjectPublicKeyInfo(Uint8List bytes) {
 void _signatureValue(Uint8List bytes) {
   if (bytes.length < 2 || bytes.first > 7) throw const FormatException();
   if (bytes.first > 0 && (bytes.last & ((1 << bytes.first) - 1)) != 0) {
+    throw const FormatException();
+  }
+}
+
+void _uniqueId(Uint8List bytes) {
+  // UniqueIdentifier is IMPLICIT BIT STRING. Unlike a signature, a BIT STRING
+  // may contain no data octets when its unused-bit count is zero.
+  if (bytes.isEmpty ||
+      bytes.first > 7 ||
+      (bytes.length == 1 && bytes.first != 0)) {
+    throw const FormatException();
+  }
+  if (bytes.length > 1 &&
+      bytes.first > 0 &&
+      (bytes.last & ((1 << bytes.first) - 1)) != 0) {
     throw const FormatException();
   }
 }

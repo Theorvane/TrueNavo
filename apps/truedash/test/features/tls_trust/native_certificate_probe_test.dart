@@ -558,19 +558,66 @@ void main() {
       }
     });
 
-    test('enforces issuer and subject unique-ID version requirements', () {
+    test('validates issuer and subject unique-ID BIT STRING content', () {
       for (final tag in [0x81, 0x82]) {
         final v2 = _replaceExtensionsWithUniqueId(
           validHostMatchingLeafDer,
           tag,
+          [0],
         );
         final version = _uniqueIndexOf(v2, [0xa0, 0x03, 0x02, 0x01, 0x02]);
         v2[version + 4] = 1;
         expect(parsePresentedLeafDer(v2).hasSubjectAlternativeNames, isFalse);
 
+        final nonempty = _replaceExtensionsWithUniqueId(
+          validHostMatchingLeafDer,
+          tag,
+          [3, 0xa0],
+        );
+        final nonemptyVersion = _uniqueIndexOf(nonempty, [
+          0xa0,
+          0x03,
+          0x02,
+          0x01,
+          0x02,
+        ]);
+        nonempty[nonemptyVersion + 4] = 1;
+        expect(
+          parsePresentedLeafDer(nonempty).hasSubjectAlternativeNames,
+          isFalse,
+          reason: 'valid nonempty unique ID for tag $tag',
+        );
+
+        for (final content in <List<int>>[
+          [],
+          [1],
+          [0xff],
+          [3, 0xa1],
+        ]) {
+          final invalid = _replaceExtensionsWithUniqueId(
+            validHostMatchingLeafDer,
+            tag,
+            content,
+          );
+          final invalidVersion = _uniqueIndexOf(invalid, [
+            0xa0,
+            0x03,
+            0x02,
+            0x01,
+            0x02,
+          ]);
+          invalid[invalidVersion + 4] = 1;
+          expect(
+            () => parsePresentedLeafDer(invalid),
+            throwsFormatException,
+            reason: 'invalid unique ID content $content for tag $tag',
+          );
+        }
+
         final v1 = _replaceExtensionsWithUniqueId(
           _withoutExplicitVersion(validHostMatchingLeafDer),
           tag,
+          [0],
         );
         expect(() => parsePresentedLeafDer(v1), throwsFormatException);
       }
@@ -690,18 +737,24 @@ Uint8List _withoutExplicitVersion(Uint8List der) {
   return result;
 }
 
-Uint8List _replaceExtensionsWithUniqueId(Uint8List der, int tag) {
+Uint8List _replaceExtensionsWithUniqueId(
+  Uint8List der,
+  int tag,
+  List<int> bitStringContent,
+) {
   final extension = _uniqueIndexOf(der, [0xa3, 0x52, 0x30, 0x50]);
+  expect(tag == 0x81 || tag == 0x82, isTrue);
+  expect(bitStringContent.length, lessThan(128));
   // Replace the complete [3] EXPLICIT Extensions field (84 bytes) with one
-  // well-formed IMPLICIT BIT STRING containing zero unused bits.
+  // IMPLICIT BIT STRING field, retaining genuine certificate structure.
   final result = Uint8List.fromList([
     ...der.sublist(0, extension),
     tag,
-    0x01,
-    0x00,
+    bitStringContent.length,
+    ...bitStringContent,
     ...der.sublist(extension + 84),
   ]);
-  _adjustCertificateAndTbsLengths(result, -81);
+  _adjustCertificateAndTbsLengths(result, bitStringContent.length - 82);
   return result;
 }
 
