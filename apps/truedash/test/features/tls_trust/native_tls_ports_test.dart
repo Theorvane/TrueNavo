@@ -515,16 +515,29 @@ void main() {
         ),
         const NativePinnedBrowserManagedTls(),
       );
-      expect(
-        await native_io.createProbe().probe(
-          authority: authority,
-          timeout: const Duration(seconds: 1),
-          cancellation: token,
-        ),
-        const NativeProbeBoundaryFailure(
-          NativeTlsBoundaryFailure.backendUnavailable,
-        ),
-      );
+      // Do not exercise the real Flutter MethodChannel in a unit test. Apple
+      // is covered through its injected channel; all other IO platforms are
+      // intentionally unavailable.
+      for (final platform in <native_io.NativeTlsPlatform>[
+        native_io.NativeTlsPlatform.android,
+        native_io.NativeTlsPlatform.linux,
+        native_io.NativeTlsPlatform.windows,
+        native_io.NativeTlsPlatform.other,
+      ]) {
+        expect(
+          await native_io
+              .createProbeForNativeTlsPlatform(platform)
+              .probe(
+                authority: authority,
+                timeout: const Duration(seconds: 1),
+                cancellation: token,
+              ),
+          const NativeProbeBoundaryFailure(
+            NativeTlsBoundaryFailure.backendUnavailable,
+          ),
+          reason: platform.name,
+        );
+      }
       expect(
         await native_io.createReconnect().reconnect(
           authority: authority,
@@ -575,14 +588,24 @@ void main() {
         ),
         const NativePinnedFailure(CertificateTrustFailure.cancelled),
       );
-      expect(
-        await native_io.createProbe().probe(
-          authority: authority,
-          timeout: const Duration(seconds: 1),
-          cancellation: cancelled.token,
-        ),
-        const NativeProbeFailure(CertificateTrustFailure.cancelled),
-      );
+      for (final platform in <native_io.NativeTlsPlatform>[
+        native_io.NativeTlsPlatform.android,
+        native_io.NativeTlsPlatform.linux,
+        native_io.NativeTlsPlatform.windows,
+        native_io.NativeTlsPlatform.other,
+      ]) {
+        expect(
+          await native_io
+              .createProbeForNativeTlsPlatform(platform)
+              .probe(
+                authority: authority,
+                timeout: const Duration(seconds: 1),
+                cancellation: cancelled.token,
+              ),
+          const NativeProbeFailure(CertificateTrustFailure.cancelled),
+          reason: platform.name,
+        );
+      }
       expect(
         await native_io.createReconnect().reconnect(
           authority: authority,
@@ -610,11 +633,13 @@ void main() {
         const NativePinnedFailure(CertificateTrustFailure.cancelled),
       );
       expect(
-        () => native_io.createProbe().probe(
-          authority: authority,
-          timeout: Duration.zero,
-          cancellation: token,
-        ),
+        () => native_io
+            .createProbeForNativeTlsPlatform(native_io.NativeTlsPlatform.other)
+            .probe(
+              authority: authority,
+              timeout: Duration.zero,
+              cancellation: token,
+            ),
         throwsA(isA<NativeTlsArgumentError>()),
       );
       expect(
@@ -670,6 +695,7 @@ void main() {
       'native_tls_stub.dart',
       'native_tls_io.dart',
       'native_tls_web.dart',
+      'der_x509_parser.dart',
     ];
     final source = <String, String>{
       for (final file in files)
@@ -726,7 +752,8 @@ void main() {
     expect(source['native_tls_web.dart'], isNot(contains('certificate')));
     expect(source['native_tls_web.dart'], isNot(contains('fingerprint')));
     expect(source['native_tls_web.dart'], isNot(contains('approve')));
-    for (final text in source.values) {
+    for (final entry in source.entries) {
+      final text = entry.value;
       for (final forbidden in [
         'truenas_api',
         'badCertificateCallback',
@@ -741,11 +768,38 @@ void main() {
       ]) {
         expect(text.contains(forbidden), isFalse);
       }
-      expect(text.contains('Object'), isFalse);
-      expect(
-        RegExp(r'Future<[^>]+>\s+\w+\([^)]*\bObject\b').hasMatch(text),
-        isFalse,
-      );
+      if (entry.key == 'native_tls_io.dart') {
+        expect(text, contains('Future<Object?> invokeMethod'));
+        expect(text, contains("'truedash.capturePresentedLeaf'"));
+        expect(text, contains("'truedash.cancelPresentedLeaf'"));
+        expect(text, contains("'protocolVersion'"));
+        expect(text, contains("'operationId'"));
+        expect(text, contains("'host'"));
+        expect(text, contains("'port'"));
+        final bridgeCalls = RegExp(r'_channel\\.invokeMethod\\([\\s\\S]*?\\);')
+            .allMatches(text)
+            .map((match) => match.group(0)!)
+            .join();
+        for (final forbiddenBridgeTerm in [
+          'credential',
+          'apiKey',
+          'pin',
+          'header',
+          'body',
+          'applicationData',
+        ]) {
+          expect(bridgeCalls.contains(forbiddenBridgeTerm), isFalse);
+        }
+        expect(RegExp(r'\bObject(?!\?)').hasMatch(text), isFalse);
+      } else {
+        expect(text.contains('Object'), isFalse);
+      }
+      if (entry.key != 'native_tls_io.dart') {
+        expect(
+          RegExp(r'Future<[^>]+>\s+\w+\([^)]*\bObject\b').hasMatch(text),
+          isFalse,
+        );
+      }
     }
   });
 
