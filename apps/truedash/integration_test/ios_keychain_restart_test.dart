@@ -1,23 +1,13 @@
 import 'dart:io' show Platform;
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:truedash/features/tls_trust/platform_pin_storage.dart';
+import 'package:truedash/features/tls_trust/raw_pin_storage.dart';
 
 const _phase = String.fromEnvironment('keychainTestPhase');
-// flutter_secure_storage maps `key` to the Keychain account attribute.
-const _account =
-    'com.truedash.truedash.integration-test.ios-keychain-restart.account';
-const _service =
-    'com.truedash.truedash.integration-test.ios-keychain-restart.service';
+const _key = 'com.truedash.tls-pin.integration-test.ios-keychain-restart.v1';
 const _marker = 'truedash-ios-keychain-restart-marker-v1';
-
-const _storage = FlutterSecureStorage(
-  iOptions: IOSOptions(
-    accountName: _service,
-    accessibility: KeychainAccessibility.unlocked_this_device,
-  ),
-);
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -30,17 +20,22 @@ void main() {
       isTrue,
       reason: 'This integration test is iOS-only.',
     );
+    // Exercise the same platform-selected storage path used by the app.
+    final storage = createPlatformRawPinStorage();
 
     switch (_phase) {
       case 'write':
-        await _storage.delete(key: _account);
-        await _storage.write(key: _account, value: _marker);
-        expect(await _storage.read(key: _account), _marker);
+        expect(await storage.delete(_key), const RawPinStorageResult.success());
+        expect(
+          await storage.write(_key, _marker),
+          const RawPinStorageResult.success(),
+        );
+        expect(await storage.read(_key), const RawPinReadResult.value(_marker));
         break;
       case 'read-delete':
-        expect(await _storage.read(key: _account), _marker);
-        await _storage.delete(key: _account);
-        expect(await _storage.read(key: _account), isNull);
+        expect(await storage.read(_key), const RawPinReadResult.value(_marker));
+        expect(await storage.delete(_key), const RawPinStorageResult.success());
+        expect(await storage.read(_key), const RawPinReadResult.absent());
         break;
       default:
         fail(

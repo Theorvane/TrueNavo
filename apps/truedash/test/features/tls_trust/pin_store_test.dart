@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -131,6 +132,38 @@ void main() {
       expect(await store.read(authority), const PinReadResult.absent());
     },
   );
+  test('a commit in progress cannot be successfully aborted', () async {
+    final raw = _DelayedCommitRawPinStorage();
+    final store = PersistentPinStore(raw);
+    await staged(await store.stageReplacement(authority, old)).commit();
+    raw.delayNextActiveWrite();
+    final transaction = staged(
+      await store.stageReplacement(authority, replacement),
+    );
+
+    final committing = transaction.commit();
+    await raw.activeWriteStarted.future;
+    expect(
+      await transaction.commit(),
+      const PinStoreResult.failure(PinStoreFailure.transactionFinished),
+    );
+    expect(
+      await transaction.abort(),
+      const PinStoreResult.failure(PinStoreFailure.transactionFinished),
+    );
+
+    raw.allowActiveWrite.complete();
+    expect(await committing, const PinStoreResult.success());
+    expect(await store.read(authority), PinReadResult.record(replacement));
+    expect(
+      await transaction.commit(),
+      const PinStoreResult.failure(PinStoreFailure.transactionFinished),
+    );
+    expect(
+      await transaction.abort(),
+      const PinStoreResult.failure(PinStoreFailure.transactionFinished),
+    );
+  });
   test(
     'a leftover pending matching active is cleaned before a new stage',
     () async {
@@ -358,3 +391,55 @@ PinStoreTransaction recoveredTransaction(
 
 String envelope(NormalizedAuthority authority, PinRecord record) =>
     jsonEncode({'authority': authority.pinKey, 'record': record.toJson()});
+
+final class _DelayedCommitRawPinStorage implements RawPinStorage {
+  final _delegate = InMemoryRawPinStorage();
+  final activeWriteStarted = Completer<void>();
+  final allowActiveWrite = Completer<void>();
+  var _delayNextActiveWrite = false;
+
+  void delayNextActiveWrite() => _delayNextActiveWrite = true;
+
+  @override
+  Future<RawPinReadResult> read(String key) => _delegate.read(key);
+
+  @override
+  Future<RawPinStorageResult> write(String key, String value) =>
+      _delegate.write(key, value);
+
+  @override
+  Future<RawPinStorageResult> delete(String key) => _delegate.delete(key);
+
+  @override
+  Future<RawPinStorageResult> deleteIfValue(String key, String expectedValue) =>
+      _delegate.deleteIfValue(key, expectedValue);
+
+  @override
+  Future<RawPinStorageResult> writeIfValue(
+    String key,
+    String? expectedValue,
+    String value,
+  ) => _delegate.writeIfValue(key, expectedValue, value);
+
+  @override
+  Future<RawPinStorageResult> writeIfValues(
+    String key,
+    String? expectedValue,
+    String guardKey,
+    String expectedGuardValue,
+    String value,
+  ) async {
+    if (_delayNextActiveWrite) {
+      _delayNextActiveWrite = false;
+      activeWriteStarted.complete();
+      await allowActiveWrite.future;
+    }
+    return _delegate.writeIfValues(
+      key,
+      expectedValue,
+      guardKey,
+      expectedGuardValue,
+      value,
+    );
+  }
+}

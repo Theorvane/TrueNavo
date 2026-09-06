@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:ffi/ffi.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:win32/win32.dart'
     show
         CREDENTIAL,
@@ -17,6 +18,7 @@ import 'package:win32/win32.dart'
         PCWSTR,
         PWSTR;
 
+import 'native_pin_storage_lock.dart';
 import 'raw_pin_storage.dart';
 
 /// Classifies the documented Credential Manager status values without loading
@@ -43,8 +45,14 @@ final class WindowsCredentialStatus {
 
 /// Direct app-owned Credential Manager backend; it has no plugin dependency.
 final class WindowsCredentialRawPinStorage implements RawPinStorage {
+  WindowsCredentialRawPinStorage({NativePinStorageLock? lock})
+    : _lock =
+          lock ??
+          NativePinStorageLock.appPrivate(getApplicationSupportDirectory);
+
   static const _maxTargetChars = 256;
   static const _maxCredentialBytes = 2560;
+  final NativePinStorageLock _lock;
 
   String targetForKey(String key) =>
       'com.truedash.tls-pin.v1.${sha256.convert(utf8.encode(key))}';
@@ -54,7 +62,9 @@ final class WindowsCredentialRawPinStorage implements RawPinStorage {
       RegExp(r'^com\.truedash\.tls-pin\.v1\.[0-9a-f]{64}$').hasMatch(target);
 
   @override
-  Future<RawPinReadResult> read(String key) async {
+  Future<RawPinReadResult> read(String key) => _readUnlocked(key);
+
+  Future<RawPinReadResult> _readUnlocked(String key) async {
     final target = targetForKey(key);
     if (!_validTarget(target)) {
       return const RawPinReadResult.failure(RawPinStorageFailure.readFailed);
@@ -94,7 +104,10 @@ final class WindowsCredentialRawPinStorage implements RawPinStorage {
   }
 
   @override
-  Future<RawPinStorageResult> write(String key, String value) async {
+  Future<RawPinStorageResult> write(String key, String value) =>
+      _writeUnlocked(key, value);
+
+  Future<RawPinStorageResult> _writeUnlocked(String key, String value) async {
     final target = targetForKey(key);
     final bytes = Uint8List.fromList(utf8.encode(value));
     if (!_validTarget(target) ||
@@ -133,7 +146,9 @@ final class WindowsCredentialRawPinStorage implements RawPinStorage {
   }
 
   @override
-  Future<RawPinStorageResult> delete(String key) async {
+  Future<RawPinStorageResult> delete(String key) => _deleteUnlocked(key);
+
+  Future<RawPinStorageResult> _deleteUnlocked(String key) async {
     final target = targetForKey(key);
     if (!_validTarget(target)) {
       return const RawPinStorageResult.failure(
@@ -162,17 +177,27 @@ final class WindowsCredentialRawPinStorage implements RawPinStorage {
     String? expectedValue,
     String value,
   ) async {
-    final current = await read(key);
-    if (current is RawPinReadFailure) {
-      return RawPinStorageResult.failure(current.failure);
+    try {
+      return await _lock.withKeys(<String>[key], () async {
+        final current = await _readUnlocked(key);
+        if (current is RawPinReadFailure) {
+          return RawPinStorageResult.failure(current.failure);
+        }
+        final actual = switch (current) {
+          RawPinAbsent() => null,
+          RawPinValue(:final value) => value,
+          _ => null,
+        };
+        if (actual != expectedValue) {
+          return const RawPinStorageResult.notMatched();
+        }
+        return _writeUnlocked(key, value);
+      });
+    } on NativePinStorageLockException {
+      return const RawPinStorageResult.failure(
+        RawPinStorageFailure.writeFailed,
+      );
     }
-    final actual = switch (current) {
-      RawPinAbsent() => null,
-      RawPinValue(:final value) => value,
-      _ => null,
-    };
-    if (actual != expectedValue) return const RawPinStorageResult.notMatched();
-    return write(key, value);
   }
 
   @override
@@ -183,14 +208,34 @@ final class WindowsCredentialRawPinStorage implements RawPinStorage {
     String expectedGuardValue,
     String value,
   ) async {
-    final guard = await read(guardKey);
-    if (guard is RawPinReadFailure) {
-      return RawPinStorageResult.failure(guard.failure);
+    try {
+      return await _lock.withKeys(<String>[key, guardKey], () async {
+        final guard = await _readUnlocked(guardKey);
+        if (guard is RawPinReadFailure) {
+          return RawPinStorageResult.failure(guard.failure);
+        }
+        if (guard is! RawPinValue || guard.value != expectedGuardValue) {
+          return const RawPinStorageResult.notMatched();
+        }
+        final current = await _readUnlocked(key);
+        if (current is RawPinReadFailure) {
+          return RawPinStorageResult.failure(current.failure);
+        }
+        final actual = switch (current) {
+          RawPinAbsent() => null,
+          RawPinValue(:final value) => value,
+          _ => null,
+        };
+        if (actual != expectedValue) {
+          return const RawPinStorageResult.notMatched();
+        }
+        return _writeUnlocked(key, value);
+      });
+    } on NativePinStorageLockException {
+      return const RawPinStorageResult.failure(
+        RawPinStorageFailure.writeFailed,
+      );
     }
-    if (guard is! RawPinValue || guard.value != expectedGuardValue) {
-      return const RawPinStorageResult.notMatched();
-    }
-    return writeIfValue(key, expectedValue, value);
   }
 
   @override
@@ -198,13 +243,21 @@ final class WindowsCredentialRawPinStorage implements RawPinStorage {
     String key,
     String expectedValue,
   ) async {
-    final current = await read(key);
-    if (current is RawPinReadFailure) {
-      return RawPinStorageResult.failure(current.failure);
+    try {
+      return await _lock.withKeys(<String>[key], () async {
+        final current = await _readUnlocked(key);
+        if (current is RawPinReadFailure) {
+          return RawPinStorageResult.failure(current.failure);
+        }
+        if (current is! RawPinValue || current.value != expectedValue) {
+          return const RawPinStorageResult.notMatched();
+        }
+        return _deleteUnlocked(key);
+      });
+    } on NativePinStorageLockException {
+      return const RawPinStorageResult.failure(
+        RawPinStorageFailure.deleteFailed,
+      );
     }
-    if (current is! RawPinValue || current.value != expectedValue) {
-      return const RawPinStorageResult.notMatched();
-    }
-    return delete(key);
   }
 }

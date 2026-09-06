@@ -14,21 +14,24 @@ xcrun_shim_dir="$(mktemp -d "${TMPDIR:-/tmp}/truedash-xcrun-shim.XXXXXX")"
 ln -s -- "$xcrun_shim_source" "$xcrun_shim_dir/xcrun"
 
 device_udid=''
-booted_by_script=false
+created_simulator=false
 
 cleanup() {
   local status=$?
-  if [[ -n "$device_udid" ]]; then
+  if [[ "$created_simulator" == true && -n "$device_udid" ]]; then
+    # This UDID was created by this invocation; no shared simulator is touched.
     xcrun simctl terminate "$device_udid" "$bundle_id" >/dev/null 2>&1 || true
     xcrun simctl uninstall "$device_udid" "$bundle_id" >/dev/null 2>&1 || true
-    if [[ "$booted_by_script" == true ]]; then
-      xcrun simctl shutdown "$device_udid" >/dev/null 2>&1 || true
-    fi
+    xcrun simctl shutdown "$device_udid" >/dev/null 2>&1 || true
+    xcrun simctl delete "$device_udid" >/dev/null 2>&1 || true
   fi
   rm -rf -- "$derived_data_path" "$xcrun_shim_dir"
   exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 command -v xcrun >/dev/null || {
   echo 'xcrun is required to run the iOS Keychain integration test.' >&2
@@ -39,44 +42,39 @@ command -v fvm >/dev/null || {
   exit 1
 }
 
-device_selection="$({ xcrun simctl list devices available -j; } | python3 -c '
+selection="$(xcrun simctl list devices available -j | python3 -c '
 import json
 import sys
 
-devices = [
-    device
-    for runtime, runtime_devices in json.load(sys.stdin).get("devices", {}).items()
+def runtime_version(identifier):
+    return tuple(int(part) for part in identifier.rsplit("iOS-", 1)[1].split("-"))
+
+candidates = [
+    (runtime_version(runtime), device["deviceTypeIdentifier"], runtime)
+    for runtime, devices in json.load(sys.stdin).get("devices", {}).items()
     if runtime.startswith("com.apple.CoreSimulator.SimRuntime.iOS-")
-    for device in runtime_devices
-    if device.get("isAvailable", False)
+    for device in devices
+    if device.get("isAvailable", False) and device.get("deviceTypeIdentifier")
 ]
-booted = [device for device in devices if device.get("state") == "Booted"]
-shutdown = [device for device in devices if device.get("state") == "Shutdown"]
-selected = sorted(booted or shutdown, key=lambda device: (device["name"], device["udid"]))
-if not selected:
-    raise SystemExit("No available iOS simulator is Booted or Shutdown.")
-device = selected[0]
-print("{}\t{}\t{}".format(device["udid"], device["state"], device["name"]))
+if not candidates:
+    raise SystemExit("No available compatible iOS simulator device type/runtime.")
+_, device_type, runtime = max(candidates)
+print("{}\t{}".format(device_type, runtime))
 ')" || {
-  echo 'Unable to select an available iOS simulator.' >&2
+  echo 'Unable to select a compatible iOS simulator runtime and device type.' >&2
   exit 1
 }
-IFS=$'\t' read -r device_udid device_state device_name <<<"$device_selection"
+IFS=$'\t' read -r device_type runtime <<<"$selection"
 IFS=$'\n\t'
 
-echo "Using iOS simulator: $device_name ($device_udid; $device_state)"
-if [[ "$device_state" == 'Shutdown' ]]; then
-  xcrun simctl boot "$device_udid"
-  booted_by_script=true
-fi
+simulator_name="truedash-tls-pin-${$}-${RANDOM}"
+device_udid="$(xcrun simctl create "$simulator_name" "$device_type" "$runtime")"
+created_simulator=true
+echo "Created isolated iOS simulator: $simulator_name ($device_udid)"
+xcrun simctl boot "$device_udid"
 xcrun simctl bootstatus "$device_udid" -b
 
 cd -- "$app_dir"
-# The write phase deletes this dedicated test-only Keychain key before writing.
-# Uninstalling here clears the app container without touching any simulator.
-xcrun simctl terminate "$device_udid" "$bundle_id" >/dev/null 2>&1 || true
-xcrun simctl uninstall "$device_udid" "$bundle_id" >/dev/null 2>&1 || true
-
 PATH="$xcrun_shim_dir:$PATH" \
 TRUEDASH_IOS_TEST_DERIVED_DATA="$derived_data_path" \
 fvm flutter test "$test_file" -d "$device_udid" \

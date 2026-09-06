@@ -13,6 +13,7 @@ dependencies:
   win32: 6.4.0
   ffi: 2.2.0
   crypto: 3.0.7
+  path_provider: 2.1.6
   truenas_api:
     path: ../../packages/truenas_api
   truedash_design_system:

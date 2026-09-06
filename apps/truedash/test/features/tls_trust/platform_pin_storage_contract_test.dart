@@ -135,6 +135,12 @@ void main() {
     expect(runner, contains('integration_test/ios_keychain_restart_test.dart'));
     expect(runner, contains('TRUEDASH_IOS_TEST_DERIVED_DATA'));
     expect(runner, contains('xcrun_with_derived_data.sh'));
+    expect(runner, contains('simctl create'));
+    expect(runner, contains(r'simctl delete "$device_udid"'));
+    expect(runner, contains('created_simulator=true'));
+    expect(runner, isNot(contains('booted or shutdown')));
+    expect(runner, contains('simctl list devices available -j'));
+    expect(runner, contains('deviceTypeIdentifier'));
     expect(xcrunShim, contains('-derivedDataPath'));
     expect(xcrunShim, contains(r'${TRUEDASH_IOS_TEST_DERIVED_DATA:?}'));
     expect(
@@ -143,7 +149,37 @@ void main() {
     );
     expect(integration, contains("case 'write':"));
     expect(integration, contains("case 'read-delete':"));
+    expect(integration, contains('createPlatformRawPinStorage()'));
+    expect(integration, contains('RawPinStorageResult.success'));
+    expect(integration, isNot(contains('FlutterSecureStorage')));
+    expect(integration, isNot(contains('IOSOptions')));
+    expect(integration, isNot(contains('accountName')));
   });
+  test(
+    'native conditional storage uses OS-released hashed app-private locks',
+    () {
+      final io = source('platform_pin_storage_io.dart');
+      final windows = source('platform_pin_storage_windows.dart');
+      final lock = source('native_pin_storage_lock.dart');
+      for (final backend in <String>[io, windows]) {
+        expect(
+          backend,
+          contains(
+            'NativePinStorageLock.appPrivate(getApplicationSupportDirectory)',
+          ),
+        );
+        expect(backend, contains('_lock.withKeys'));
+        expect(backend, contains('_readUnlocked'));
+        expect(backend, contains('_writeUnlocked'));
+        expect(backend, contains('_deleteUnlocked'));
+      }
+      expect(lock, contains('sha256.convert'));
+      expect(lock, contains('FileLock.blockingExclusive'));
+      expect(lock, contains('await file.unlock()'));
+      expect(lock, contains('await file.close()'));
+      expect(lock, isNot(contains('envelope')));
+    },
+  );
   test('persistent representation excludes profile, API key and raw certificate fields', () {
     final pinStore = source('pin_store.dart');
     expect(pinStore, isNot(contains('ServerProfile')));

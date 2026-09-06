@@ -383,14 +383,19 @@ final class _PersistentTransaction implements PinStoreTransaction {
   final String _pendingValue;
   final String? _expectedActiveValue;
   final String _ownership;
-  var _activeWritten = false;
-  var _finished = false;
+  var _state = _TransactionState.open;
+
   @override
   Future<PinStoreResult> commit() async {
-    if (_finished) {
+    if (_state == _TransactionState.finished ||
+        _state == _TransactionState.committing ||
+        _state == _TransactionState.aborting) {
       return const PinStoreResult.failure(PinStoreFailure.transactionFinished);
     }
-    if (!_activeWritten) {
+    if (_state == _TransactionState.open) {
+      // This synchronous transition is deliberately before the first await:
+      // once commit begins, abort must never remove the durable pending value.
+      _state = _TransactionState.committing;
       final write = await _store._raw.writeIfValues(
         PersistentPinStore.activeKey(_authority),
         _expectedActiveValue,
@@ -399,21 +404,26 @@ final class _PersistentTransaction implements PinStoreTransaction {
         _store._serialize(_authority, _record),
       );
       if (write is RawPinStorageOperationFailure) {
+        _state = _TransactionState.open;
         return PinStoreResult.failure(_store._map(write.failure));
       }
       if (write is RawPinStorageNotMatched) {
+        _state = _TransactionState.open;
         return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
       }
-      _activeWritten = true;
+      _state = _TransactionState.activeWritten;
     }
+    _state = _TransactionState.committing;
     final delete = await _store._raw.deleteIfValue(
       PersistentPinStore.pendingKey(_authority),
       _pendingValue,
     );
     if (delete is RawPinStorageOperationFailure) {
+      _state = _TransactionState.activeWritten;
       return PinStoreResult.failure(_store._map(delete.failure));
     }
     if (delete is RawPinStorageNotMatched) {
+      _state = _TransactionState.activeWritten;
       return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
     }
     _finish();
@@ -422,20 +432,22 @@ final class _PersistentTransaction implements PinStoreTransaction {
 
   @override
   Future<PinStoreResult> abort() async {
-    if (_finished) {
+    if (_state != _TransactionState.open) {
       return const PinStoreResult.failure(PinStoreFailure.transactionFinished);
     }
-    if (_activeWritten) {
-      return const PinStoreResult.failure(PinStoreFailure.transactionFinished);
-    }
+    // As with commit, serialize before the first await so duplicate aborts
+    // cannot both report success.
+    _state = _TransactionState.aborting;
     final delete = await _store._raw.deleteIfValue(
       PersistentPinStore.pendingKey(_authority),
       _pendingValue,
     );
     if (delete is RawPinStorageOperationFailure) {
+      _state = _TransactionState.open;
       return PinStoreResult.failure(_store._map(delete.failure));
     }
     if (delete is RawPinStorageNotMatched) {
+      _state = _TransactionState.open;
       return const PinStoreResult.failure(PinStoreFailure.replacementChanged);
     }
     _finish();
@@ -443,10 +455,12 @@ final class _PersistentTransaction implements PinStoreTransaction {
   }
 
   void _finish() {
-    _finished = true;
+    _state = _TransactionState.finished;
     _store._release(_ownership);
   }
 }
+
+enum _TransactionState { open, committing, activeWritten, aborting, finished }
 
 /// Compatibility fake backed by the same persistent protocol.
 final class InMemoryPinStore extends PersistentPinStore {
