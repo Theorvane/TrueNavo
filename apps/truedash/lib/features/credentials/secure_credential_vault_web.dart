@@ -10,13 +10,17 @@ final class WebSecureCredentialVault implements CredentialVault {
   const WebSecureCredentialVault();
 
   @override
-  Future<String?> readApiKey(String serverDisplayInput) async => null;
+  Future<String?> readApiKey(String endpointIdentifier) async => null;
 
   @override
-  Future<void> writeApiKey(String serverDisplayInput, String apiKey) async {
+  Future<void> writeApiKey(
+    String endpointIdentifier,
+    String apiKey, {
+    bool Function()? isCurrent,
+  }) async {
     throw const CredentialVaultFailure(CredentialVaultFailureKind.unsupported);
   }
 
   @override
-  Future<void> deleteApiKey(String serverDisplayInput) async {}
+  Future<void> deleteApiKey(String endpointIdentifier) async {}
 }

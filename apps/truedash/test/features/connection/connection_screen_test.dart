@@ -302,7 +302,9 @@ final class _SuccessRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async => ServerSummary(
     originalHostInput: serverInput,
     endpointUri: Uri.parse('wss://nas.example/api/current'),
@@ -319,7 +321,9 @@ final class _LongSuccessRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async => ServerSummary(
     originalHostInput: serverInput,
     endpointUri: Uri.parse(
@@ -337,7 +341,9 @@ final class _FailureRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async => throw const AuthenticationStateException(
     AuthenticationState.authenticationFailed,
   );
@@ -350,7 +356,9 @@ final class _PendingRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) => _completion.future;
   void complete() => _completion.complete(
     ServerSummary(
@@ -371,7 +379,9 @@ final class _ThrowingRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) => Future<ServerSummary>.error(error);
 }
 
@@ -382,9 +392,13 @@ final class _UnusedConnector implements RpcConnector {
 
 final class _TrackingVault implements CredentialVault {
   @override
-  Future<void> deleteApiKey(String serverDisplayInput) async {}
+  Future<void> deleteApiKey(String endpointIdentifier) async {}
   @override
-  Future<String?> readApiKey(String serverDisplayInput) async => null;
+  Future<String?> readApiKey(String endpointIdentifier) async => null;
   @override
-  Future<void> writeApiKey(String serverDisplayInput, String apiKey) async {}
+  Future<void> writeApiKey(
+    String endpointIdentifier,
+    String apiKey, {
+    bool Function()? isCurrent,
+  }) async {}
 }

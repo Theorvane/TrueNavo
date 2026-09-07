@@ -174,7 +174,9 @@ final class _Repository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async => ServerSummary(
     originalHostInput: 'https://nas.example',
     endpointUri: Uri.parse('wss://nas.example/websocket'),

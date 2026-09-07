@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,7 +24,7 @@ void main() {
       await vault.writeApiKey(endpoint, apiKey);
       await vault.deleteApiKey(endpoint);
 
-      expect(port.operations, hasLength(3));
+      expect(port.operations, hasLength(4));
       for (final operation in port.operations) {
         expect(
           operation.key,
@@ -30,7 +32,12 @@ void main() {
         );
         expect(operation.key, isNot(contains('vault-unit.example')));
       }
-      expect(port.operations[1].value, apiKey);
+      expect(
+        port.operations
+            .singleWhere((operation) => operation.value != null)
+            .value,
+        apiKey,
+      );
       for (final options in port.options) {
         expect(options.androidResetOnError, isFalse);
         expect(options.androidNamespace, 'com.truedash.truedash.api-key');
@@ -87,6 +94,36 @@ void main() {
           throwsA(isA<CredentialVaultFailure>()),
         );
         expect(port.operations, isEmpty);
+      },
+    );
+
+    test(
+      'restores a stale write and serializes a later current write',
+      () async {
+        final port = _BlockingWritePort(initialValue: 'prior-key');
+        final vault = NativeSecureCredentialVault(storage: port);
+        var staleCurrent = true;
+
+        final stale = vault.writeApiKey(
+          endpoint,
+          'stale-key',
+          isCurrent: () => staleCurrent,
+        );
+        await port.firstWriteStarted.future;
+        staleCurrent = false;
+        final current = vault.writeApiKey(
+          endpoint,
+          'current-key',
+          isCurrent: () => true,
+        );
+        port.releaseFirstWrite();
+
+        await expectLater(
+          stale,
+          throwsA(isA<CredentialWriteCancelledException>()),
+        );
+        await current;
+        expect(port.value, 'current-key');
       },
     );
   });
@@ -161,6 +198,45 @@ final class _Operation {
   const _Operation(this.key, [this.value]);
   final String key;
   final String? value;
+}
+
+final class _BlockingWritePort implements SecureCredentialStoragePort {
+  _BlockingWritePort({this.initialValue});
+
+  final String? initialValue;
+  String? value;
+  var _writeCount = 0;
+  final firstWriteStarted = Completer<void>();
+  final _firstWriteGate = Completer<void>();
+
+  void releaseFirstWrite() => _firstWriteGate.complete();
+
+  @override
+  Future<void> delete({
+    required String key,
+    required SecureCredentialStorageOptions options,
+  }) async {
+    value = null;
+  }
+
+  @override
+  Future<String?> read({
+    required String key,
+    required SecureCredentialStorageOptions options,
+  }) async => value ?? initialValue;
+
+  @override
+  Future<void> write({
+    required String key,
+    required String value,
+    required SecureCredentialStorageOptions options,
+  }) async {
+    if (_writeCount++ == 0) {
+      firstWriteStarted.complete();
+      await _firstWriteGate.future;
+    }
+    this.value = value;
+  }
 }
 
 Future<void> _expectContainedFailure(Future<Object?> operation) async {

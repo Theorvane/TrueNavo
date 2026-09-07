@@ -10,7 +10,9 @@ typedef JsonRpcClientFactory = JsonRpcClient Function(RpcTransport transport);
 abstract interface class SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   });
   Future<void> close();
 }
@@ -25,45 +27,78 @@ final class TrueNasSessionRepository implements SessionRepository {
        _clientFactory = clientFactory ?? JsonRpcClient.new;
 
   final RpcConnector _connector;
-  // Reserved injection seam for a later secure-storage slice. M0 never reads or writes it.
-  // ignore: unused_field
   final CredentialVault _credentialVault;
   final JsonRpcClientFactory _clientFactory;
   JsonRpcClient? _client;
   var _nextId = 0;
 
+  @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async {
     final endpoint = ValidatedEndpoint.parse(serverInput);
+    RpcTransport? connectedTransport;
     JsonRpcClient? client;
     try {
-      final transport = await _connector.connect(endpoint.connectionUri);
-      client = _clientFactory(transport);
+      connectedTransport = await _connector.connect(endpoint.connectionUri);
+      client = _clientFactory(connectedTransport);
       _client = client;
+      _requireCurrent(isConnectionCurrent);
+      final explicitKey = apiKey?.isNotEmpty == true ? apiKey : null;
+      final key =
+          explicitKey ??
+          await _readRememberedKey(
+            endpoint.connectionUri.toString(),
+            isConnectionCurrent,
+          );
+      _requireCurrent(isConnectionCurrent);
+      if (key == null || key.isEmpty) {
+        throw const CredentialUnavailableException(
+          CredentialUnavailableReason.missing,
+        );
+      }
       final login = await client.call(
         'auth.login_ex',
         id: _id(),
         params: [
-          <String, Object?>{'mechanism': 'API_KEY_PLAIN', 'api_key': apiKey},
+          <String, Object?>{'mechanism': 'API_KEY_PLAIN', 'api_key': key},
         ],
       );
       _requireSuccess(login);
+      _requireCurrent(isConnectionCurrent);
       final me = await client.call('auth.me', id: _id());
+      _requireCurrent(isConnectionCurrent);
       final info = await client.call('system.info', id: _id());
+      _requireCurrent(isConnectionCurrent);
       final methods = await client.call('core.get_methods', id: _id());
-      return ServerSummary(
+      _requireCurrent(isConnectionCurrent);
+      final summary = ServerSummary(
         originalHostInput: endpoint.originalInput,
         endpointUri: endpoint.connectionUri,
         identity: _identity(me),
         version: _version(info),
         availableMethodNames: _methods(methods),
       );
+      if (rememberApiKey && explicitKey != null) {
+        await _writeRememberedKey(
+          endpoint.connectionUri.toString(),
+          explicitKey,
+          isConnectionCurrent,
+        );
+      }
+      _requireCurrent(isConnectionCurrent);
+      return summary;
     } catch (error) {
       if (identical(_client, client)) _client = null;
       try {
-        await client?.close();
+        if (client != null) {
+          await client.close();
+        } else {
+          await connectedTransport?.close();
+        }
       } catch (_) {
         // The connection error remains the actionable failure.
       }
@@ -71,6 +106,57 @@ final class TrueNasSessionRepository implements SessionRepository {
         throw const TlsCertificateException();
       }
       rethrow;
+    }
+  }
+
+  Future<String?> _readRememberedKey(
+    String endpointIdentifier,
+    bool Function()? isConnectionCurrent,
+  ) async {
+    _requireCurrent(isConnectionCurrent);
+    try {
+      final key = await _credentialVault.readApiKey(endpointIdentifier);
+      _requireCurrent(isConnectionCurrent);
+      return key;
+    } on CredentialUnavailableException {
+      rethrow;
+    } on Object {
+      throw const CredentialUnavailableException(
+        CredentialUnavailableReason.unavailable,
+      );
+    }
+  }
+
+  Future<void> _writeRememberedKey(
+    String endpointIdentifier,
+    String apiKey,
+    bool Function()? isConnectionCurrent,
+  ) async {
+    _requireCurrent(isConnectionCurrent);
+    try {
+      await _credentialVault.writeApiKey(
+        endpointIdentifier,
+        apiKey,
+        isCurrent: isConnectionCurrent,
+      );
+      _requireCurrent(isConnectionCurrent);
+    } on CredentialWriteCancelledException {
+      _requireCurrent(isConnectionCurrent);
+      rethrow;
+    } on CredentialUnavailableException {
+      rethrow;
+    } on Object {
+      throw const CredentialUnavailableException(
+        CredentialUnavailableReason.unavailable,
+      );
+    }
+  }
+
+  void _requireCurrent(bool Function()? isConnectionCurrent) {
+    if (!(isConnectionCurrent?.call() ?? true)) {
+      throw const CredentialUnavailableException(
+        CredentialUnavailableReason.cancelled,
+      );
     }
   }
 
@@ -113,6 +199,7 @@ final class TrueNasSessionRepository implements SessionRepository {
     return const <String>{};
   }
 
+  @override
   Future<void> close() async {
     final client = _client;
     _client = null;

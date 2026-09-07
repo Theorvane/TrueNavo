@@ -62,7 +62,9 @@ final class ProbeRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async => ServerSummary(
     originalHostInput: serverInput,
     endpointUri: Uri.parse('wss://nas.example/websocket'),

@@ -114,7 +114,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
 
   Future<void> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
   }) async {
     if (_busy) return;
     final int generation = ++_generation;
@@ -180,6 +181,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         serverInput: serverInput,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
       );
       return;
     }
@@ -226,6 +228,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         serverInput: serverInput,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
       );
       return;
     }
@@ -233,12 +236,16 @@ final class ConnectionController extends Notifier<ConnectionState> {
       generation: generation,
       authority: authority,
       apiKey: apiKey,
+      rememberApiKey: rememberApiKey,
       trust: trust,
       fallbackToken: handle.token,
     );
   }
 
-  Future<void> approveTrust({required String apiKey}) async {
+  Future<void> approveTrust({
+    required String? apiKey,
+    bool rememberApiKey = false,
+  }) async {
     final review = state;
     if (review is! ConnectionTrustReview || _busy) return;
     final generation = ++_generation;
@@ -263,6 +270,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
       generation: generation,
       authority: review.authority,
       apiKey: apiKey,
+      rememberApiKey: rememberApiKey,
       trust: trust,
       fallbackToken: review.token,
     );
@@ -292,7 +300,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
     _publishTrust(generation, trust, review.token, review.authority);
   }
 
-  Future<void> retryTrust({String? apiKey}) async {
+  Future<void> retryTrust({String? apiKey, bool rememberApiKey = false}) async {
     final blocked = state;
     if (blocked is! ConnectionTrustBlocked || _busy) return;
     final generation = ++_generation;
@@ -313,27 +321,14 @@ final class ConnectionController extends Notifier<ConnectionState> {
       return;
     }
     if (await _staleCoordinatorResult(generation, trust)) return;
-    if (trust is VerifiedTrustTransport && apiKey != null) {
+    if (trust is VerifiedTrustTransport) {
       await _afterTrust(
         generation: generation,
         authority: blocked.authority,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
         trust: trust,
         fallbackToken: blocked.token,
-      );
-      return;
-    }
-    if (trust is VerifiedTrustTransport) {
-      final cleanupFailed = !await _closeTransport(trust.transport);
-      _publishTrust(
-        generation,
-        BlockedTrust(
-          cleanupFailed
-              ? CertificateTrustCoordinatorFailure.cleanup
-              : CertificateTrustCoordinatorFailure.invalidOperation,
-        ),
-        blocked.token,
-        blocked.authority,
       );
       return;
     }
@@ -343,7 +338,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
   Future<void> _afterTrust({
     required int generation,
     required NormalizedAuthority authority,
-    required String apiKey,
+    required String? apiKey,
+    required bool rememberApiKey,
     required CertificateTrustState trust,
     required TrustOperationToken fallbackToken,
   }) async {
@@ -373,6 +369,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
         repository: repository,
         serverInput: authority.rpcConnectionUri.toString(),
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
         closeOnFailure: true,
         discardUnconsumed: connector.discard,
         verifiedConnector: connector,
@@ -386,7 +383,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
     required int generation,
     required SessionRepository repository,
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    required bool rememberApiKey,
     required bool closeOnFailure,
     Future<void> Function()? discardUnconsumed,
     _OneShotVerifiedConnector? verifiedConnector,
@@ -413,6 +411,10 @@ final class ConnectionController extends Notifier<ConnectionState> {
       final summary = await repository.connect(
         serverInput: serverInput,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
+        isConnectionCurrent: () =>
+            _authenticationValidity(generation, isRepositoryCurrent) ==
+            _AuthenticationValidity.current,
       );
       if (await _abandonAuthenticationIfNeeded(
         generation: generation,
@@ -522,7 +524,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
   Future<void> _authenticateNormal({
     required int generation,
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    required bool rememberApiKey,
   }) async {
     final _SessionRepositoryLease lease;
     try {
@@ -541,6 +544,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
       repository: lease.repository,
       serverInput: serverInput,
       apiKey: apiKey,
+      rememberApiKey: rememberApiKey,
       closeOnFailure: false,
       isRepositoryCurrent: () =>
           identical(ref.read(_sessionRepositoryLeaseProvider), lease) &&
@@ -619,6 +623,9 @@ final class ConnectionController extends Notifier<ConnectionState> {
       userMessage,
     ),
     AuthenticationStateException(:final userMessage) => ConnectionFailed(
+      userMessage,
+    ),
+    CredentialUnavailableException(:final userMessage) => ConnectionFailed(
       userMessage,
     ),
     JsonRpcRemoteException() => const ConnectionFailed(
