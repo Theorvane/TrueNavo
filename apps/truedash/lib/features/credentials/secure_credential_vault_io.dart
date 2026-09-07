@@ -66,13 +66,13 @@ final class NativeSecureCredentialVault implements CredentialVault {
         final previous = await _storage.read(key: key, options: _options);
         _requireCurrent(isCurrent);
         await _storage.write(key: key, value: apiKey, options: _options);
-        if (isCurrent?.call() ?? true) return;
-        if (previous == null) {
-          await _storage.delete(key: key, options: _options);
-        } else {
-          await _storage.write(key: key, value: previous, options: _options);
+        try {
+          _requireCurrent(isCurrent);
+          return;
+        } on CredentialWriteCancelledException {
+          await _restorePrevious(key, previous);
+          rethrow;
         }
-        throw const CredentialWriteCancelledException();
       } on CredentialWriteCancelledException {
         rethrow;
       } on CredentialVaultFailure {
@@ -85,6 +85,20 @@ final class NativeSecureCredentialVault implements CredentialVault {
     });
   }
 
+  Future<void> _restorePrevious(String key, String? previous) async {
+    try {
+      if (previous == null) {
+        await _storage.delete(key: key, options: _options);
+      } else {
+        await _storage.write(key: key, value: previous, options: _options);
+      }
+    } on Object {
+      throw const CredentialVaultFailure(
+        CredentialVaultFailureKind.unavailable,
+      );
+    }
+  }
+
   Future<T> _serialize<T>(FutureOr<T> Function() operation) {
     final Future<T> result = _operationTail.then<T>((_) => operation());
     _operationTail = result.then<void>(
@@ -95,7 +109,13 @@ final class NativeSecureCredentialVault implements CredentialVault {
   }
 
   void _requireCurrent(bool Function()? isCurrent) {
-    if (!(isCurrent?.call() ?? true)) {
+    final bool current;
+    try {
+      current = isCurrent?.call() ?? true;
+    } on Object {
+      throw const CredentialWriteCancelledException();
+    }
+    if (!current) {
       throw const CredentialWriteCancelledException();
     }
   }

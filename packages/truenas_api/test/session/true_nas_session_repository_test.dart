@@ -404,6 +404,167 @@ void main() {
     expect(vault.successes, 0);
     expect(transport.closeCalls, 1);
   });
+
+  for (final scenario in <_HostileCallbackScenario>[
+    const _HostileCallbackScenario('before vault read', 1, null, 0),
+    const _HostileCallbackScenario('after vault read', 3, null, 0),
+    const _HostileCallbackScenario('after auth', 3, 'explicit-test-key', 1),
+    const _HostileCallbackScenario('after summary', 6, 'explicit-test-key', 4),
+    const _HostileCallbackScenario(
+      'during vault write',
+      8,
+      'explicit-test-key',
+      4,
+    ),
+    const _HostileCallbackScenario(
+      'after vault write',
+      9,
+      'explicit-test-key',
+      4,
+    ),
+    const _HostileCallbackScenario(
+      'final pre-return',
+      10,
+      'explicit-test-key',
+      4,
+    ),
+  ]) {
+    test('contains hostile callback ${scenario.name}', () async {
+      final transport = InMemoryTransport();
+      final vault = _CallbackRecordingVault('remembered-test-key');
+      var calls = 0;
+      final repository = TrueNasSessionRepository(
+        connector: FakeConnector(transport),
+        credentialVault: vault,
+      );
+      final connecting = repository.connect(
+        serverInput: 'https://nas.example',
+        apiKey: scenario.apiKey,
+        rememberApiKey: scenario.apiKey != null,
+        isConnectionCurrent: () {
+          if (++calls == scenario.throwOnCall) {
+            throw StateError('hostile callback TEST_API_KEY_SENTINEL');
+          }
+          return true;
+        },
+      );
+
+      for (var index = 0; index < scenario.responses; index++) {
+        await _respondWith(transport, switch (index) {
+          0 => {'state': 'SUCCESS'},
+          1 => {'username': 'admin'},
+          2 => {'version': '25.10'},
+          _ => {'a': {}},
+        });
+      }
+
+      await expectLater(
+        connecting,
+        throwsA(
+          isA<CredentialUnavailableException>().having(
+            (error) => error.reason,
+            'reason',
+            anyOf(
+              CredentialUnavailableReason.cancelled,
+              CredentialUnavailableReason.unavailable,
+            ),
+          ),
+        ),
+      );
+      try {
+        await connecting;
+      } on CredentialUnavailableException catch (error) {
+        expect(error.toString(), isNot(contains('TEST_API_KEY_SENTINEL')));
+        expect(error.userMessage, isNot(contains('TEST_API_KEY_SENTINEL')));
+      }
+      expect(vault.writes, scenario.throwOnCall < 8 ? isEmpty : hasLength(1));
+      expect(transport.closeCalls, 1);
+      await repository.close();
+      expect(transport.closeCalls, 1);
+    });
+  }
+
+  test(
+    'maps a cancelled vault write without probing a hostile callback again',
+    () async {
+      final transport = InMemoryTransport();
+      final repository = TrueNasSessionRepository(
+        connector: FakeConnector(transport),
+        credentialVault: const _CancelledWriteVault(),
+      );
+      var calls = 0;
+      final connecting = repository.connect(
+        serverInput: 'https://nas.example',
+        apiKey: 'explicit-test-key',
+        rememberApiKey: true,
+        isConnectionCurrent: () {
+          if (++calls == 8) {
+            throw StateError('hostile callback TEST_API_KEY_SENTINEL');
+          }
+          return true;
+        },
+      );
+      await _respondHandshake(transport);
+
+      await expectLater(
+        connecting,
+        throwsA(
+          isA<CredentialUnavailableException>().having(
+            (error) => error.reason,
+            'reason',
+            CredentialUnavailableReason.cancelled,
+          ),
+        ),
+      );
+      expect(transport.closeCalls, 1);
+    },
+  );
+
+  test(
+    'in-memory vault restores a prior key when currentness throws',
+    () async {
+      final vault = InMemoryCredentialVault();
+      const endpoint = 'wss://nas.example/api/current';
+      await vault.writeApiKey(endpoint, 'prior-key');
+      var calls = 0;
+
+      await expectLater(
+        vault.writeApiKey(
+          endpoint,
+          'stale-key',
+          isCurrent: () {
+            if (++calls == 3) {
+              throw StateError('hostile callback TEST_API_KEY_SENTINEL');
+            }
+            return true;
+          },
+        ),
+        throwsA(
+          isA<CredentialWriteCancelledException>().having(
+            (error) => error.toString(),
+            'safe text',
+            isNot(contains('TEST_API_KEY_SENTINEL')),
+          ),
+        ),
+      );
+
+      expect(await vault.readApiKey(endpoint), 'prior-key');
+    },
+  );
+}
+
+final class _HostileCallbackScenario {
+  const _HostileCallbackScenario(
+    this.name,
+    this.throwOnCall,
+    this.apiKey,
+    this.responses,
+  );
+
+  final String name;
+  final int throwOnCall;
+  final String? apiKey;
+  final int responses;
 }
 
 final class _RecordingConnector implements RpcConnector {
@@ -485,6 +646,47 @@ final class _RaceVault implements CredentialVault {
     }
     successes++;
   }
+}
+
+final class _CallbackRecordingVault implements CredentialVault {
+  _CallbackRecordingVault(this.value);
+
+  String? value;
+  final writes = <(String, String)>[];
+
+  @override
+  Future<void> deleteApiKey(String endpointIdentifier) async => value = null;
+
+  @override
+  Future<String?> readApiKey(String endpointIdentifier) async => value;
+
+  @override
+  Future<void> writeApiKey(
+    String endpointIdentifier,
+    String apiKey, {
+    bool Function()? isCurrent,
+  }) async {
+    writes.add((endpointIdentifier, apiKey));
+    value = apiKey;
+    isCurrent?.call();
+  }
+}
+
+final class _CancelledWriteVault implements CredentialVault {
+  const _CancelledWriteVault();
+
+  @override
+  Future<void> deleteApiKey(String endpointIdentifier) async {}
+
+  @override
+  Future<String?> readApiKey(String endpointIdentifier) async => null;
+
+  @override
+  Future<void> writeApiKey(
+    String endpointIdentifier,
+    String apiKey, {
+    bool Function()? isCurrent,
+  }) async => throw const CredentialWriteCancelledException();
 }
 
 Future<void> _respondHandshake(InMemoryTransport transport) async {

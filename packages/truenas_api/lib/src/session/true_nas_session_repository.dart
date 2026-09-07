@@ -141,8 +141,9 @@ final class TrueNasSessionRepository implements SessionRepository {
       );
       _requireCurrent(isConnectionCurrent);
     } on CredentialWriteCancelledException {
-      _requireCurrent(isConnectionCurrent);
-      rethrow;
+      throw const CredentialUnavailableException(
+        CredentialUnavailableReason.cancelled,
+      );
     } on CredentialUnavailableException {
       rethrow;
     } on Object {
@@ -153,7 +154,15 @@ final class TrueNasSessionRepository implements SessionRepository {
   }
 
   void _requireCurrent(bool Function()? isConnectionCurrent) {
-    if (!(isConnectionCurrent?.call() ?? true)) {
+    final bool current;
+    try {
+      current = isConnectionCurrent?.call() ?? true;
+    } on Object {
+      throw const CredentialUnavailableException(
+        CredentialUnavailableReason.cancelled,
+      );
+    }
+    if (!current) {
       throw const CredentialUnavailableException(
         CredentialUnavailableReason.cancelled,
       );

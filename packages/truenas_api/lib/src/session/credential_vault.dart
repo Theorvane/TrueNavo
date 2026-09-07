@@ -83,13 +83,17 @@ final class InMemoryCredentialVault implements CredentialVault {
     final previous = _keys[endpointIdentifier];
     _requireCurrent(isCurrent);
     _keys[endpointIdentifier] = apiKey;
-    if (isCurrent?.call() ?? true) return;
-    if (previous == null) {
-      _keys.remove(endpointIdentifier);
-    } else {
-      _keys[endpointIdentifier] = previous;
+    try {
+      _requireCurrent(isCurrent);
+      return;
+    } on CredentialWriteCancelledException {
+      if (previous == null) {
+        _keys.remove(endpointIdentifier);
+      } else {
+        _keys[endpointIdentifier] = previous;
+      }
+      rethrow;
     }
-    throw const CredentialWriteCancelledException();
   });
 
   Future<T> _serialize<T>(FutureOr<T> Function() operation) {
@@ -102,7 +106,13 @@ final class InMemoryCredentialVault implements CredentialVault {
   }
 
   void _requireCurrent(bool Function()? isCurrent) {
-    if (!(isCurrent?.call() ?? true)) {
+    final bool current;
+    try {
+      current = isCurrent?.call() ?? true;
+    } on Object {
+      throw const CredentialWriteCancelledException();
+    }
+    if (!current) {
       throw const CredentialWriteCancelledException();
     }
   }

@@ -126,6 +126,102 @@ void main() {
         expect(port.value, 'current-key');
       },
     );
+
+    test('contains a throwing post-write callback, restores, and releases the lease', () async {
+      final port = _BlockingWritePort(initialValue: 'prior-key');
+      final vault = NativeSecureCredentialVault(storage: port);
+      var calls = 0;
+
+      final stale = vault.writeApiKey(
+        endpoint,
+        'stale-key',
+        isCurrent: () {
+          if (++calls == 3) throw StateError('callback TEST_API_KEY_SENTINEL');
+          return true;
+        },
+      );
+      await port.firstWriteStarted.future;
+      final current = vault.writeApiKey(endpoint, 'current-key');
+      port.releaseFirstWrite();
+
+      await _expectContainedFailure(stale);
+      await current;
+      expect(port.value, 'current-key');
+      expect(port.writeValues, ['stale-key', 'prior-key', 'current-key']);
+    });
+
+    test(
+      'contains a throwing pre-write callback without mutating storage',
+      () async {
+        final port = _BlockingWritePort(initialValue: 'prior-key');
+        final vault = NativeSecureCredentialVault(storage: port);
+
+        await expectLater(
+          vault.writeApiKey(
+            endpoint,
+            'stale-key',
+            isCurrent: () => throw StateError('callback TEST_API_KEY_SENTINEL'),
+          ),
+          throwsA(
+            isA<CredentialWriteCancelledException>().having(
+              (error) => error.toString(),
+              'safe text',
+              isNot(contains('TEST_API_KEY_SENTINEL')),
+            ),
+          ),
+        );
+
+        expect(port.value, isNull);
+        expect(port.writeValues, isEmpty);
+        expect(port.deleteCalls, 0);
+      },
+    );
+
+    test(
+      'deletes a newly written key when its post-write callback throws',
+      () async {
+        final port = _BlockingWritePort();
+        final vault = NativeSecureCredentialVault(storage: port);
+        var calls = 0;
+
+        final write = vault.writeApiKey(
+          endpoint,
+          'stale-key',
+          isCurrent: () {
+            if (++calls == 3) {
+              throw StateError('callback TEST_API_KEY_SENTINEL');
+            }
+            return true;
+          },
+        );
+        await port.firstWriteStarted.future;
+        port.releaseFirstWrite();
+
+        await _expectContainedFailure(write);
+        expect(port.value, isNull);
+        expect(port.deleteCalls, 1);
+      },
+    );
+
+    test('contains a compensation failure after a throwing callback', () async {
+      final vault = NativeSecureCredentialVault(
+        storage: _FailingRollbackPort(),
+      );
+      var calls = 0;
+
+      await _expectContainedFailure(
+        vault.writeApiKey(
+          endpoint,
+          'stale-key',
+          isCurrent: () {
+            if (++calls == 3) {
+              throw StateError('callback TEST_API_KEY_SENTINEL');
+            }
+            return true;
+          },
+        ),
+      );
+    });
   });
 
   test('WebSecureCredentialVault never persists API keys', () async {
@@ -206,6 +302,8 @@ final class _BlockingWritePort implements SecureCredentialStoragePort {
   final String? initialValue;
   String? value;
   var _writeCount = 0;
+  var deleteCalls = 0;
+  final writeValues = <String>[];
   final firstWriteStarted = Completer<void>();
   final _firstWriteGate = Completer<void>();
 
@@ -216,6 +314,7 @@ final class _BlockingWritePort implements SecureCredentialStoragePort {
     required String key,
     required SecureCredentialStorageOptions options,
   }) async {
+    deleteCalls++;
     value = null;
   }
 
@@ -231,6 +330,7 @@ final class _BlockingWritePort implements SecureCredentialStoragePort {
     required String value,
     required SecureCredentialStorageOptions options,
   }) async {
+    writeValues.add(value);
     if (_writeCount++ == 0) {
       firstWriteStarted.complete();
       await _firstWriteGate.future;
@@ -239,11 +339,43 @@ final class _BlockingWritePort implements SecureCredentialStoragePort {
   }
 }
 
+final class _FailingRollbackPort implements SecureCredentialStoragePort {
+  var _writes = 0;
+
+  @override
+  Future<void> delete({
+    required String key,
+    required SecureCredentialStorageOptions options,
+  }) async => throw StateError('rollback TEST_API_KEY_SENTINEL');
+
+  @override
+  Future<String?> read({
+    required String key,
+    required SecureCredentialStorageOptions options,
+  }) async => 'prior-key';
+
+  @override
+  Future<void> write({
+    required String key,
+    required String value,
+    required SecureCredentialStorageOptions options,
+  }) async {
+    if (_writes++ > 0) throw StateError('rollback TEST_API_KEY_SENTINEL');
+  }
+}
+
 Future<void> _expectContainedFailure(Future<Object?> operation) async {
   try {
     await operation;
     fail('Expected a credential-free storage failure.');
-  } on CredentialVaultFailure catch (error) {
+  } on Object catch (error) {
+    expect(
+      error,
+      anyOf(
+        isA<CredentialVaultFailure>(),
+        isA<CredentialWriteCancelledException>(),
+      ),
+    );
     expect(error.toString(), isNot(contains(_apiKey)));
     expect(error.toString(), isNot(contains('private/path')));
   }
