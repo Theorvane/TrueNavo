@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash/features/connection/connection_controller.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
+import 'package:truedash/features/tls_trust/tls_trust_providers.dart';
 import 'package:truedash/truedash_app.dart';
 import 'package:truedash_design_system/truedash_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
@@ -18,6 +19,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            _platformValidatedRoute,
             sessionRepositoryProvider.overrideWithValue(_SuccessRepository()),
           ],
           child: const TrueDashApp(),
@@ -55,6 +57,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          _platformValidatedRoute,
           sessionRepositoryProvider.overrideWithValue(_FailureRepository()),
         ],
         child: const TrueDashApp(),
@@ -76,6 +79,7 @@ void main() {
   ) async {
     final container = ProviderContainer(
       overrides: [
+        _platformValidatedRoute,
         sessionRepositoryProvider.overrideWithValue(_SuccessRepository()),
       ],
     );
@@ -107,7 +111,10 @@ void main() {
     final repository = _PendingRepository();
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [sessionRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          _platformValidatedRoute,
+          sessionRepositoryProvider.overrideWithValue(repository),
+        ],
         child: const TrueDashApp(),
       ),
     );
@@ -145,6 +152,7 @@ void main() {
         await tester.pumpWidget(
           ProviderScope(
             overrides: [
+              _platformValidatedRoute,
               sessionRepositoryProvider.overrideWithValue(
                 _LongSuccessRepository(),
               ),
@@ -222,6 +230,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            _platformValidatedRoute,
             sessionRepositoryProvider.overrideWithValue(
               _ThrowingRepository(failure.error),
             ),
@@ -271,6 +280,10 @@ void main() {
     expect(usedVault, same(vault));
   });
 }
+
+final _platformValidatedRoute = tlsTrustRouteProvider.overrideWithValue(
+  TlsTrustRoute.platformValidated,
+);
 
 final class _FailureCase {
   const _FailureCase(this.error, this.expectedMessage);

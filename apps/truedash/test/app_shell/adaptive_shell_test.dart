@@ -5,6 +5,7 @@ import 'package:truedash/app_shell/adaptive_shell.dart';
 import 'package:truedash/app_shell/app_destination.dart';
 import 'package:truedash/features/connection/connection_controller.dart';
 import 'package:truedash/features/connection/connection_screen.dart';
+import 'package:truedash/features/tls_trust/tls_trust_providers.dart';
 import 'package:truedash_design_system/truedash_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
@@ -93,6 +94,9 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            tlsTrustRouteProvider.overrideWithValue(
+              TlsTrustRoute.platformValidated,
+            ),
             sessionRepositoryProvider.overrideWithValue(_SuccessRepository()),
           ],
           child: MaterialApp(
