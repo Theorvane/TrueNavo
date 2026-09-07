@@ -75,6 +75,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
     required String apiKey,
   }) async {
     if (_busy) return;
+    final int generation = ++_generation;
     final visibleReview = state;
     if (visibleReview is ConnectionTrustReview) {
       _busy = true;
@@ -85,12 +86,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
             .read(certificateTrustCoordinatorProvider)
             .cancel(visibleReview.token);
       } catch (_) {
-        _busy = false;
-        state = const ConnectionFailed(
-          'Unable to reach the server over a secure connection.',
-        );
+        if (_current(generation)) {
+          _busy = false;
+          state = const ConnectionFailed(
+            'Unable to reach the server over a secure connection.',
+          );
+        }
         return;
       }
+      if (!_current(generation)) return;
       if (cancelled is! BlockedTrust ||
           cancelled.failure != CertificateTrustCoordinatorFailure.cancelled) {
         _busy = false;
@@ -104,7 +108,6 @@ final class ConnectionController extends Notifier<ConnectionState> {
         return;
       }
     }
-    final int generation = ++_generation;
     final NormalizedAuthority authority;
     try {
       authority = NormalizedAuthority.parse(serverInput);
@@ -154,7 +157,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
       }
       return;
     }
-    if (!_current(generation)) return;
+    if (await _staleCoordinatorResult(generation, trust)) return;
     if (trust is FirstTrustReview &&
         trust.certificate.platformTrust == PlatformTrust.passed) {
       // A normally trusted public certificate keeps the existing connector;
@@ -205,13 +208,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
           .read(certificateTrustCoordinatorProvider)
           .approve(review.token);
     } catch (_) {
-      _busy = false;
-      state = const ConnectionFailed(
-        'Unable to reach the server over a secure connection.',
-      );
+      if (_current(generation)) {
+        _busy = false;
+        state = const ConnectionFailed(
+          'Unable to reach the server over a secure connection.',
+        );
+      }
       return;
     }
-    if (!_current(generation)) return;
+    if (await _staleCoordinatorResult(generation, trust)) return;
     await _afterTrust(
       generation: generation,
       authority: review.authority,
@@ -233,13 +238,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
           .read(certificateTrustCoordinatorProvider)
           .cancel(review.token);
     } catch (_) {
-      _busy = false;
-      state = const ConnectionFailed(
-        'Unable to reach the server over a secure connection.',
-      );
+      if (_current(generation)) {
+        _busy = false;
+        state = const ConnectionFailed(
+          'Unable to reach the server over a secure connection.',
+        );
+      }
       return;
     }
-    if (!_current(generation)) return;
+    if (await _staleCoordinatorResult(generation, trust)) return;
     _publishTrust(generation, trust, review.token, review.authority);
   }
 
@@ -255,13 +262,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
           .read(certificateTrustCoordinatorProvider)
           .retry(blocked.token);
     } catch (_) {
-      _busy = false;
-      state = const ConnectionFailed(
-        'Unable to reach the server over a secure connection.',
-      );
+      if (_current(generation)) {
+        _busy = false;
+        state = const ConnectionFailed(
+          'Unable to reach the server over a secure connection.',
+        );
+      }
       return;
     }
-    if (!_current(generation)) return;
+    if (await _staleCoordinatorResult(generation, trust)) return;
     if (trust is VerifiedTrustTransport && apiKey != null) {
       await _afterTrust(
         generation: generation,
@@ -503,6 +512,20 @@ final class ConnectionController extends Notifier<ConnectionState> {
   };
 
   bool _current(int generation) => !_disposed && generation == _generation;
+
+  /// A verified coordinator result transfers exclusive transport ownership to
+  /// this controller. A stale continuation must release that ownership before
+  /// returning, while all other stale results have no controller side effect.
+  Future<bool> _staleCoordinatorResult(
+    int generation,
+    CertificateTrustState result,
+  ) async {
+    if (_current(generation)) return false;
+    if (result case VerifiedTrustTransport(:final transport)) {
+      await _closeTransport(transport);
+    }
+    return true;
+  }
 
   SessionRepository _normal() {
     final existing = _normalRepository;

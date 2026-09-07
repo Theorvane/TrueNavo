@@ -702,6 +702,148 @@ void main() {
     expect(transport.closeCalls, 1);
   });
 
+  test(
+    'stale initial connect closes its unhanded verified transport once',
+    () async {
+      final authority = NormalizedAuthority.parse('https://nas.example');
+      final store = InMemoryPinStore();
+      await _seed(store, authority, _digest);
+      final transport = _CountingTransport();
+      final connector = _DelayedConnector();
+      final repository = _Repository();
+      final container = _nativeContainer(
+        store: store,
+        probe: _Probe(_certificate(authority)),
+        connector: connector,
+        normal: repository,
+      );
+      addTearDown(container.dispose);
+      final connecting = container
+          .read(connectionControllerProvider.notifier)
+          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+
+      await connector.started.future;
+      container.invalidate(connectionControllerProvider);
+      connector.complete(NativePinnedVerified(transport));
+      await connecting;
+
+      expect(repository.apiKeys, isEmpty);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+      expect(
+        container.read(connectionControllerProvider),
+        isA<ConnectionIdle>(),
+      );
+      expect(transport.closeCalls, 1);
+    },
+  );
+
+  test('stale approval closes its unhanded verified transport once', () async {
+    final authority = NormalizedAuthority.parse('https://nas.example');
+    final transport = _CountingTransport();
+    final connector = _DelayedConnector();
+    final repository = _Repository();
+    final container = _nativeContainer(
+      store: InMemoryPinStore(),
+      probe: _Probe(_certificate(authority)),
+      connector: connector,
+      normal: repository,
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionControllerProvider.notifier);
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+    final approving = controller.approveTrust(apiKey: _sentinel);
+
+    await connector.started.future;
+    container.invalidate(connectionControllerProvider);
+    connector.complete(NativePinnedVerified(transport));
+    await approving;
+
+    expect(repository.apiKeys, isEmpty);
+    expect(container.read(serverProfilesControllerProvider).profiles, isEmpty);
+    expect(container.read(connectionControllerProvider), isA<ConnectionIdle>());
+    expect(transport.closeCalls, 1);
+  });
+
+  test('stale retry closes its unhanded verified transport once', () async {
+    final authority = NormalizedAuthority.parse('https://nas.example');
+    final store = InMemoryPinStore();
+    final transport = _CountingTransport();
+    final connector = _DelayedConnector();
+    final repository = _Repository();
+    final container = _nativeContainer(
+      store: store,
+      probe: _Probe(_certificate(authority)),
+      connector: connector,
+      normal: repository,
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionControllerProvider.notifier);
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+    await controller.cancelTrust();
+    await _seed(store, authority, _digest);
+    final retrying = controller.retryTrust(apiKey: _sentinel);
+
+    await connector.started.future;
+    container.invalidate(connectionControllerProvider);
+    connector.complete(NativePinnedVerified(transport));
+    await retrying;
+
+    expect(repository.apiKeys, isEmpty);
+    expect(container.read(serverProfilesControllerProvider).profiles, isEmpty);
+    expect(container.read(connectionControllerProvider), isA<ConnectionIdle>());
+    expect(transport.closeCalls, 1);
+  });
+
+  test(
+    'disposing during visible-review cancellation does not start another probe',
+    () async {
+      final events = <String>[];
+      final repository = _Repository(events: events);
+      final container = _nativeContainer(
+        store: _RecordingStore(events),
+        probe: _AuthorityProbe(events),
+        connector: _Connector(
+          NativePinnedVerified(_Transport()),
+          events: events,
+        ),
+        normal: repository,
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionControllerProvider.notifier);
+      await controller.connect(
+        serverInput: 'https://old.example',
+        apiKey: _sentinel,
+      );
+
+      final switching = controller.connect(
+        serverInput: 'https://new.example',
+        apiKey: _sentinel,
+      );
+      container.invalidate(connectionControllerProvider);
+      await switching;
+
+      expect(events.where((event) => event == 'probe'), hasLength(1));
+      expect(repository.apiKeys, isEmpty);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+      expect(
+        container.read(connectionControllerProvider),
+        isA<ConnectionIdle>(),
+      );
+    },
+  );
+
   test('disposing while a displaced verified repository closes does not publish stale success', () async {
     final firstAuthority = NormalizedAuthority.parse('https://first.example');
     final secondAuthority = NormalizedAuthority.parse('https://second.example');
@@ -1437,6 +1579,24 @@ final class _SequenceConnector implements PinnedRpcConnector {
     events?.add('reconnect');
     return _outcomes[_index++];
   }
+}
+
+final class _DelayedConnector implements PinnedRpcConnector {
+  final started = Completer<void>();
+  final _result = Completer<NativePinnedOutcome>();
+
+  @override
+  Future<NativePinnedOutcome> reconnect({
+    required NormalizedAuthority authority,
+    required PinRecord pin,
+    required Duration timeout,
+    required CancellationToken cancellation,
+  }) {
+    started.complete();
+    return _result.future;
+  }
+
+  void complete(NativePinnedOutcome outcome) => _result.complete(outcome);
 }
 
 class _Transport implements RpcTransport {
