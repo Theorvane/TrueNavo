@@ -1,6 +1,21 @@
 import 'package:flutter/widgets.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'truedash_app.dart';
+import 'bootstrap.dart';
 
-void main() => runApp(const ProviderScope(child: TrueDashApp()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await bootstrapTrueDash();
+  } on StartupFailure {
+    runApp(const _StartupFailureApp());
+  }
+}
+
+final class _StartupFailureApp extends StatelessWidget {
+  const _StartupFailureApp();
+  @override
+  Widget build(BuildContext context) => const Directionality(
+    textDirection: TextDirection.ltr,
+    child: Center(child: Text(StartupFailure.message)),
+  );
+}

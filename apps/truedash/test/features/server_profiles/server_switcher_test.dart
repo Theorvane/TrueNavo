@@ -15,7 +15,7 @@ void main() {
     final controller = container.read(
       serverProfilesControllerProvider.notifier,
     );
-    controller.registerAndSelect(
+    await controller.registerAndSelect(
       const ServerProfile(
         id: 'one',
         displayName: 'One',
@@ -24,7 +24,7 @@ void main() {
         lastKnownVersion: '1',
       ),
     );
-    controller.registerAndSelect(
+    await controller.registerAndSelect(
       const ServerProfile(
         id: 'two',
         displayName: 'Two',
@@ -49,8 +49,8 @@ void main() {
     expect(find.text('One'), findsWidgets);
     expect(
       find.text(
-        'Server selection changes only what is shown in this app session. '
-        'It does not reconnect.',
+        'Server selection changes what is shown in this app. It does not '
+        'reconnect.',
       ),
       findsOneWidget,
     );
@@ -60,9 +60,7 @@ void main() {
     );
   });
 
-  testWidgets('empty catalog describes the session-only empty state', (
-    tester,
-  ) async {
+  testWidgets('empty catalog describes the saved empty state', (tester) async {
     final handle = tester.ensureSemantics();
     await tester.pumpWidget(
       ProviderScope(
@@ -75,10 +73,7 @@ void main() {
 
     expect(find.text('No server selected'), findsWidgets);
     expect(find.bySemanticsLabel('Server catalog: empty'), findsOneWidget);
-    expect(
-      find.text('This app session has no server profile.'),
-      findsOneWidget,
-    );
+    expect(find.text('No saved server profile is selected.'), findsOneWidget);
     expect(find.text('Return to connection'), findsOneWidget);
     expect(find.textContaining('Add server'), findsNothing);
     handle.dispose();

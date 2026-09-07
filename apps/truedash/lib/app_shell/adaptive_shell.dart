@@ -298,7 +298,7 @@ class _Content extends ConsumerWidget {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: TdSpacing.related),
-                    const Text('This app session has no server profile.'),
+                    const Text('No saved server profile is selected.'),
                     const SizedBox(height: TdSpacing.related),
                     const Text('Data connection is provided in a later slice.'),
                     const SizedBox(height: TdSpacing.related),
@@ -330,8 +330,8 @@ class _Content extends ConsumerWidget {
                     const Text('Data connection is provided in a later slice.'),
                     const SizedBox(height: TdSpacing.related),
                     const Text(
-                      'Server selection changes only what is shown in this '
-                      'app session. It does not reconnect.',
+                      'Server selection changes what is shown in this app. '
+                      'It does not reconnect.',
                     ),
                   ],
                 ),

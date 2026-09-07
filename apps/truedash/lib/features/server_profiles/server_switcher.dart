@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash_design_system/truedash_design_system.dart';
@@ -95,7 +97,11 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
           // a second, wrapper-only stop in the Tab order.
           onCanceled: () {},
           onSelected: (id) {
-            ref.read(serverProfilesControllerProvider.notifier).select(id);
+            // The controller contains storage failures so this callback never
+            // leaves an unhandled Future behind.
+            unawaited(
+              ref.read(serverProfilesControllerProvider.notifier).select(id),
+            );
           },
           itemBuilder: (context) => empty
               ? const [

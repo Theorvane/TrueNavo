@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truenas_api/truenas_api.dart';
 
+import '../local_persistence/persistence_failure.dart';
 import '../server_profiles/server_profile.dart';
 import '../server_profiles/server_profiles_controller.dart';
 import '../tls_trust/certificate_facts.dart';
@@ -18,6 +19,14 @@ final rpcConnectorProvider = Provider<RpcConnector>(
 final credentialVaultProvider = Provider<CredentialVault>(
   (ref) => const NoopCredentialVault(),
 );
+
+/// UTC seam for capability-cache expiry. Bootstrap uses the real UTC clock.
+final serverProfileClockProvider = Provider<DateTime Function()>(
+  (ref) =>
+      () => DateTime.now().toUtc(),
+);
+
+const _capabilityLifetime = Duration(hours: 24);
 
 typedef SessionRepositoryFactory = SessionRepository Function({
   required RpcConnector connector,
@@ -454,12 +463,43 @@ final class ConnectionController extends Notifier<ConnectionState> {
       )) {
         return;
       }
-      profiles.registerAndSelect(
+      final registration = await profiles.registerAndSelect(
         ServerProfile.fromSafeSummary(
-          id: 'profile-${++_nextProfileId}',
+          id: _nextAvailableProfileId(),
           summary: summary,
         ),
       );
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
+        return;
+      }
+      if (!registration.succeeded ||
+          registration.snapshot.selectedProfileId == null) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+      final observedAt = ref.read(serverProfileClockProvider)().toUtc();
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
+        return;
+      }
+      await ref
+          .read(serverProfileStoreProvider)
+          .replaceCapabilities(
+            profileId: registration.snapshot.selectedProfileId!,
+            methodNames: summary.availableMethodNames,
+            observedAt: observedAt,
+            expiresAt: observedAt.add(_capabilityLifetime),
+          );
       if (await _abandonAuthenticationIfNeeded(
         generation: generation,
         validity: _authenticationValidity(generation, isRepositoryCurrent),
@@ -604,6 +644,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
       'Unable to reach the server over a secure connection.',
     ),
   };
+
+  String _nextAvailableProfileId() {
+    final profiles = ref.read(serverProfilesControllerProvider).profiles;
+    String id;
+    do {
+      id = 'profile-${++_nextProfileId}';
+    } while (profiles.any((profile) => profile.id == id));
+    return id;
+  }
 
   bool _current(int generation) => !_disposed && generation == _generation;
 

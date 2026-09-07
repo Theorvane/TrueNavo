@@ -1,6 +1,6 @@
 import 'package:truenas_api/truenas_api.dart';
 
-/// Safe, process-memory metadata for a server selected in this app session.
+/// Safe, credential-free metadata for a saved server profile.
 final class ServerProfile {
   const ServerProfile({
     required this.id,
