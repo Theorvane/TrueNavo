@@ -116,7 +116,7 @@ void main() {
       await expectLater(
         store.replaceCapabilities(
           profileId: 'safe-id',
-          methodNames: const {'td8_api_key_DURABLE_SENTINEL'},
+          methodNames: const {'Authorization: Bearer DURABLE_SENTINEL'},
           observedAt: DateTime.utc(2026),
           expiresAt: DateTime.utc(2026, 1, 2),
         ),
@@ -136,42 +136,154 @@ void main() {
     },
   );
 
-  test('valid host version and method names remain persistable', () async {
+  test(
+    'valid host version and documented RPC method names remain persistable',
+    () async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      final store = DriftServerProfileStore(database);
+      addTearDown(store.close);
+      await store.registerAndSelect(safeProfile());
+      await store.replaceCapabilities(
+        profileId: 'safe-id',
+        methodNames: const {
+          'core.get_methods',
+          'system.info',
+          'auth.generate_token',
+          'auth.login_with_api_key',
+        },
+        observedAt: DateTime.utc(2026),
+        expiresAt: DateTime.utc(2026, 1, 2),
+      );
+      expect(await store.readCapabilities('safe-id', DateTime.utc(2026)), {
+        'core.get_methods',
+        'system.info',
+        'auth.generate_token',
+        'auth.login_with_api_key',
+      });
+    },
+  );
+
+  test('secret-shaped arbitrary capability names are rejected without blocking documented names', () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
     final store = DriftServerProfileStore(database);
     addTearDown(store.close);
     await store.registerAndSelect(safeProfile());
+    final observedAt = DateTime.utc(2026);
+    final expiresAt = DateTime.utc(2026, 1, 2);
+
     await store.replaceCapabilities(
       profileId: 'safe-id',
-      methodNames: const {'core.get_methods', 'system.info'},
-      observedAt: DateTime.utc(2026),
-      expiresAt: DateTime.utc(2026, 1, 2),
+      methodNames: const {'auth.login_with_api_key'},
+      observedAt: observedAt,
+      expiresAt: expiresAt,
     );
-    expect(await store.readCapabilities('safe-id', DateTime.utc(2026)), {
-      'core.get_methods',
-      'system.info',
+    for (final methodName in const [
+      'api_key_DURABLE_SENTINEL',
+      'secret_token_value',
+    ]) {
+      await expectLater(
+        store.replaceCapabilities(
+          profileId: 'safe-id',
+          methodNames: {methodName},
+          observedAt: observedAt,
+          expiresAt: expiresAt,
+        ),
+        throwsA(
+          isA<PersistenceFailure>().having(
+            (failure) => failure.kind,
+            'kind',
+            PersistenceFailureKind.validation,
+          ),
+        ),
+      );
+    }
+    expect(await store.readCapabilities('safe-id', observedAt), {
+      'auth.login_with_api_key',
     });
   });
 
-  test('secret-shaped corrupt capability rows fail closed on read', () async {
+  test('corrupt capability timestamps fail closed on read', () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
     final store = DriftServerProfileStore(database);
     addTearDown(store.close);
     await store.registerAndSelect(safeProfile());
-    await database.customStatement(
-      'INSERT INTO profile_capabilities '
-      '(profile_id, method_name, observed_at_ms, expires_at_ms) '
-      'VALUES (?, ?, ?, ?)',
-      ['safe-id', 'api_key_DURABLE_SENTINEL', 1, 4102444800000],
-    );
+    await database.customStatement('PRAGMA ignore_check_constraints = ON');
+    try {
+      await database.customStatement(
+        'INSERT INTO profile_capabilities '
+        '(profile_id, method_name, observed_at_ms, expires_at_ms) '
+        'VALUES (?, ?, ?, ?)',
+        ['safe-id', 'auth.generate_token', 4102444800000, 1],
+      );
+    } finally {
+      await database.customStatement('PRAGMA ignore_check_constraints = OFF');
+    }
 
     await expectLater(
       store.readCapabilities('safe-id', DateTime.utc(2026)),
       throwsA(
+        isA<PersistenceFailure>()
+            .having(
+              (failure) => failure.kind,
+              'kind',
+              PersistenceFailureKind.unavailable,
+            )
+            .having(
+              (failure) => failure.toString(),
+              'message',
+              isNot(contains('DURABLE_SENTINEL')),
+            ),
+      ),
+    );
+  });
+
+  test('corrupt capability method grammar fails closed on read', () async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    final store = DriftServerProfileStore(database);
+    addTearDown(store.close);
+    await store.registerAndSelect(safeProfile());
+    await database.customStatement('PRAGMA ignore_check_constraints = ON');
+    try {
+      await database.customStatement(
+        'INSERT INTO profile_capabilities '
+        '(profile_id, method_name, observed_at_ms, expires_at_ms) '
+        'VALUES (?, ?, ?, ?)',
+        ['safe-id', 'Authorization: Bearer DURABLE_SENTINEL', 1, 4102444800000],
+      );
+    } finally {
+      await database.customStatement('PRAGMA ignore_check_constraints = OFF');
+    }
+
+    await expectLater(
+      store.readCapabilities('safe-id', DateTime.utc(2026)),
+      throwsA(
+        isA<PersistenceFailure>()
+            .having(
+              (failure) => failure.kind,
+              'kind',
+              PersistenceFailureKind.unavailable,
+            )
+            .having(
+              (failure) => failure.toString(),
+              'message',
+              isNot(contains('DURABLE_SENTINEL')),
+            ),
+      ),
+    );
+  });
+
+  test('read capability profile IDs remain bounded', () async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    final store = DriftServerProfileStore(database);
+    addTearDown(store.close);
+
+    await expectLater(
+      store.readCapabilities(List.filled(129, 'x').join(), DateTime.utc(2026)),
+      throwsA(
         isA<PersistenceFailure>().having(
           (failure) => failure.kind,
           'kind',
-          PersistenceFailureKind.unavailable,
+          PersistenceFailureKind.validation,
         ),
       ),
     );
@@ -259,54 +371,6 @@ void main() {
         expect(error.toString(), isNot(contains(file.path)));
         expect(error.toString().toLowerCase(), isNot(contains('sqlite')));
       }
-    },
-  );
-
-  test(
-    'production persistence and web route contain no secret or TLS bypass path',
-    () {
-      final production = [
-        'lib/features/local_persistence/app_database.dart',
-        'lib/features/local_persistence/app_database.g.dart',
-        'lib/features/local_persistence/drift_server_profile_store.dart',
-        'lib/features/local_persistence/database_connection_web.dart',
-        'lib/features/credentials/secure_credential_vault_web.dart',
-      ].map((path) => File(path).readAsStringSync()).join('\n');
-      for (final forbidden in const [
-        'badCertificateCallback',
-        'allowBadCertificates',
-        'trustAll',
-        'debugPrint(',
-        'print(',
-      ]) {
-        expect(production, isNot(contains(forbidden)));
-      }
-      final generated = File(
-        'lib/features/local_persistence/app_database.g.dart',
-      ).readAsStringSync();
-      for (final forbiddenField in const [
-        'apiKey',
-        'credential',
-        'password',
-        'authHeader',
-        'certificate',
-        'fingerprint',
-      ]) {
-        expect(generated, isNot(contains(forbiddenField)));
-      }
-      final webConnection = File(
-        'lib/features/local_persistence/database_connection_web.dart',
-      ).readAsStringSync();
-      final webVault = File(
-        'lib/features/credentials/secure_credential_vault_web.dart',
-      ).readAsStringSync();
-      expect(webConnection, contains('DriftWebOptions'));
-      expect(webConnection, contains('sqlite3Wasm'));
-      expect(webConnection, contains('driftWorker'));
-      expect(webConnection, isNot(contains('dart:io')));
-      expect(webVault, contains('WebSecureCredentialVault'));
-      expect(webVault, isNot(contains('flutter_secure_storage')));
-      expect(webVault, isNot(contains('tls_trust')));
     },
   );
 }

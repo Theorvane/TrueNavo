@@ -35,7 +35,19 @@ portable_quality_and_web:
     - (cd packages/truenas_api && dart analyze && dart test)
     - (cd packages/truedash_design_system && flutter analyze && flutter test)
     - (cd examples/design_system_consumer && flutter analyze && flutter test)
-    - (cd apps/truedash && dart run tool/verify_drift_web_assets.dart && flutter analyze && flutter test && flutter build web --release)
+    - (cd apps/truedash && dart run tool/verify_drift_web_assets.dart && dart run tool/verify_persistence_security_boundaries.dart && flutter analyze && flutter test)
+    - |
+      cd apps/truedash
+      export CHROME_EXECUTABLE="${CHROME_EXECUTABLE:-$(command -v google-chrome || command -v chromium || command -v chromium-browser)}"
+      test -n "$CHROME_EXECUTABLE"
+      flutter test --platform chrome test/features/local_persistence/persistence_web_security_test.dart
+      rm -rf build/web-persistence-smoke
+      mkdir -p build/web-persistence-smoke
+      dart compile js tool/web_persistence_smoke.dart -O2 -o build/web-persistence-smoke/main.js
+      cp tool/web_persistence_smoke.html build/web-persistence-smoke/index.html
+      cp web/sqlite3.wasm web/drift_worker.js build/web-persistence-smoke/
+      python3 tool/run_web_persistence_smoke.py --root build/web-persistence-smoke --chrome "$CHROME_EXECUTABLE"
+    - (cd apps/truedash && flutter build web --release)
     - test -f apps/truedash/build/web/sqlite3.wasm
     - test -f apps/truedash/build/web/drift_worker.js
 

@@ -28,5 +28,6 @@ dev_dependencies:
   flutter_lints: '>=5.0.0 <7.0.0'
   build_runner: 2.16.1
   drift_dev: 2.34.6
+  web: 1.1.1
 flutter:
   uses-material-design: true

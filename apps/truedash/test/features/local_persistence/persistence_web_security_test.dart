@@ -8,6 +8,7 @@ import 'package:truedash/features/local_persistence/database_connection.dart';
 
 void main() {
   test('web route uses browser-managed storage boundaries', () async {
+    expect(kIsWeb, isTrue);
     expect(createSecureCredentialVault(), isA<web.WebSecureCredentialVault>());
     const vault = web.WebSecureCredentialVault();
     expect(await vault.readApiKey('wss://safe.example/api/current'), isNull);

@@ -219,34 +219,32 @@ final class DriftServerProfileStore implements ServerProfileStore {
   @override
   Future<Set<String>> readCapabilities(String profileId, DateTime now) async {
     if (!_isBounded(profileId, 128)) {
-      return const <String>{};
+      throw const PersistenceFailure(PersistenceFailureKind.validation);
     }
     return _withLease(() async {
       try {
         final nowMs = now.toUtc().millisecondsSinceEpoch;
         return await _database.transaction(() async {
+          final storedRows =
+              await (_database.select(_database.profileCapabilities)
+                    ..where((row) => row.profileId.equals(profileId))
+                    ..limit(maxCapabilities + 1))
+                  .get();
+          if (storedRows.length > maxCapabilities ||
+              storedRows.any((row) => !_isValidCapabilityRow(row))) {
+            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+          }
           await (_database.delete(_database.profileCapabilities)..where(
                 (row) =>
                     row.profileId.equals(profileId) &
                     row.expiresAtMs.isSmallerOrEqualValue(nowMs),
               ))
               .go();
-          final rows =
-              await (_database.select(_database.profileCapabilities)
-                    ..where(
-                      (row) =>
-                          row.profileId.equals(profileId) &
-                          row.expiresAtMs.isBiggerThanValue(nowMs),
-                    )
-                    ..limit(maxCapabilities + 1))
-                  .get();
-          if (rows.length > maxCapabilities) {
-            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-          }
-          if (rows.any((row) => !_isValidMethodName(row.methodName))) {
-            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-          }
-          return Set.unmodifiable(rows.map((row) => row.methodName));
+          return Set.unmodifiable(
+            storedRows
+                .where((row) => row.expiresAtMs > nowMs)
+                .map((row) => row.methodName),
+          );
         });
       } on PersistenceFailure {
         rethrow;
@@ -525,8 +523,19 @@ final class DriftServerProfileStore implements ServerProfileStore {
       !_containsUnsafePersistentContent(value);
   static bool _isValidMethodName(String value) =>
       value.length <= 255 &&
-      !_containsUnsafePersistentContent(value) &&
-      _methodName.hasMatch(value);
+      _methodName.hasMatch(value) &&
+      (_isDocumentedSensitiveMethodName(value) ||
+          !_containsUnsafePersistentContent(value));
+
+  static bool _isDocumentedSensitiveMethodName(String value) => switch (value) {
+    'auth.generate_token' || 'auth.login_with_api_key' => true,
+    _ => false,
+  };
+
+  static bool _isValidCapabilityRow(ProfileCapability row) =>
+      _isBounded(row.profileId, 128) &&
+      _isValidMethodName(row.methodName) &&
+      row.expiresAtMs > row.observedAtMs;
 
   /// The persistence model has no secret or unstructured payload fields.
   /// Keep this deliberately narrow so ordinary hosts, versions and RPC names
