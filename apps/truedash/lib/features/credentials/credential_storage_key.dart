@@ -22,8 +22,9 @@ String credentialStorageKey(String endpointInput) {
   if (!_isCanonicalEndpointIdentity(uri)) {
     throw const CredentialStorageKeyFailure();
   }
+  final canonicalUri = _canonicalCredentialUri(uri);
   final digest = sha256.convert(
-    utf8.encode('$_storageKeyPrefix\u0000${uri.toString()}'),
+    utf8.encode('$_storageKeyPrefix\u0000${canonicalUri.toString()}'),
   );
   return '$_storageKeyPrefix.$digest';
 }
@@ -49,10 +50,19 @@ bool _isSafeEndpointInput(String input) {
 bool _isCanonicalEndpointIdentity(Uri uri) =>
     uri.scheme == 'wss' &&
     uri.host.isNotEmpty &&
+    !uri.host.endsWith('..') &&
     uri.userInfo.isEmpty &&
     !uri.hasQuery &&
     !uri.hasFragment &&
     uri.path.isNotEmpty;
+
+Uri _canonicalCredentialUri(Uri uri) {
+  final host = uri.host.endsWith('.')
+      ? uri.host.substring(0, uri.host.length - 1)
+      : uri.host;
+  if (host.isEmpty) throw const CredentialStorageKeyFailure();
+  return uri.replace(host: host);
+}
 
 /// Deliberately credential-free validation failure.
 final class CredentialStorageKeyFailure implements Exception {

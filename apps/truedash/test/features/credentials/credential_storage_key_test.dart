@@ -22,6 +22,13 @@ void main() {
       expect(key, isNot(contains('https')));
     });
 
+    test('trailing-dot DNS aliases derive the same canonical key', () {
+      expect(
+        credentialStorageKey('https://vault-unit.example.'),
+        credentialStorageKey('wss://vault-unit.example/api/current'),
+      );
+    });
+
     test('rejects unsafe or noncanonical credential identifiers', () {
       for (final input in <String>[
         ' http://vault-unit.example',
@@ -31,6 +38,7 @@ void main() {
         'https://vault-unit.example/../api',
         'https://vault-unit.example/%2e%2e/api',
         'https://vault-unit.example/%2E/api',
+        'https://vault-unit.example..',
         'https://vault-unit.example/%',
         'https://vault-unit.example/\napi',
       ]) {
