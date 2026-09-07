@@ -1640,6 +1640,73 @@ void main() {
   });
 
   test(
+    'invalidating the normal repository abandons its pending authentication',
+    () async {
+      final first = _PendingRepository();
+      final second = _Repository();
+      var factoryCalls = 0;
+      final container = ProviderContainer(
+        overrides: [
+          tlsTrustRouteProvider.overrideWithValue(
+            TlsTrustRoute.platformValidated,
+          ),
+          sessionRepositoryFactoryProvider.overrideWithValue(
+            ({required connector, required credentialVault}) =>
+                ++factoryCalls == 1 ? first : second,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionControllerProvider.notifier);
+
+      final connecting = controller.connect(
+        serverInput: 'https://nas.example',
+        apiKey: _sentinel,
+      );
+      await first.started.future;
+      expect(first.apiKeys, [_sentinel]);
+
+      container.invalidate(sessionRepositoryProvider);
+      expect(first.closeCalls, 1);
+
+      first.succeed();
+      await connecting;
+
+      expect(
+        container.read(connectionControllerProvider),
+        isNot(isA<ConnectionSucceeded>()),
+      );
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+      expect(first.apiKeys, [_sentinel]);
+      expect(second.apiKeys, isEmpty);
+    },
+  );
+
+  test(
+    'normal repository close failures are contained during invalidation',
+    () async {
+      final repository = _ThrowingCloseRepository();
+      final container = ProviderContainer(
+        overrides: [
+          sessionRepositoryFactoryProvider.overrideWithValue(
+            ({required connector, required credentialVault}) => repository,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionRepositoryProvider);
+      container.invalidate(sessionRepositoryProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repository.closeCalls, 1);
+    },
+  );
+
+  test(
     'profile provider initialization cannot publish a stale profile or success',
     () async {
       final repository = _Repository();
@@ -1848,7 +1915,7 @@ final class _DelayedProbe implements NativeCertificateProbe {
   void complete(NativeProbeOutcome outcome) => _result.complete(outcome);
 }
 
-final class _Repository implements SessionRepository {
+class _Repository implements SessionRepository {
   _Repository({
     this.connector,
     this.error,
@@ -1899,6 +1966,40 @@ final class _Repository implements SessionRepository {
       version: '1',
       availableMethodNames: const {},
     );
+  }
+}
+
+final class _PendingRepository extends _Repository {
+  final started = Completer<void>();
+  final _result = Completer<ServerSummary>();
+
+  @override
+  Future<ServerSummary> connect({
+    required String serverInput,
+    required String apiKey,
+  }) {
+    apiKeys.add(apiKey);
+    started.complete();
+    return _result.future;
+  }
+
+  void succeed() => _result.complete(
+    ServerSummary(
+      originalHostInput: 'https://nas.example',
+      endpointUri: Uri.parse('wss://nas.example/websocket'),
+      identity: 'admin',
+      version: '1',
+      availableMethodNames: const {},
+    ),
+  );
+}
+
+final class _ThrowingCloseRepository extends _Repository {
+  @override
+  Future<void> close() async {
+    closeCalls++;
+    await Future<void>.delayed(Duration.zero);
+    throw StateError('close');
   }
 }
 
