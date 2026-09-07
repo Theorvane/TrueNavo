@@ -1685,6 +1685,73 @@ void main() {
     },
   );
 
+  test('normal lease refresh failure abandons pending authentication and permits retry', () async {
+    final first = _PendingRepository();
+    final healthy = _Repository();
+    var factoryCalls = 0;
+    var replacementFails = true;
+    final container = ProviderContainer(
+      overrides: [
+        tlsTrustRouteProvider.overrideWithValue(
+          TlsTrustRoute.platformValidated,
+        ),
+        sessionRepositoryFactoryProvider.overrideWithValue(({
+          required connector,
+          required credentialVault,
+        }) {
+          factoryCalls++;
+          if (factoryCalls == 1) return first;
+          if (replacementFails) throw StateError('replacement factory');
+          return healthy;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionControllerProvider.notifier);
+
+    final connecting = controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+    await first.started.future;
+    container.invalidate(sessionRepositoryProvider);
+    expect(first.closeCalls, 1);
+
+    first.succeed();
+    await connecting;
+
+    expect(factoryCalls, 2);
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionFailed>(),
+    );
+    expect(
+      '${container.read(connectionControllerProvider)}',
+      isNot(contains(_sentinel)),
+    );
+    expect(container.read(serverProfilesControllerProvider).profiles, isEmpty);
+    expect(first.apiKeys, [_sentinel]);
+    expect(healthy.apiKeys, isEmpty);
+
+    replacementFails = false;
+    container.invalidate(sessionRepositoryProvider);
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionSucceeded>(),
+    );
+    expect(factoryCalls, 3);
+    expect(healthy.apiKeys, [_sentinel]);
+    expect(healthy.closeCalls, 0);
+    container.dispose();
+    expect(first.closeCalls, 1);
+    expect(healthy.closeCalls, 1);
+  });
+
   test(
     'normal repository close failures are contained during invalidation',
     () async {

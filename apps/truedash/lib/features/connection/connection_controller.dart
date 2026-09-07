@@ -67,6 +67,8 @@ final class _SessionRepositoryLease {
   void invalidate() => _isCurrent = false;
 }
 
+enum _AuthenticationValidity { current, stale, repositoryUnavailable }
+
 Future<void> _closeRepositorySafely(SessionRepository repository) async {
   try {
     await repository.close();
@@ -380,12 +382,21 @@ final class ConnectionController extends Notifier<ConnectionState> {
     _OneShotVerifiedConnector? verifiedConnector,
     bool Function()? isRepositoryCurrent,
   }) async {
+    // A verified repository starts caller-owned. Assigning it below transfers
+    // that ownership to the controller, including across awaits while a prior
+    // verified repository is being displaced.
+    var repositoryTransferred = false;
     // Factory/provider reads may synchronously dispose this controller. Keep
     // this immediately before the key handoff so every authentication path is
     // protected after its final synchronous dependency read.
-    if (!_authenticationCurrent(generation, isRepositoryCurrent)) {
-      await discardUnconsumed?.call();
-      if (closeOnFailure) await _closeSafely(repository);
+    if (await _abandonAuthenticationIfNeeded(
+      generation: generation,
+      validity: _authenticationValidity(generation, isRepositoryCurrent),
+      repository: repository,
+      closeOnFailure: closeOnFailure,
+      callerOwnsRepository: !repositoryTransferred,
+      discardUnconsumed: discardUnconsumed,
+    )) {
       return;
     }
     try {
@@ -393,9 +404,14 @@ final class ConnectionController extends Notifier<ConnectionState> {
         serverInput: serverInput,
         apiKey: apiKey,
       );
-      if (!_authenticationCurrent(generation, isRepositoryCurrent)) {
-        await discardUnconsumed?.call();
-        if (closeOnFailure) await _closeSafely(repository);
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+        discardUnconsumed: discardUnconsumed,
+      )) {
         return;
       }
       if (verifiedConnector != null &&
@@ -411,32 +427,63 @@ final class ConnectionController extends Notifier<ConnectionState> {
         return;
       }
       await discardUnconsumed?.call();
-      if (!_authenticationCurrent(generation, isRepositoryCurrent)) {
-        if (closeOnFailure) await _closeSafely(repository);
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
         return;
       }
       if (closeOnFailure) {
         final displaced = _verifiedRepository;
         _verifiedRepository = repository;
+        repositoryTransferred = true;
         if (displaced != null && !identical(displaced, repository)) {
           await _closeSafely(displaced);
         }
       }
       final profiles = ref.read(serverProfilesControllerProvider.notifier);
-      if (!_authenticationCurrent(generation, isRepositoryCurrent)) return;
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
+        return;
+      }
       profiles.registerAndSelect(
         ServerProfile.fromSafeSummary(
           id: 'profile-${++_nextProfileId}',
           summary: summary,
         ),
       );
-      if (!_authenticationCurrent(generation, isRepositoryCurrent)) return;
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
+        return;
+      }
       _busy = false;
       state = ConnectionSucceeded(summary);
     } catch (error) {
       await discardUnconsumed?.call();
-      if (closeOnFailure) await _closeSafely(repository);
-      if (!_authenticationCurrent(generation, isRepositoryCurrent)) return;
+      final validity = _authenticationValidity(generation, isRepositoryCurrent);
+      if (repositoryTransferred &&
+          validity == _AuthenticationValidity.current) {
+        await _detachAndCloseVerifiedRepository(repository);
+      } else if (!repositoryTransferred && closeOnFailure) {
+        await _closeSafely(repository);
+      }
+      if (validity != _AuthenticationValidity.current) {
+        _publishUnavailableRepositoryFailure(generation, validity);
+        return;
+      }
       _busy = false;
       state = _safeFailure(error);
     }
@@ -560,15 +607,58 @@ final class ConnectionController extends Notifier<ConnectionState> {
 
   bool _current(int generation) => !_disposed && generation == _generation;
 
-  bool _authenticationCurrent(
+  _AuthenticationValidity _authenticationValidity(
     int generation,
     bool Function()? isRepositoryCurrent,
   ) {
-    if (!_current(generation)) return false;
-    if (!(isRepositoryCurrent?.call() ?? true)) return false;
+    if (!_current(generation)) return _AuthenticationValidity.stale;
+    try {
+      if (!(isRepositoryCurrent?.call() ?? true)) {
+        return _current(generation)
+            ? _AuthenticationValidity.repositoryUnavailable
+            : _AuthenticationValidity.stale;
+      }
+    } catch (_) {
+      return _current(generation)
+          ? _AuthenticationValidity.repositoryUnavailable
+          : _AuthenticationValidity.stale;
+    }
     // The repository-validity callback may synchronously refresh providers,
     // which can dispose or supersede this controller.
-    return _current(generation);
+    return _current(generation)
+        ? _AuthenticationValidity.current
+        : _AuthenticationValidity.stale;
+  }
+
+  Future<bool> _abandonAuthenticationIfNeeded({
+    required int generation,
+    required _AuthenticationValidity validity,
+    required SessionRepository repository,
+    required bool closeOnFailure,
+    required bool callerOwnsRepository,
+    Future<void> Function()? discardUnconsumed,
+  }) async {
+    if (validity == _AuthenticationValidity.current) return false;
+    await discardUnconsumed?.call();
+    if (closeOnFailure && callerOwnsRepository) {
+      await _closeSafely(repository);
+    }
+    _publishUnavailableRepositoryFailure(generation, validity);
+    return true;
+  }
+
+  void _publishUnavailableRepositoryFailure(
+    int generation,
+    _AuthenticationValidity validity,
+  ) {
+    if (validity != _AuthenticationValidity.repositoryUnavailable ||
+        !_current(generation)) {
+      return;
+    }
+    _busy = false;
+    state = const ConnectionFailed(
+      'Unable to reach the server over a secure connection.',
+    );
   }
 
   /// A verified coordinator result transfers exclusive transport ownership to
@@ -592,6 +682,14 @@ final class ConnectionController extends Notifier<ConnectionState> {
     } catch (_) {
       // Lifecycle cleanup must not escape the provider disposal boundary.
     }
+  }
+
+  Future<void> _detachAndCloseVerifiedRepository(
+    SessionRepository repository,
+  ) async {
+    if (!identical(_verifiedRepository, repository)) return;
+    _verifiedRepository = null;
+    await _closeSafely(repository);
   }
 
   Future<bool> _closeTransport(RpcTransport transport) async {
