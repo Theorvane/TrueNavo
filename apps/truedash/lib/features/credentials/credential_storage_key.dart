@@ -57,11 +57,93 @@ bool _isCanonicalEndpointIdentity(Uri uri) =>
     uri.path.isNotEmpty;
 
 Uri _canonicalCredentialUri(Uri uri) {
-  final host = uri.host.endsWith('.')
-      ? uri.host.substring(0, uri.host.length - 1)
-      : uri.host;
+  final host = _canonicalCredentialHost(uri.host);
   if (host.isEmpty) throw const CredentialStorageKeyFailure();
-  return uri.replace(host: host);
+  // This URI exists only to form the vault-key identity. In particular, do not
+  // pass it to TLS or the connector: endpoint.connectionUri retains the exact
+  // validated transport URI selected by ValidatedEndpoint.
+  return Uri(
+    scheme: uri.scheme,
+    host: host,
+    port: uri.port == 443 ? null : uri.port,
+    path: uri.path,
+  );
+}
+
+String _canonicalCredentialHost(String host) {
+  final dnsHost = host.endsWith('.')
+      ? host.substring(0, host.length - 1)
+      : host;
+  if (!dnsHost.contains(':')) return dnsHost;
+  return _canonicalIpv6Address(dnsHost);
+}
+
+/// Formats a valid IPv6 address according to the stable RFC 5952 form.
+///
+/// This intentionally has no platform dependency so vault-key identity stays
+/// deterministic on native and web builds.
+String _canonicalIpv6Address(String address) {
+  if (address.contains('%') || address.split('::').length > 2) {
+    throw const CredentialStorageKeyFailure();
+  }
+
+  final halves = address.split('::');
+  final left = _parseIpv6Groups(halves.first);
+  final right = halves.length == 2 ? _parseIpv6Groups(halves.last) : <int>[];
+  final missingGroups = 8 - left.length - right.length;
+  if ((halves.length == 1 && missingGroups != 0) ||
+      (halves.length == 2 && missingGroups < 1)) {
+    throw const CredentialStorageKeyFailure();
+  }
+  final groups = <int>[
+    ...left,
+    ...List<int>.filled(missingGroups, 0),
+    ...right,
+  ];
+  if (groups.length != 8) throw const CredentialStorageKeyFailure();
+
+  var bestStart = -1;
+  var bestLength = 0;
+  for (var index = 0; index < groups.length;) {
+    if (groups[index] != 0) {
+      index++;
+      continue;
+    }
+    final start = index;
+    while (index < groups.length && groups[index] == 0) {
+      index++;
+    }
+    final length = index - start;
+    if (length > bestLength && length > 1) {
+      bestStart = start;
+      bestLength = length;
+    }
+  }
+
+  final before = groups
+      .sublist(0, bestStart < 0 ? groups.length : bestStart)
+      .map((group) => group.toRadixString(16))
+      .join(':');
+  if (bestStart < 0) return before;
+  final after = groups
+      .sublist(bestStart + bestLength)
+      .map((group) => group.toRadixString(16))
+      .join(':');
+  if (before.isEmpty) return after.isEmpty ? '::' : '::$after';
+  return after.isEmpty ? '$before::' : '$before::$after';
+}
+
+List<int> _parseIpv6Groups(String half) {
+  if (half.isEmpty) return <int>[];
+  return half
+      .split(':')
+      .map((group) {
+        if (!RegExp(r'^[0-9A-Fa-f]{1,4}$').hasMatch(group)) {
+          throw const CredentialStorageKeyFailure();
+        }
+        return int.parse(group, radix: 16);
+      })
+      .toList(growable: false);
 }
 
 /// Deliberately credential-free validation failure.

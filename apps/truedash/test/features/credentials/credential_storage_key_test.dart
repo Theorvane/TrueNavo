@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:truenas_api/truenas_api.dart';
 import 'package:truedash/features/credentials/credential_storage_key.dart';
 
 void main() {
@@ -29,6 +30,48 @@ void main() {
       );
     });
 
+    test('default WSS port aliases derive the same canonical key', () {
+      expect(
+        credentialStorageKey('wss://vault-unit.example/api/current'),
+        credentialStorageKey('wss://vault-unit.example:443/api/current'),
+      );
+    });
+
+    test('equivalent IPv6 spellings derive the same canonical key', () {
+      expect(
+        credentialStorageKey('wss://[2001:db8::1]/api/current'),
+        credentialStorageKey('wss://[2001:0db8:0:0:0:0:0:1]/api/current'),
+      );
+      expect(
+        credentialStorageKey('wss://[2001:DB8:0:0:1:0:0:1]/api/current'),
+        credentialStorageKey('wss://[2001:db8::1:0:0:1]/api/current'),
+      );
+    });
+
+    test('non-default ports remain distinct credential identities', () {
+      expect(
+        credentialStorageKey('wss://vault-unit.example:8443/api/current'),
+        isNot(
+          credentialStorageKey('wss://vault-unit.example:9443/api/current'),
+        ),
+      );
+    });
+
+    test('key canonicalization does not mutate the TLS connector URI', () {
+      final endpoint = ValidatedEndpoint.parse(
+        'wss://[2001:0db8:0:0:0:0:0:1]:443/connector-path',
+      );
+      final connectorUri = endpoint.connectionUri;
+
+      credentialStorageKey(endpoint.originalInput);
+
+      expect(endpoint.connectionUri, same(connectorUri));
+      expect(
+        endpoint.connectionUri.toString(),
+        'wss://[2001:0db8:0:0:0:0:0:1]:443/connector-path',
+      );
+    });
+
     test('rejects unsafe or noncanonical credential identifiers', () {
       for (final input in <String>[
         ' http://vault-unit.example',
@@ -39,6 +82,9 @@ void main() {
         'https://vault-unit.example/%2e%2e/api',
         'https://vault-unit.example/%2E/api',
         'https://vault-unit.example..',
+        'wss://[2001:db8::1::2]/api/current',
+        'wss://[1:2:3:4:5:6:7:8::]/api/current',
+        'wss://[::ffff:192.0.2.1]/api/current',
         'https://vault-unit.example/%',
         'https://vault-unit.example/\napi',
       ]) {
