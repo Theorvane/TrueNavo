@@ -32,57 +32,49 @@ final class DriftServerProfileStore implements ServerProfileStore {
     _validateProfile(profile);
     try {
       return await _database.transaction(() async {
-        final sameId = await (_database.select(
-          _database.serverProfiles,
-        )..where((row) => row.id.equals(profile.id))).getSingleOrNull();
-        final sameEndpoint =
-            await (_database.select(_database.serverProfiles)..where(
-                  (row) =>
-                      row.normalizedEndpoint.equals(profile.normalizedEndpoint),
-                ))
-                .getSingleOrNull();
-
-        // The opaque id is authoritative when it collides. Deleting a
-        // different endpoint row first also makes the following update safe
-        // under the endpoint's unique constraint, and lets SQLite cascade its
-        // capability snapshot as part of this transaction.
-        if (sameId != null) {
-          if (sameEndpoint != null && sameEndpoint.id != sameId.id) {
-            await (_database.delete(
-              _database.serverProfiles,
-            )..where((row) => row.id.equals(sameEndpoint.id))).go();
-          }
-          await _updateProfile(sameId.id, profile);
-          await _setSelection(sameId.id);
-          return _loadSnapshot();
-        }
-        if (sameEndpoint != null) {
-          await _updateProfile(sameEndpoint.id, profile);
-          await _setSelection(sameEndpoint.id);
-          return _loadSnapshot();
-        }
-        final last =
-            await (_database.select(_database.serverProfiles)
-                  ..orderBy([(row) => OrderingTerm.desc(row.sortOrder)])
-                  ..limit(1))
-                .getSingleOrNull();
-        final now = _clock().toUtc().millisecondsSinceEpoch;
-        await _database
-            .into(_database.serverProfiles)
-            .insert(
-              ServerProfilesCompanion.insert(
-                id: profile.id,
-                displayName: profile.displayName,
-                originalHostInput: profile.originalHostInput,
-                normalizedEndpoint: profile.normalizedEndpoint,
-                lastKnownVersion: profile.lastKnownVersion,
-                createdAtMs: now,
-                updatedAtMs: now,
-                sortOrder: (last?.sortOrder ?? -1) + 1,
-              ),
-            );
-        await _setSelection(profile.id);
+        await _upsertAndSelect(profile);
         return _loadSnapshot();
+      });
+    } on PersistenceFailure {
+      rethrow;
+    } catch (_) {
+      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+    }
+  }
+
+  @override
+  Future<ServerProfileSnapshot> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isCommitValid,
+  }) async {
+    _validateProfile(profile);
+    _validateCapabilities(
+      methodNames: methodNames,
+      observedAt: observedAt,
+      expiresAt: expiresAt,
+    );
+    try {
+      return await _database.transaction(() async {
+        if (!_isCommitValid(isCommitValid)) {
+          throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+        }
+        final retainedId = await _upsertAndSelect(profile);
+        await _replaceCapabilitiesForExistingProfile(
+          profileId: retainedId,
+          methodNames: methodNames,
+          observedAt: observedAt,
+          expiresAt: expiresAt,
+        );
+        final snapshot = await _loadSnapshot();
+        // This is deliberately the final statement before the transaction
+        // returns: a stale connection rolls back every preceding write.
+        if (!_isCommitValid(isCommitValid)) {
+          throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+        }
+        return snapshot;
       });
     } on PersistenceFailure {
       rethrow;
@@ -149,35 +141,25 @@ final class DriftServerProfileStore implements ServerProfileStore {
     required DateTime observedAt,
     required DateTime expiresAt,
   }) async {
-    if (!_isBounded(profileId, 128) ||
-        methodNames.length > maxCapabilities ||
-        !methodNames.every(_isValidMethodName) ||
-        !expiresAt.isAfter(observedAt)) {
+    if (!_isBounded(profileId, 128)) {
       throw const PersistenceFailure(PersistenceFailureKind.validation);
     }
+    _validateCapabilities(
+      methodNames: methodNames,
+      observedAt: observedAt,
+      expiresAt: expiresAt,
+    );
     try {
       await _database.transaction(() async {
         if (!await _profileExists(profileId)) {
           throw const PersistenceFailure(PersistenceFailureKind.notFound);
         }
-        await (_database.delete(
-          _database.profileCapabilities,
-        )..where((row) => row.profileId.equals(profileId))).go();
-        final observed = observedAt.toUtc().millisecondsSinceEpoch;
-        final expires = expiresAt.toUtc().millisecondsSinceEpoch;
-        await _database.batch((batch) {
-          batch.insertAll(
-            _database.profileCapabilities,
-            methodNames.map(
-              (name) => ProfileCapabilitiesCompanion.insert(
-                profileId: profileId,
-                methodName: name,
-                observedAtMs: observed,
-                expiresAtMs: expires,
-              ),
-            ),
-          );
-        });
+        await _replaceCapabilitiesForExistingProfile(
+          profileId: profileId,
+          methodNames: methodNames,
+          observedAt: observedAt,
+          expiresAt: expiresAt,
+        );
       });
     } on PersistenceFailure {
       rethrow;
@@ -288,6 +270,105 @@ final class DriftServerProfileStore implements ServerProfileStore {
           updatedAtMs: Value(_clock().toUtc().millisecondsSinceEpoch),
         ),
       );
+
+  Future<String> _upsertAndSelect(ServerProfile profile) async {
+    final sameId = await (_database.select(
+      _database.serverProfiles,
+    )..where((row) => row.id.equals(profile.id))).getSingleOrNull();
+    final sameEndpoint =
+        await (_database.select(_database.serverProfiles)..where(
+              (row) =>
+                  row.normalizedEndpoint.equals(profile.normalizedEndpoint),
+            ))
+            .getSingleOrNull();
+
+    // The opaque id is authoritative when it collides. Deleting a different
+    // endpoint row first keeps the following update valid and lets SQLite
+    // cascade its old capability snapshot in this same transaction.
+    if (sameId != null) {
+      if (sameEndpoint != null && sameEndpoint.id != sameId.id) {
+        await (_database.delete(
+          _database.serverProfiles,
+        )..where((row) => row.id.equals(sameEndpoint.id))).go();
+      }
+      await _updateProfile(sameId.id, profile);
+      await _setSelection(sameId.id);
+      return sameId.id;
+    }
+    if (sameEndpoint != null) {
+      await _updateProfile(sameEndpoint.id, profile);
+      await _setSelection(sameEndpoint.id);
+      return sameEndpoint.id;
+    }
+    final last =
+        await (_database.select(_database.serverProfiles)
+              ..orderBy([(row) => OrderingTerm.desc(row.sortOrder)])
+              ..limit(1))
+            .getSingleOrNull();
+    final now = _clock().toUtc().millisecondsSinceEpoch;
+    await _database
+        .into(_database.serverProfiles)
+        .insert(
+          ServerProfilesCompanion.insert(
+            id: profile.id,
+            displayName: profile.displayName,
+            originalHostInput: profile.originalHostInput,
+            normalizedEndpoint: profile.normalizedEndpoint,
+            lastKnownVersion: profile.lastKnownVersion,
+            createdAtMs: now,
+            updatedAtMs: now,
+            sortOrder: (last?.sortOrder ?? -1) + 1,
+          ),
+        );
+    await _setSelection(profile.id);
+    return profile.id;
+  }
+
+  Future<void> _replaceCapabilitiesForExistingProfile({
+    required String profileId,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+  }) async {
+    await (_database.delete(
+      _database.profileCapabilities,
+    )..where((row) => row.profileId.equals(profileId))).go();
+    final observed = observedAt.toUtc().millisecondsSinceEpoch;
+    final expires = expiresAt.toUtc().millisecondsSinceEpoch;
+    await _database.batch((batch) {
+      batch.insertAll(
+        _database.profileCapabilities,
+        methodNames.map(
+          (name) => ProfileCapabilitiesCompanion.insert(
+            profileId: profileId,
+            methodName: name,
+            observedAtMs: observed,
+            expiresAtMs: expires,
+          ),
+        ),
+      );
+    });
+  }
+
+  void _validateCapabilities({
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+  }) {
+    if (methodNames.length > maxCapabilities ||
+        !methodNames.every(_isValidMethodName) ||
+        !expiresAt.isAfter(observedAt)) {
+      throw const PersistenceFailure(PersistenceFailureKind.validation);
+    }
+  }
+
+  bool _isCommitValid(bool Function() callback) {
+    try {
+      return callback();
+    } catch (_) {
+      return false;
+    }
+  }
 
   void _validateProfile(ServerProfile profile) {
     if (!_isBounded(profile.id, 128) ||

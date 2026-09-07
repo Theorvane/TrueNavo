@@ -255,4 +255,92 @@ void main() {
     );
     expect(await store.readCapabilities('one', observed), {'core.get_methods'});
   });
+
+  test('combined registration rolls back profile selection and capabilities on trigger failure', () async {
+    final observed = DateTime.utc(2026, 1, 1);
+    await database.customStatement(
+      "CREATE TRIGGER reject_system_info BEFORE INSERT ON profile_capabilities "
+      "WHEN NEW.method_name = 'system.info' BEGIN SELECT RAISE(ABORT, 'rejected'); END",
+    );
+
+    await expectLater(
+      store.registerAndSelectWithCapabilities(
+        profile: profile('new', 'new.example'),
+        methodNames: const {'system.info'},
+        observedAt: observed,
+        expiresAt: observed.add(const Duration(hours: 1)),
+        isCommitValid: () => true,
+      ),
+      throwsA(isA<PersistenceFailure>()),
+    );
+
+    expect((await store.load()).profiles, isEmpty);
+    expect(
+      await (database.select(database.appSelection)).getSingleOrNull(),
+      isNull,
+    );
+    expect(
+      await (database.select(database.profileCapabilities)).get(),
+      isEmpty,
+    );
+  });
+
+  test(
+    'combined registration rolls back when its final commit guard is stale',
+    () async {
+      var guardChecks = 0;
+      final observed = DateTime.utc(2026, 1, 1);
+
+      await expectLater(
+        store.registerAndSelectWithCapabilities(
+          profile: profile('new', 'new.example'),
+          methodNames: const {'core.get_methods'},
+          observedAt: observed,
+          expiresAt: observed.add(const Duration(hours: 1)),
+          isCommitValid: () => ++guardChecks == 1,
+        ),
+        throwsA(isA<PersistenceFailure>()),
+      );
+
+      expect(guardChecks, 2);
+      expect((await store.load()).profiles, isEmpty);
+      expect(
+        await (database.select(database.appSelection)).getSingleOrNull(),
+        isNull,
+      );
+      expect(
+        await (database.select(database.profileCapabilities)).get(),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'combined endpoint collision writes capabilities under retained opaque id',
+    () async {
+      await store.registerAndSelect(profile('retained', 'shared.example'));
+      final observed = DateTime.utc(2026, 1, 1);
+
+      final snapshot = await store.registerAndSelectWithCapabilities(
+        profile: ServerProfile(
+          id: 'incoming',
+          displayName: 'Updated shared',
+          originalHostInput: 'https://shared.example',
+          normalizedEndpoint: 'wss://shared.example/api/current',
+          lastKnownVersion: '26.04',
+        ),
+        methodNames: const {'core.get_methods'},
+        observedAt: observed,
+        expiresAt: observed.add(const Duration(hours: 1)),
+        isCommitValid: () => true,
+      );
+
+      expect(snapshot.selectedProfileId, 'retained');
+      expect(snapshot.profiles.single.id, 'retained');
+      expect(await store.readCapabilities('retained', observed), {
+        'core.get_methods',
+      });
+      expect(await store.readCapabilities('incoming', observed), isEmpty);
+    },
+  );
 }

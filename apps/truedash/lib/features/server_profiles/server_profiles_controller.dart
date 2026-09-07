@@ -89,6 +89,31 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
     ServerProfile profile,
   ) => _mutate((store) => store.registerAndSelect(profile));
 
+  /// Persists the profile selection and its bounded capability snapshot as one
+  /// guarded store transaction. Neither store data nor Riverpod state changes
+  /// when this controller or the caller's connection generation goes stale.
+  Future<ServerProfilesMutationResult> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isConnectionCurrent,
+  }) {
+    final lifecycle = _lifecycle;
+    bool isCommitValid() =>
+        _isCurrent(lifecycle) && _validityOf(isConnectionCurrent);
+    return _mutate(
+      (store) => store.registerAndSelectWithCapabilities(
+        profile: profile,
+        methodNames: methodNames,
+        observedAt: observedAt,
+        expiresAt: expiresAt,
+        isCommitValid: isCommitValid,
+      ),
+      isCurrent: isCommitValid,
+    );
+  }
+
   Future<ServerProfilesMutationResult> select(String id) =>
       _mutate((store) => store.select(id));
 
@@ -96,13 +121,15 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
       _mutate((store) => store.remove(id));
 
   Future<ServerProfilesMutationResult> _mutate(
-    Future<ServerProfileSnapshot> Function(ServerProfileStore store) operation,
-  ) {
+    Future<ServerProfileSnapshot> Function(ServerProfileStore store)
+    operation, {
+    bool Function()? isCurrent,
+  }) {
     final before = _snapshotOf(state);
     final lifecycle = _lifecycle;
     final prior = _serial;
     final result = prior.then((_) async {
-      if (!_isCurrent(lifecycle)) {
+      if (!_isCurrent(lifecycle) || !_validityOf(isCurrent)) {
         return ServerProfilesMutationResult.failed(
           before,
           PersistenceFailureKind.unavailable,
@@ -110,7 +137,7 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
       }
       try {
         final committed = await operation(ref.read(serverProfileStoreProvider));
-        if (!_isCurrent(lifecycle)) {
+        if (!_isCurrent(lifecycle) || !_validityOf(isCurrent)) {
           return ServerProfilesMutationResult.failed(
             before,
             PersistenceFailureKind.unavailable,
@@ -138,6 +165,14 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
       );
 
   bool _isCurrent(int lifecycle) => !_disposed && _lifecycle == lifecycle;
+
+  bool _validityOf(bool Function()? callback) {
+    try {
+      return callback?.call() ?? true;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// Keeps isolated widget/unit tests usable. It is never used by production,
@@ -182,6 +217,20 @@ final class _EphemeralServerProfileStore implements ServerProfileStore {
       profiles: profiles,
       selectedProfileId: retainedId,
     );
+  }
+
+  @override
+  Future<ServerProfileSnapshot> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isCommitValid,
+  }) async {
+    if (!isCommitValid()) {
+      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+    }
+    return registerAndSelect(profile);
   }
 
   @override

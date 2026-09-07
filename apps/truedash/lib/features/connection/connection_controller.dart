@@ -463,11 +463,27 @@ final class ConnectionController extends Notifier<ConnectionState> {
       )) {
         return;
       }
-      final registration = await profiles.registerAndSelect(
-        ServerProfile.fromSafeSummary(
+      final observedAt = ref.read(serverProfileClockProvider)().toUtc();
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
+        return;
+      }
+      final registration = await profiles.registerAndSelectWithCapabilities(
+        profile: ServerProfile.fromSafeSummary(
           id: _nextAvailableProfileId(),
           summary: summary,
         ),
+        methodNames: summary.availableMethodNames,
+        observedAt: observedAt,
+        expiresAt: observedAt.add(_capabilityLifetime),
+        isConnectionCurrent: () =>
+            _authenticationValidity(generation, isRepositoryCurrent) ==
+            _AuthenticationValidity.current,
       );
       if (await _abandonAuthenticationIfNeeded(
         generation: generation,
@@ -481,33 +497,6 @@ final class ConnectionController extends Notifier<ConnectionState> {
       if (!registration.succeeded ||
           registration.snapshot.selectedProfileId == null) {
         throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-      }
-      final observedAt = ref.read(serverProfileClockProvider)().toUtc();
-      if (await _abandonAuthenticationIfNeeded(
-        generation: generation,
-        validity: _authenticationValidity(generation, isRepositoryCurrent),
-        repository: repository,
-        closeOnFailure: closeOnFailure,
-        callerOwnsRepository: !repositoryTransferred,
-      )) {
-        return;
-      }
-      await ref
-          .read(serverProfileStoreProvider)
-          .replaceCapabilities(
-            profileId: registration.snapshot.selectedProfileId!,
-            methodNames: summary.availableMethodNames,
-            observedAt: observedAt,
-            expiresAt: observedAt.add(_capabilityLifetime),
-          );
-      if (await _abandonAuthenticationIfNeeded(
-        generation: generation,
-        validity: _authenticationValidity(generation, isRepositoryCurrent),
-        repository: repository,
-        closeOnFailure: closeOnFailure,
-        callerOwnsRepository: !repositoryTransferred,
-      )) {
-        return;
       }
       _busy = false;
       state = ConnectionSucceeded(summary);

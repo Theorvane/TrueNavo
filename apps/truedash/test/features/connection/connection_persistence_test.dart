@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:truedash/features/connection/connection_controller.dart';
 import 'package:truedash/features/connection/connection_state.dart';
+import 'package:truedash/features/local_persistence/persistence_failure.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
 import 'package:truedash/features/server_profiles/server_profile_store.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
@@ -122,6 +123,28 @@ final class _Store implements ServerProfileStore {
   Future<ServerProfileSnapshot> registerAndSelect(ServerProfile profile) {
     registered = profile;
     return registration ?? Future.value(snapshot = _snapshot(profile.id));
+  }
+
+  @override
+  Future<ServerProfileSnapshot> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isCommitValid,
+  }) async {
+    registered = profile;
+    final result = await (registration ?? Future.value(_snapshot(profile.id)));
+    if (!isCommitValid()) {
+      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+    }
+    this.observedAt = observedAt;
+    this.expiresAt = expiresAt;
+    await capabilities?.call();
+    if (!isCommitValid()) {
+      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+    }
+    return snapshot = result;
   }
 
   @override

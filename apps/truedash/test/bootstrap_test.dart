@@ -102,6 +102,16 @@ final class _Store implements ServerProfileStore {
   Future<ServerProfileSnapshot> registerAndSelect(
     ServerProfile profile,
   ) async => await load();
+
+  @override
+  Future<ServerProfileSnapshot> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isCommitValid,
+  }) => registerAndSelect(profile);
+
   @override
   Future<ServerProfileSnapshot> select(String id) async => await load();
   @override

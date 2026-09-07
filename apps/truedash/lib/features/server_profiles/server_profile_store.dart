@@ -13,6 +13,13 @@ final class ServerProfileSnapshot {
 abstract interface class ServerProfileStore {
   Future<ServerProfileSnapshot> load();
   Future<ServerProfileSnapshot> registerAndSelect(ServerProfile profile);
+  Future<ServerProfileSnapshot> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isCommitValid,
+  });
   Future<ServerProfileSnapshot> select(String id);
   Future<ServerProfileSnapshot> remove(String id);
   Future<void> replaceCapabilities({
