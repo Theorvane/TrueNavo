@@ -20,31 +20,53 @@ enum ForgetProfileOutcome {
 final class ServerProfileForgetCoordinator {
   ServerProfileForgetCoordinator({
     required this.vault,
-    required this.removeProfile,
+    required this.removeSecretFirst,
   });
 
   final CredentialVault vault;
-  final Future<ServerProfilesMutationResult> Function(String profileId)
-  removeProfile;
+  final Future<ServerProfilesGuardedRemoveResult> Function({
+    required String profileId,
+    required Future<ServerProfilesSecretActionResult> Function(
+      ServerProfile profile,
+    )
+    secretAction,
+    bool Function()? isCurrent,
+  })
+  removeSecretFirst;
 
   Future<ForgetProfileOutcome> forget(
-    ServerProfile profile, {
+    String profileId, {
     bool Function()? isCurrent,
   }) async {
-    if (!_isCurrent(isCurrent) || !_hasCanonicalEndpoint(profile)) {
-      return ForgetProfileOutcome.invalidProfile;
-    }
-    try {
-      await vault.deleteApiKey(profile.normalizedEndpoint);
-    } on Object {
-      return ForgetProfileOutcome.credentialDeleteFailed;
-    }
-    if (!_isCurrent(isCurrent)) return ForgetProfileOutcome.cancelled;
-    final result = await removeProfile(profile.id);
-    if (!_isCurrent(isCurrent)) return ForgetProfileOutcome.cancelled;
-    return result.succeeded
-        ? ForgetProfileOutcome.removed
-        : ForgetProfileOutcome.profileRemoveFailed;
+    final result = await removeSecretFirst(
+      profileId: profileId,
+      isCurrent: isCurrent,
+      secretAction: (profile) async {
+        if (!_isCurrent(isCurrent) || !_hasCanonicalEndpoint(profile)) {
+          return ServerProfilesSecretActionResult.preconditionFailed;
+        }
+        try {
+          await vault.deleteApiKey(profile.normalizedEndpoint);
+          return ServerProfilesSecretActionResult.succeeded;
+        } on Object {
+          return ServerProfilesSecretActionResult.failed;
+        }
+      },
+    );
+    return switch (result) {
+      ServerProfilesGuardedRemoveResult.removed => ForgetProfileOutcome.removed,
+      ServerProfilesGuardedRemoveResult.secretActionFailed =>
+        ForgetProfileOutcome.credentialDeleteFailed,
+      ServerProfilesGuardedRemoveResult.profileRemoveFailed =>
+        ForgetProfileOutcome.profileRemoveFailed,
+      ServerProfilesGuardedRemoveResult.preconditionFailed =>
+        ForgetProfileOutcome.cancelled,
+      ServerProfilesGuardedRemoveResult.secretActionPreconditionFailed ||
+      ServerProfilesGuardedRemoveResult.notFound =>
+        _isCurrent(isCurrent)
+            ? ForgetProfileOutcome.invalidProfile
+            : ForgetProfileOutcome.cancelled,
+    };
   }
 
   bool _hasCanonicalEndpoint(ServerProfile profile) {

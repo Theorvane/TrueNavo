@@ -120,6 +120,59 @@ void main() {
   );
 
   testWidgets(
+    'stale open popup forget never deletes the replaced endpoint credential',
+    (tester) async {
+      final vault = _RecordingVault();
+      final container = ProviderContainer(
+        overrides: [credentialVaultProvider.overrideWithValue(vault)],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      await controller.registerAndSelect(
+        const ServerProfile(
+          id: 'one',
+          displayName: 'Old one',
+          originalHostInput: 'old',
+          normalizedEndpoint: 'wss://old.example/api/current',
+          lastKnownVersion: '1',
+        ),
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: TrueDashTheme.light(),
+            home: const Scaffold(body: ServerSwitcher()),
+          ),
+        ),
+      );
+
+      await _openCatalog(tester);
+      await controller.registerAndSelect(
+        const ServerProfile(
+          id: 'one',
+          displayName: 'New one',
+          originalHostInput: 'new',
+          normalizedEndpoint: 'wss://new.example/api/current',
+          lastKnownVersion: '1',
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('forget-profile-one')));
+      await tester.pumpAndSettle();
+
+      expect(vault.deleted, isNot(contains('wss://old.example/api/current')));
+      expect(vault.deleted, ['wss://new.example/api/current']);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets(
     'delete failure retains the profile, selection, and a live error',
     (tester) async {
       final vault = _RecordingVault(throwsOnDelete: true);

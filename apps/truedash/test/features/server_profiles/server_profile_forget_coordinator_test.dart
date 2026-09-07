@@ -1,10 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truedash/features/local_persistence/persistence_failure.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
 import 'package:truedash/features/server_profiles/server_profile_forget_coordinator.dart';
-import 'package:truedash/features/server_profiles/server_profile_store.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
 import 'package:truenas_api/truenas_api.dart';
 
@@ -15,13 +13,19 @@ void main() {
       final events = <String>[];
       final coordinator = ServerProfileForgetCoordinator(
         vault: _Vault(events),
-        removeProfile: (id) async {
-          events.add('remove:$id');
-          return _success;
-        },
+        removeSecretFirst:
+            ({required profileId, required secretAction, isCurrent}) async {
+              expect(profileId, 'one');
+              expect(
+                await secretAction(_profile),
+                ServerProfilesSecretActionResult.succeeded,
+              );
+              events.add('remove:$profileId');
+              return ServerProfilesGuardedRemoveResult.removed;
+            },
       );
 
-      expect(await coordinator.forget(_profile), ForgetProfileOutcome.removed);
+      expect(await coordinator.forget('one'), ForgetProfileOutcome.removed);
       expect(events, ['delete:wss://one/api/current', 'remove:one']);
     },
   );
@@ -30,14 +34,16 @@ void main() {
     var removes = 0;
     final coordinator = ServerProfileForgetCoordinator(
       vault: _Vault(const [], throwsOnDelete: true),
-      removeProfile: (_) async {
-        removes++;
-        return _success;
-      },
+      removeSecretFirst:
+          ({required profileId, required secretAction, isCurrent}) async {
+            final action = await secretAction(_profile);
+            expect(action, ServerProfilesSecretActionResult.failed);
+            return ServerProfilesGuardedRemoveResult.secretActionFailed;
+          },
     );
 
     expect(
-      await coordinator.forget(_profile),
+      await coordinator.forget('one'),
       ForgetProfileOutcome.credentialDeleteFailed,
     );
     expect(removes, 0);
@@ -48,22 +54,27 @@ void main() {
     final vault = _Vault([]);
     final coordinator = ServerProfileForgetCoordinator(
       vault: vault,
-      removeProfile: (_) async {
-        removes++;
-        return _success;
-      },
+      removeSecretFirst:
+          ({required profileId, required secretAction, isCurrent}) async {
+            expect(
+              await secretAction(
+                const ServerProfile(
+                  id: 'bad',
+                  displayName: 'Bad',
+                  originalHostInput: 'bad',
+                  normalizedEndpoint: ' https://bad ',
+                  lastKnownVersion: '1',
+                ),
+              ),
+              ServerProfilesSecretActionResult.preconditionFailed,
+            );
+            return ServerProfilesGuardedRemoveResult
+                .secretActionPreconditionFailed;
+          },
     );
 
     expect(
-      await coordinator.forget(
-        const ServerProfile(
-          id: 'bad',
-          displayName: 'Bad',
-          originalHostInput: 'bad',
-          normalizedEndpoint: ' https://bad ',
-          lastKnownVersion: '1',
-        ),
-      ),
+      await coordinator.forget('bad'),
       ForgetProfileOutcome.invalidProfile,
     );
     expect(vault.deleted, isEmpty);
@@ -75,14 +86,15 @@ void main() {
     () async {
       final coordinator = ServerProfileForgetCoordinator(
         vault: _Vault([]),
-        removeProfile: (_) async => ServerProfilesMutationResult.failed(
-          ServerProfileSnapshot(profiles: [_profile], selectedProfileId: 'one'),
-          PersistenceFailureKind.unavailable,
-        ),
+        removeSecretFirst:
+            ({required profileId, required secretAction, isCurrent}) async {
+              await secretAction(_profile);
+              return ServerProfilesGuardedRemoveResult.profileRemoveFailed;
+            },
       );
 
       expect(
-        await coordinator.forget(_profile),
+        await coordinator.forget('one'),
         ForgetProfileOutcome.profileRemoveFailed,
       );
     },
@@ -94,12 +106,18 @@ void main() {
     var removes = 0;
     final coordinator = ServerProfileForgetCoordinator(
       vault: _Vault([], deleteCompleter: delete),
-      removeProfile: (_) async {
-        removes++;
-        return _success;
-      },
+      removeSecretFirst:
+          ({required profileId, required secretAction, isCurrent}) async {
+            final action = await secretAction(_profile);
+            if (action != ServerProfilesSecretActionResult.succeeded ||
+                isCurrent?.call() == false) {
+              return ServerProfilesGuardedRemoveResult.preconditionFailed;
+            }
+            removes++;
+            return ServerProfilesGuardedRemoveResult.removed;
+          },
     );
-    final forget = coordinator.forget(_profile, isCurrent: () => current);
+    final forget = coordinator.forget('one', isCurrent: () => current);
     current = false;
     delete.complete();
 
@@ -114,10 +132,6 @@ const _profile = ServerProfile(
   originalHostInput: 'one',
   normalizedEndpoint: 'wss://one/api/current',
   lastKnownVersion: '1',
-);
-
-final _success = ServerProfilesMutationResult.success(
-  ServerProfileSnapshot(profiles: const [], selectedProfileId: null),
 );
 
 final class _Vault implements CredentialVault {

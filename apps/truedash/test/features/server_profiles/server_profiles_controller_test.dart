@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
@@ -106,4 +108,114 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'queued replacement before forget resolves and deletes latest endpoint',
+    () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      await controller.registerAndSelect(profile('one', 'wss://old'));
+
+      final replacement = controller.registerAndSelect(
+        profile('one', 'wss://new'),
+      );
+      final deleted = <String>[];
+      final forget = controller.removeSecretFirst(
+        profileId: 'one',
+        secretAction: (current) async {
+          deleted.add(current.normalizedEndpoint);
+          return ServerProfilesSecretActionResult.succeeded;
+        },
+      );
+
+      await replacement;
+      expect(await forget, ServerProfilesGuardedRemoveResult.removed);
+      expect(deleted, ['wss://new']);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'replacement queued during pending delete runs only after removal',
+    () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      await controller.registerAndSelect(profile('one', 'wss://old'));
+      final delete = Completer<void>();
+      final deleted = <String>[];
+      final forget = controller.removeSecretFirst(
+        profileId: 'one',
+        secretAction: (current) async {
+          deleted.add(current.normalizedEndpoint);
+          await delete.future;
+          return ServerProfilesSecretActionResult.succeeded;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+      final replacement = controller.registerAndSelect(
+        profile('one', 'wss://new'),
+      );
+
+      expect(deleted, ['wss://old']);
+      delete.complete();
+      expect(await forget, ServerProfilesGuardedRemoveResult.removed);
+      await replacement;
+      final state = container.read(serverProfilesControllerProvider);
+      expect(state.profiles.single.normalizedEndpoint, 'wss://new');
+      expect(state.selectedProfileId, 'one');
+    },
+  );
+
+  test(
+    'failed or throwing secret actions retain profile and release queue',
+    () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      await controller.registerAndSelect(profile('one', 'wss://old'));
+      final failed = controller.removeSecretFirst(
+        profileId: 'one',
+        secretAction: (_) async => ServerProfilesSecretActionResult.failed,
+      );
+      final replacement = controller.registerAndSelect(
+        profile('one', 'wss://new'),
+      );
+      expect(
+        await failed,
+        ServerProfilesGuardedRemoveResult.secretActionFailed,
+      );
+      await replacement;
+      expect(
+        container
+            .read(serverProfilesControllerProvider)
+            .profiles
+            .single
+            .normalizedEndpoint,
+        'wss://new',
+      );
+
+      expect(
+        await controller.removeSecretFirst(
+          profileId: 'one',
+          secretAction: (_) async => throw StateError('hostile callback'),
+        ),
+        ServerProfilesGuardedRemoveResult.secretActionFailed,
+      );
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        hasLength(1),
+      );
+    },
+  );
 }

@@ -67,6 +67,23 @@ final class ServerProfilesMutationResult {
   bool get succeeded => failure == null;
 }
 
+/// Result of the caller-owned irreversible action in [removeSecretFirst].
+///
+/// This intentionally has no credential concepts: the profile controller only
+/// serializes profile lifecycle and persistence, while its caller owns the
+/// secret operation and any profile-specific validation.
+enum ServerProfilesSecretActionResult { succeeded, preconditionFailed, failed }
+
+/// A credential-free, contained result for a serialized secret-first removal.
+enum ServerProfilesGuardedRemoveResult {
+  removed,
+  notFound,
+  preconditionFailed,
+  secretActionPreconditionFailed,
+  secretActionFailed,
+  profileRemoveFailed,
+}
+
 final class ServerProfilesController extends Notifier<ServerProfilesState> {
   Future<void> _serial = Future<void>.value();
   var _disposed = false;
@@ -119,6 +136,78 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
 
   Future<ServerProfilesMutationResult> remove(String id) =>
       _mutate((store) => store.remove(id));
+
+  /// Runs a caller-owned secret operation and the corresponding profile
+  /// removal as one section of the controller's mutation queue.
+  ///
+  /// A queued mutation that was already waiting runs first, so [secretAction]
+  /// receives the then-current profile. Mutations queued while it awaits run
+  /// only after the profile has either been removed or retained. This prevents
+  /// a replaced ID from having an earlier endpoint's secret deleted.
+  Future<ServerProfilesGuardedRemoveResult> removeSecretFirst({
+    required String profileId,
+    required Future<ServerProfilesSecretActionResult> Function(
+      ServerProfile profile,
+    )
+    secretAction,
+    bool Function()? isCurrent,
+  }) {
+    final lifecycle = _lifecycle;
+    final prior = _serial;
+    final result = prior.then((_) async {
+      if (!_isCurrent(lifecycle) || !_validityOf(isCurrent)) {
+        return ServerProfilesGuardedRemoveResult.preconditionFailed;
+      }
+      final profile = state.profiles
+          .where((candidate) => candidate.id == profileId)
+          .firstOrNull;
+      if (profile == null || profile.id != profileId) {
+        return ServerProfilesGuardedRemoveResult.notFound;
+      }
+
+      final action = await _runSecretAction(secretAction, profile);
+      if (action == ServerProfilesSecretActionResult.preconditionFailed) {
+        return ServerProfilesGuardedRemoveResult.secretActionPreconditionFailed;
+      }
+      if (action != ServerProfilesSecretActionResult.succeeded) {
+        return ServerProfilesGuardedRemoveResult.secretActionFailed;
+      }
+      if (!_isCurrent(lifecycle) || !_validityOf(isCurrent)) {
+        return ServerProfilesGuardedRemoveResult.preconditionFailed;
+      }
+
+      try {
+        final committed = await ref
+            .read(serverProfileStoreProvider)
+            .remove(profileId);
+        if (!_isCurrent(lifecycle) || !_validityOf(isCurrent)) {
+          return ServerProfilesGuardedRemoveResult.preconditionFailed;
+        }
+        state = ServerProfilesState.fromSnapshot(committed);
+        return ServerProfilesGuardedRemoveResult.removed;
+      } on PersistenceFailure {
+        return ServerProfilesGuardedRemoveResult.profileRemoveFailed;
+      } catch (_) {
+        // Keep the last published state truthful if persistence did not commit.
+        // It also deliberately avoids a stale state publish.
+        return ServerProfilesGuardedRemoveResult.profileRemoveFailed;
+      }
+    });
+    _serial = result.then<void>((_) {}, onError: (_, _) {});
+    return result;
+  }
+
+  Future<ServerProfilesSecretActionResult> _runSecretAction(
+    Future<ServerProfilesSecretActionResult> Function(ServerProfile profile)
+    action,
+    ServerProfile profile,
+  ) async {
+    try {
+      return await action(profile);
+    } catch (_) {
+      return ServerProfilesSecretActionResult.failed;
+    }
+  }
 
   Future<ServerProfilesMutationResult> _mutate(
     Future<ServerProfileSnapshot> Function(ServerProfileStore store)

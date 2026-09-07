@@ -7,7 +7,6 @@ import 'package:truedash_design_system/truedash_design_system.dart';
 import '../credentials/credential_vault_provider.dart';
 import 'server_profile_forget_coordinator.dart';
 import 'server_profiles_controller.dart';
-import 'server_profile.dart';
 
 const _serverMenuMinimumWidth = 220.0;
 const _focusRingThickness = 2.0;
@@ -73,16 +72,18 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
     setState(() => _triggerFocused = focused);
   }
 
-  Future<void> _forget(ServerProfile profile) async {
+  Future<void> _forget(String profileId) async {
     if (_removingProfileId != null || !mounted) return;
     setState(() {
-      _removingProfileId = profile.id;
+      _removingProfileId = profileId;
       _removalError = null;
     });
     final outcome = await ServerProfileForgetCoordinator(
       vault: ref.read(credentialVaultProvider),
-      removeProfile: ref.read(serverProfilesControllerProvider.notifier).remove,
-    ).forget(profile, isCurrent: () => mounted);
+      removeSecretFirst: ref
+          .read(serverProfilesControllerProvider.notifier)
+          .removeSecretFirst,
+    ).forget(profileId, isCurrent: () => mounted);
     if (!mounted) return;
     setState(() {
       _removingProfileId = null;
@@ -155,8 +156,8 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
                           .read(serverProfilesControllerProvider.notifier)
                           .select(profileId),
                     );
-                  case _ForgetProfileAction(:final profile):
-                    unawaited(_forget(profile));
+                  case _ForgetProfileAction(:final profileId):
+                    unawaited(_forget(profileId));
                 }
               },
               itemBuilder: (context) => empty
@@ -179,7 +180,7 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
                         ),
                         PopupMenuItem<_ServerMenuAction>(
                           key: Key('forget-profile-${profile.id}'),
-                          value: _ForgetProfileAction(profile),
+                          value: _ForgetProfileAction(profile.id),
                           enabled: _removingProfileId == null,
                           height: TdSizing.minimumTouchTarget,
                           child: Text('Forget ${profile.displayName}'),
@@ -231,6 +232,6 @@ final class _SelectProfileAction extends _ServerMenuAction {
 }
 
 final class _ForgetProfileAction extends _ServerMenuAction {
-  const _ForgetProfileAction(this.profile);
-  final ServerProfile profile;
+  const _ForgetProfileAction(this.profileId);
+  final String profileId;
 }
