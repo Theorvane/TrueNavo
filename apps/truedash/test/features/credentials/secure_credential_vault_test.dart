@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +17,40 @@ void main() {
   const apiKey = _apiKey;
 
   group('NativeSecureCredentialVault', () {
+    test('treats a successful vault write as the repository credential commit point', () async {
+      final port = _StatefulPort(initialValue: 'prior-key');
+      final transport = _RespondingTransport();
+      final repository = TrueNasSessionRepository(
+        connector: _SingleTransportConnector(transport),
+        credentialVault: NativeSecureCredentialVault(storage: port),
+      );
+      var vaultPostWriteCheckObserved = false;
+
+      final connecting = repository.connect(
+        serverInput: 'https://vault-unit.example:8443',
+        apiKey: 'replacement-key',
+        rememberApiKey: true,
+        isConnectionCurrent: () {
+          if (!port.hasWritten) return true;
+          if (!vaultPostWriteCheckObserved) {
+            vaultPostWriteCheckObserved = true;
+            return true;
+          }
+          return false;
+        },
+      );
+      await _respondHandshake(transport);
+
+      final summary = await connecting;
+
+      expect(summary.identity, 'admin');
+      expect(vaultPostWriteCheckObserved, isTrue);
+      expect(port.value, 'replacement-key');
+      expect(transport.closeCalls, 0);
+      await repository.close();
+      expect(transport.closeCalls, 1);
+    });
+
     test('delegates read, write, and delete using only hashed keys', () async {
       final port = _Port();
       final vault = NativeSecureCredentialVault(storage: port);
@@ -130,13 +165,14 @@ void main() {
     test('contains a throwing post-write callback, restores, and releases the lease', () async {
       final port = _BlockingWritePort(initialValue: 'prior-key');
       final vault = NativeSecureCredentialVault(storage: port);
-      var calls = 0;
 
       final stale = vault.writeApiKey(
         endpoint,
         'stale-key',
         isCurrent: () {
-          if (++calls == 3) throw StateError('callback TEST_API_KEY_SENTINEL');
+          if (port.writeValues.isNotEmpty) {
+            throw StateError('callback TEST_API_KEY_SENTINEL');
+          }
           return true;
         },
       );
@@ -182,13 +218,12 @@ void main() {
       () async {
         final port = _BlockingWritePort();
         final vault = NativeSecureCredentialVault(storage: port);
-        var calls = 0;
 
         final write = vault.writeApiKey(
           endpoint,
           'stale-key',
           isCurrent: () {
-            if (++calls == 3) {
+            if (port.writeValues.isNotEmpty) {
               throw StateError('callback TEST_API_KEY_SENTINEL');
             }
             return true;
@@ -203,18 +238,37 @@ void main() {
       },
     );
 
-    test('contains a compensation failure after a throwing callback', () async {
-      final vault = NativeSecureCredentialVault(
-        storage: _FailingRollbackPort(),
+    for (final initialValue in ['prior-key', null]) {
+      test(
+        'compensates a post-write cancellation with ${initialValue ?? 'no prior key'}',
+        () async {
+          final port = _StatefulPort(initialValue: initialValue);
+          final vault = NativeSecureCredentialVault(storage: port);
+
+          await expectLater(
+            vault.writeApiKey(
+              endpoint,
+              'replacement-key',
+              isCurrent: () => !port.hasWritten,
+            ),
+            throwsA(isA<CredentialWriteCancelledException>()),
+          );
+
+          expect(port.value, initialValue);
+        },
       );
-      var calls = 0;
+    }
+
+    test('contains a compensation failure after a throwing callback', () async {
+      final port = _FailingRollbackPort();
+      final vault = NativeSecureCredentialVault(storage: port);
 
       await _expectContainedFailure(
         vault.writeApiKey(
           endpoint,
           'stale-key',
           isCurrent: () {
-            if (++calls == 3) {
+            if (port.hasWritten) {
               throw StateError('callback TEST_API_KEY_SENTINEL');
             }
             return true;
@@ -341,6 +395,7 @@ final class _BlockingWritePort implements SecureCredentialStoragePort {
 
 final class _FailingRollbackPort implements SecureCredentialStoragePort {
   var _writes = 0;
+  var hasWritten = false;
 
   @override
   Future<void> delete({
@@ -360,7 +415,81 @@ final class _FailingRollbackPort implements SecureCredentialStoragePort {
     required String value,
     required SecureCredentialStorageOptions options,
   }) async {
+    hasWritten = true;
     if (_writes++ > 0) throw StateError('rollback TEST_API_KEY_SENTINEL');
+  }
+}
+
+final class _StatefulPort implements SecureCredentialStoragePort {
+  _StatefulPort({String? initialValue}) : value = initialValue;
+
+  String? value;
+  var hasWritten = false;
+
+  @override
+  Future<void> delete({
+    required String key,
+    required SecureCredentialStorageOptions options,
+  }) async => value = null;
+
+  @override
+  Future<String?> read({
+    required String key,
+    required SecureCredentialStorageOptions options,
+  }) async => value;
+
+  @override
+  Future<void> write({
+    required String key,
+    required String value,
+    required SecureCredentialStorageOptions options,
+  }) async {
+    this.value = value;
+    hasWritten = true;
+  }
+}
+
+final class _SingleTransportConnector implements RpcConnector {
+  const _SingleTransportConnector(this.transport);
+
+  final RpcTransport transport;
+
+  @override
+  Future<RpcTransport> connect(Uri endpoint) async => transport;
+}
+
+final class _RespondingTransport implements RpcTransport {
+  final _inbound = StreamController<String>();
+  final sentFrames = <String>[];
+  var closeCalls = 0;
+
+  @override
+  Stream<String> get inboundFrames => _inbound.stream;
+
+  @override
+  Future<void> send(String frame) async => sentFrames.add(frame);
+
+  void add(String frame) => _inbound.add(frame);
+
+  @override
+  Future<void> close() async {
+    closeCalls++;
+    await _inbound.close();
+  }
+}
+
+Future<void> _respondHandshake(_RespondingTransport transport) async {
+  for (final result in [
+    {'state': 'SUCCESS'},
+    {'username': 'admin'},
+    {'version': '25.10'},
+    {'a': {}},
+  ]) {
+    while (transport.sentFrames.isEmpty) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    final id = jsonDecode(transport.sentFrames.removeAt(0))['id'];
+    transport.add(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': result}));
   }
 }
 

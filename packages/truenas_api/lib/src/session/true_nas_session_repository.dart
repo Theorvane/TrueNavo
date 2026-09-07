@@ -88,6 +88,10 @@ final class TrueNasSessionRepository implements SessionRepository {
           explicitKey,
           isConnectionCurrent,
         );
+        // A successful vault write is the credential commit point. Do not let
+        // a later cancellable callback report a failed connection after the
+        // vault can no longer compensate the persisted replacement.
+        return summary;
       }
       _requireCurrent(isConnectionCurrent);
       return summary;
@@ -139,7 +143,6 @@ final class TrueNasSessionRepository implements SessionRepository {
         apiKey,
         isCurrent: isConnectionCurrent,
       );
-      _requireCurrent(isConnectionCurrent);
     } on CredentialWriteCancelledException {
       throw const CredentialUnavailableException(
         CredentialUnavailableReason.cancelled,

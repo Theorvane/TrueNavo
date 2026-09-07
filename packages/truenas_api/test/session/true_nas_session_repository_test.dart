@@ -406,33 +406,40 @@ void main() {
   });
 
   for (final scenario in <_HostileCallbackScenario>[
-    const _HostileCallbackScenario('before vault read', 1, null, 0),
-    const _HostileCallbackScenario('after vault read', 3, null, 0),
-    const _HostileCallbackScenario('after auth', 3, 'explicit-test-key', 1),
-    const _HostileCallbackScenario('after summary', 6, 'explicit-test-key', 4),
-    const _HostileCallbackScenario(
+    _HostileCallbackScenario(
+      'before vault read',
+      null,
+      0,
+      (vault, transport) => vault.reads == 0 && transport.sentFrames.isEmpty,
+    ),
+    _HostileCallbackScenario(
+      'after vault read',
+      null,
+      0,
+      (vault, transport) => vault.reads == 1,
+    ),
+    _HostileCallbackScenario(
+      'after auth',
+      'explicit-test-key',
+      1,
+      (vault, transport) => transport.sentFrames.length == 1,
+    ),
+    _HostileCallbackScenario(
+      'after summary',
+      'explicit-test-key',
+      4,
+      (vault, transport) => transport.sentFrames.length == 4,
+    ),
+    _HostileCallbackScenario(
       'during vault write',
-      8,
       'explicit-test-key',
       4,
-    ),
-    const _HostileCallbackScenario(
-      'after vault write',
-      9,
-      'explicit-test-key',
-      4,
-    ),
-    const _HostileCallbackScenario(
-      'final pre-return',
-      10,
-      'explicit-test-key',
-      4,
+      (vault, transport) => vault.writes.isNotEmpty,
     ),
   ]) {
     test('contains hostile callback ${scenario.name}', () async {
       final transport = InMemoryTransport();
       final vault = _CallbackRecordingVault('remembered-test-key');
-      var calls = 0;
       final repository = TrueNasSessionRepository(
         connector: FakeConnector(transport),
         credentialVault: vault,
@@ -442,7 +449,7 @@ void main() {
         apiKey: scenario.apiKey,
         rememberApiKey: scenario.apiKey != null,
         isConnectionCurrent: () {
-          if (++calls == scenario.throwOnCall) {
+          if (scenario.shouldThrow(vault, transport)) {
             throw StateError('hostile callback TEST_API_KEY_SENTINEL');
           }
           return true;
@@ -477,7 +484,10 @@ void main() {
         expect(error.toString(), isNot(contains('TEST_API_KEY_SENTINEL')));
         expect(error.userMessage, isNot(contains('TEST_API_KEY_SENTINEL')));
       }
-      expect(vault.writes, scenario.throwOnCall < 8 ? isEmpty : hasLength(1));
+      expect(
+        vault.writes,
+        scenario.name == 'during vault write' ? hasLength(1) : isEmpty,
+      );
       expect(transport.closeCalls, 1);
       await repository.close();
       expect(transport.closeCalls, 1);
@@ -556,15 +566,15 @@ void main() {
 final class _HostileCallbackScenario {
   const _HostileCallbackScenario(
     this.name,
-    this.throwOnCall,
     this.apiKey,
     this.responses,
+    this.shouldThrow,
   );
 
   final String name;
-  final int throwOnCall;
   final String? apiKey;
   final int responses;
+  final bool Function(_CallbackRecordingVault, InMemoryTransport) shouldThrow;
 }
 
 final class _RecordingConnector implements RpcConnector {
@@ -652,13 +662,17 @@ final class _CallbackRecordingVault implements CredentialVault {
   _CallbackRecordingVault(this.value);
 
   String? value;
+  var reads = 0;
   final writes = <(String, String)>[];
 
   @override
   Future<void> deleteApiKey(String endpointIdentifier) async => value = null;
 
   @override
-  Future<String?> readApiKey(String endpointIdentifier) async => value;
+  Future<String?> readApiKey(String endpointIdentifier) async {
+    reads++;
+    return value;
+  }
 
   @override
   Future<void> writeApiKey(
