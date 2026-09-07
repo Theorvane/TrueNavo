@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
 import 'package:truedash/features/server_profiles/server_profile_store.dart';
@@ -6,40 +8,62 @@ import 'package:truenas_api/truenas_api.dart';
 import 'app_database.dart';
 import 'persistence_failure.dart';
 
+final class _PersistedState {
+  const _PersistedState({
+    required this.profiles,
+    required this.selection,
+    required this.capabilities,
+  });
+
+  final List<StoredServerProfile> profiles;
+  final AppSelectionData? selection;
+  final List<ProfileCapability> capabilities;
+}
+
 final class DriftServerProfileStore implements ServerProfileStore {
   DriftServerProfileStore(this._database, {DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now;
+    : _clock = clock ?? DateTime.now,
+      _ownerZone = Zone.current;
 
   static const maxCapabilities = 4096;
   static final _methodName = RegExp(r'^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$');
 
   final AppDatabase _database;
   final DateTime Function() _clock;
+  final Zone _ownerZone;
+  // Every public operation takes this store-owned lease. In particular, a
+  // stale guarded commit restores its exact prior state before a later,
+  // recreated controller can begin its own mutation.
+  Future<void> _lease = Future<void>.value();
 
   @override
   Future<ServerProfileSnapshot> load() async {
-    try {
-      return await _loadSnapshot();
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+    return _withLease(() async {
+      try {
+        return await _loadSnapshot();
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
   Future<ServerProfileSnapshot> registerAndSelect(ServerProfile profile) async {
     _validateProfile(profile);
-    try {
-      return await _database.transaction(() async {
-        await _upsertAndSelect(profile);
-        return _loadSnapshot();
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+    return _withLease(() async {
+      try {
+        return await _database.transaction(() async {
+          await _upsertAndSelect(profile);
+          return _loadSnapshot();
+        });
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
@@ -56,31 +80,47 @@ final class DriftServerProfileStore implements ServerProfileStore {
       observedAt: observedAt,
       expiresAt: expiresAt,
     );
-    try {
-      return await _database.transaction(() async {
+    return _withLease(() async {
+      try {
+        // Keep a complete, store-private restore point while holding the
+        // lease. It includes selection and every capability row, not just the
+        // profile being registered.
+        final prior = await _captureState();
+        final committed = await _database.transaction(() async {
+          if (!_isCommitValid(isCommitValid)) {
+            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+          }
+          final retainedId = await _upsertAndSelect(profile);
+          await _replaceCapabilitiesForExistingProfile(
+            profileId: retainedId,
+            methodNames: methodNames,
+            observedAt: observedAt,
+            expiresAt: expiresAt,
+          );
+          final snapshot = await _loadSnapshot();
+          // This early guard avoids committing a lifecycle already known to
+          // be stale. The post-transaction guard below closes the commit
+          // TOCTOU.
+          if (!_isCommitValid(isCommitValid)) {
+            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+          }
+          return snapshot;
+        });
+
+        // Drift has actually committed when transaction completes. This is
+        // the linearization point: a revoked lifecycle observed here wins and
+        // is compensated before this lease permits another store operation.
         if (!_isCommitValid(isCommitValid)) {
+          await _database.transaction(() => _restoreState(prior));
           throw const PersistenceFailure(PersistenceFailureKind.unavailable);
         }
-        final retainedId = await _upsertAndSelect(profile);
-        await _replaceCapabilitiesForExistingProfile(
-          profileId: retainedId,
-          methodNames: methodNames,
-          observedAt: observedAt,
-          expiresAt: expiresAt,
-        );
-        final snapshot = await _loadSnapshot();
-        // This is deliberately the final statement before the transaction
-        // returns: a stale connection rolls back every preceding write.
-        if (!_isCommitValid(isCommitValid)) {
-          throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-        }
-        return snapshot;
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+        return committed;
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
@@ -88,19 +128,21 @@ final class DriftServerProfileStore implements ServerProfileStore {
     if (!_isBounded(id, 128)) {
       throw const PersistenceFailure(PersistenceFailureKind.validation);
     }
-    try {
-      return await _database.transaction(() async {
-        if (!await _profileExists(id)) {
-          throw const PersistenceFailure(PersistenceFailureKind.notFound);
-        }
-        await _setSelection(id);
-        return _loadSnapshot();
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+    return _withLease(() async {
+      try {
+        return await _database.transaction(() async {
+          if (!await _profileExists(id)) {
+            throw const PersistenceFailure(PersistenceFailureKind.notFound);
+          }
+          await _setSelection(id);
+          return _loadSnapshot();
+        });
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
@@ -108,30 +150,32 @@ final class DriftServerProfileStore implements ServerProfileStore {
     if (!_isBounded(id, 128)) {
       throw const PersistenceFailure(PersistenceFailureKind.validation);
     }
-    try {
-      return await _database.transaction(() async {
-        if (!await _profileExists(id)) {
-          throw const PersistenceFailure(PersistenceFailureKind.notFound);
-        }
-        await (_database.delete(
-          _database.serverProfiles,
-        )..where((row) => row.id.equals(id))).go();
-        final selected = await _selectedId();
-        if (selected == null) {
-          final first =
-              await (_database.select(_database.serverProfiles)
-                    ..orderBy([(row) => OrderingTerm.asc(row.sortOrder)])
-                    ..limit(1))
-                  .getSingleOrNull();
-          await _setSelection(first?.id);
-        }
-        return _loadSnapshot();
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+    return _withLease(() async {
+      try {
+        return await _database.transaction(() async {
+          if (!await _profileExists(id)) {
+            throw const PersistenceFailure(PersistenceFailureKind.notFound);
+          }
+          await (_database.delete(
+            _database.serverProfiles,
+          )..where((row) => row.id.equals(id))).go();
+          final selected = await _selectedId();
+          if (selected == null) {
+            final first =
+                await (_database.select(_database.serverProfiles)
+                      ..orderBy([(row) => OrderingTerm.asc(row.sortOrder)])
+                      ..limit(1))
+                    .getSingleOrNull();
+            await _setSelection(first?.id);
+          }
+          return _loadSnapshot();
+        });
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
@@ -149,23 +193,25 @@ final class DriftServerProfileStore implements ServerProfileStore {
       observedAt: observedAt,
       expiresAt: expiresAt,
     );
-    try {
-      await _database.transaction(() async {
-        if (!await _profileExists(profileId)) {
-          throw const PersistenceFailure(PersistenceFailureKind.notFound);
-        }
-        await _replaceCapabilitiesForExistingProfile(
-          profileId: profileId,
-          methodNames: methodNames,
-          observedAt: observedAt,
-          expiresAt: expiresAt,
-        );
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+    return _withLease(() async {
+      try {
+        await _database.transaction(() async {
+          if (!await _profileExists(profileId)) {
+            throw const PersistenceFailure(PersistenceFailureKind.notFound);
+          }
+          await _replaceCapabilitiesForExistingProfile(
+            profileId: profileId,
+            methodNames: methodNames,
+            observedAt: observedAt,
+            expiresAt: expiresAt,
+          );
+        });
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
@@ -173,38 +219,103 @@ final class DriftServerProfileStore implements ServerProfileStore {
     if (!_isBounded(profileId, 128)) {
       return const <String>{};
     }
-    try {
-      final nowMs = now.toUtc().millisecondsSinceEpoch;
-      return await _database.transaction(() async {
-        await (_database.delete(_database.profileCapabilities)..where(
-              (row) =>
-                  row.profileId.equals(profileId) &
-                  row.expiresAtMs.isSmallerOrEqualValue(nowMs),
-            ))
-            .go();
-        final rows =
-            await (_database.select(_database.profileCapabilities)
-                  ..where(
-                    (row) =>
-                        row.profileId.equals(profileId) &
-                        row.expiresAtMs.isBiggerThanValue(nowMs),
-                  )
-                  ..limit(maxCapabilities + 1))
-                .get();
-        if (rows.length > maxCapabilities) {
-          throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-        }
-        return Set.unmodifiable(rows.map((row) => row.methodName));
-      });
-    } on PersistenceFailure {
-      rethrow;
-    } catch (_) {
-      throw const PersistenceFailure(PersistenceFailureKind.unavailable);
-    }
+    return _withLease(() async {
+      try {
+        final nowMs = now.toUtc().millisecondsSinceEpoch;
+        return await _database.transaction(() async {
+          await (_database.delete(_database.profileCapabilities)..where(
+                (row) =>
+                    row.profileId.equals(profileId) &
+                    row.expiresAtMs.isSmallerOrEqualValue(nowMs),
+              ))
+              .go();
+          final rows =
+              await (_database.select(_database.profileCapabilities)
+                    ..where(
+                      (row) =>
+                          row.profileId.equals(profileId) &
+                          row.expiresAtMs.isBiggerThanValue(nowMs),
+                    )
+                    ..limit(maxCapabilities + 1))
+                  .get();
+          if (rows.length > maxCapabilities) {
+            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+          }
+          return Set.unmodifiable(rows.map((row) => row.methodName));
+        });
+      } on PersistenceFailure {
+        rethrow;
+      } catch (_) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
+    });
   }
 
   @override
   Future<void> close() => _database.close();
+
+  Future<T> _withLease<T>(Future<T> Function() operation) {
+    // A validity callback runs inside Drift's transaction zone. Registering a
+    // queued mutation from that callback must not retain the transaction's
+    // executor after it commits, so all lease continuations run in the zone
+    // that owns this store.
+    return _ownerZone.run(() {
+      final result = _lease.then((_) => operation());
+      _lease = result.then<void>((_) {}, onError: (_, _) {});
+      return result;
+    });
+  }
+
+  Future<_PersistedState> _captureState() async => _PersistedState(
+    profiles: await _database.select(_database.serverProfiles).get(),
+    selection: await _database.select(_database.appSelection).getSingleOrNull(),
+    capabilities: await _database.select(_database.profileCapabilities).get(),
+  );
+
+  Future<void> _restoreState(_PersistedState prior) async {
+    await _database.delete(_database.profileCapabilities).go();
+    await _database.delete(_database.appSelection).go();
+    await _database.delete(_database.serverProfiles).go();
+    for (final profile in prior.profiles) {
+      await _database
+          .into(_database.serverProfiles)
+          .insert(
+            ServerProfilesCompanion.insert(
+              id: profile.id,
+              displayName: profile.displayName,
+              originalHostInput: profile.originalHostInput,
+              normalizedEndpoint: profile.normalizedEndpoint,
+              lastKnownVersion: profile.lastKnownVersion,
+              createdAtMs: profile.createdAtMs,
+              updatedAtMs: profile.updatedAtMs,
+              sortOrder: profile.sortOrder,
+            ),
+          );
+    }
+    final selection = prior.selection;
+    if (selection != null) {
+      await _database
+          .into(_database.appSelection)
+          .insert(
+            AppSelectionCompanion.insert(
+              singletonId: Value(selection.singletonId),
+              selectedProfileId: Value(selection.selectedProfileId),
+            ),
+          );
+    }
+    for (final capability in prior.capabilities) {
+      await _database
+          .into(_database.profileCapabilities)
+          .insert(
+            ProfileCapabilitiesCompanion.insert(
+              profileId: capability.profileId,
+              methodName: capability.methodName,
+              observedAtMs: capability.observedAtMs,
+              expiresAtMs: capability.expiresAtMs,
+            ),
+          );
+    }
+  }
 
   Future<ServerProfileSnapshot> _loadSnapshot() async {
     final rows = await (_database.select(
