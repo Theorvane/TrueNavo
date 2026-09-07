@@ -180,7 +180,11 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
         final committed = await ref
             .read(serverProfileStoreProvider)
             .remove(profileId);
-        if (!_isCurrent(lifecycle) || !_validityOf(isCurrent)) {
+        // `remove` is the durable commit point. The caller's validity guards
+        // reaching it, but must never turn a committed removal into a phantom
+        // controller state. Only this controller's own lifecycle can prevent
+        // publishing the authoritative snapshot after that point.
+        if (!_isCurrent(lifecycle)) {
           return ServerProfilesGuardedRemoveResult.preconditionFailed;
         }
         state = ServerProfilesState.fromSnapshot(committed);

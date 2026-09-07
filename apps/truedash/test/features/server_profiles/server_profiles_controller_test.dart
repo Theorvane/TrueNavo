@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
+import 'package:truedash/features/server_profiles/server_profile_store.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
 
 ServerProfile profile(String id, String endpoint, {String? name}) =>
@@ -12,6 +13,84 @@ ServerProfile profile(String id, String endpoint, {String? name}) =>
       originalHostInput: endpoint,
       normalizedEndpoint: endpoint,
       lastKnownVersion: '25.10',
+    );
+
+final class ControllableServerProfileStore implements ServerProfileStore {
+  ControllableServerProfileStore(this.snapshot);
+
+  ServerProfileSnapshot snapshot;
+  final removeStarted = Completer<void>();
+  Completer<void>? allowRemove;
+  void Function()? onRemoveCommitted;
+  bool failRemove = false;
+
+  @override
+  Future<ServerProfileSnapshot> load() async => snapshot;
+
+  @override
+  Future<ServerProfileSnapshot> registerAndSelect(ServerProfile profile) async {
+    final profiles = [...snapshot.profiles];
+    final index = profiles.indexWhere((item) => item.id == profile.id);
+    if (index < 0) {
+      profiles.add(profile);
+    } else {
+      profiles[index] = profile;
+    }
+    return snapshot = ServerProfileSnapshot(
+      profiles: profiles,
+      selectedProfileId: profile.id,
+    );
+  }
+
+  @override
+  Future<ServerProfileSnapshot> registerAndSelectWithCapabilities({
+    required ServerProfile profile,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+    required bool Function() isCommitValid,
+  }) => registerAndSelect(profile);
+
+  @override
+  Future<ServerProfileSnapshot> select(String id) async => snapshot;
+
+  @override
+  Future<ServerProfileSnapshot> remove(String id) async {
+    removeStarted.complete();
+    await allowRemove?.future;
+    if (failRemove) throw StateError('durable remove failed');
+    snapshot = ServerProfileSnapshot(
+      profiles: snapshot.profiles.where((item) => item.id != id).toList(),
+      selectedProfileId: snapshot.selectedProfileId == id
+          ? null
+          : snapshot.selectedProfileId,
+    );
+    onRemoveCommitted?.call();
+    return snapshot;
+  }
+
+  @override
+  Future<void> replaceCapabilities({
+    required String profileId,
+    required Set<String> methodNames,
+    required DateTime observedAt,
+    required DateTime expiresAt,
+  }) async {}
+
+  @override
+  Future<Set<String>> readCapabilities(String profileId, DateTime now) async =>
+      const {};
+
+  @override
+  Future<void> close() async {}
+}
+
+ProviderContainer controllerContainer(ControllableServerProfileStore store) =>
+    ProviderContainer(
+      overrides: [
+        serverProfileStoreProvider.overrideWithValue(store),
+        initialServerProfileSnapshotProvider.overrideWithValue(store.snapshot),
+      ],
     );
 
 void main() {
@@ -218,4 +297,225 @@ void main() {
       );
     },
   );
+
+  test(
+    'publishes the committed removal when caller becomes false post-commit',
+    () async {
+      final store = ControllableServerProfileStore(
+        ServerProfileSnapshot(
+          profiles: [profile('one', 'wss://one')],
+          selectedProfileId: 'one',
+        ),
+      )..allowRemove = Completer<void>();
+      final container = controllerContainer(store);
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      container.read(serverProfilesControllerProvider);
+      var checks = 0;
+      store.onRemoveCommitted = () => checks = 2;
+
+      final removal = controller.removeSecretFirst(
+        profileId: 'one',
+        isCurrent: () => ++checks < 3,
+        secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+      );
+      await store.removeStarted.future;
+      store.allowRemove!.complete();
+
+      expect(await removal, ServerProfilesGuardedRemoveResult.removed);
+      expect(checks, 2);
+      expect(store.snapshot.profiles, isEmpty);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'does not invoke a throwing caller check after durable removal commits',
+    () async {
+      final store = ControllableServerProfileStore(
+        ServerProfileSnapshot(
+          profiles: [profile('one', 'wss://one')],
+          selectedProfileId: 'one',
+        ),
+      )..allowRemove = Completer<void>();
+      final container = controllerContainer(store);
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      container.read(serverProfilesControllerProvider);
+      var checks = 0;
+      store.onRemoveCommitted = () => checks = 2;
+
+      final removal = controller.removeSecretFirst(
+        profileId: 'one',
+        isCurrent: () {
+          if (++checks > 2) throw StateError('caller was queried post-commit');
+          return true;
+        },
+        secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+      );
+      await store.removeStarted.future;
+      store.allowRemove!.complete();
+
+      expect(await removal, ServerProfilesGuardedRemoveResult.removed);
+      expect(checks, 2);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'caller precondition failure before remove retains the durable profile',
+    () async {
+      final store = ControllableServerProfileStore(
+        ServerProfileSnapshot(
+          profiles: [profile('one', 'wss://one')],
+          selectedProfileId: 'one',
+        ),
+      );
+      final container = controllerContainer(store);
+      addTearDown(container.dispose);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      container.read(serverProfilesControllerProvider);
+      var checks = 0;
+
+      final result = await controller.removeSecretFirst(
+        profileId: 'one',
+        isCurrent: () => ++checks == 1,
+        secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+      );
+
+      expect(result, ServerProfilesGuardedRemoveResult.preconditionFailed);
+      expect(store.removeStarted.isCompleted, isFalse);
+      expect(store.snapshot.profiles, hasLength(1));
+    },
+  );
+
+  test('caller throwing before remove retains the durable profile', () async {
+    final store = ControllableServerProfileStore(
+      ServerProfileSnapshot(
+        profiles: [profile('one', 'wss://one')],
+        selectedProfileId: 'one',
+      ),
+    );
+    final container = controllerContainer(store);
+    addTearDown(container.dispose);
+    final controller = container.read(
+      serverProfilesControllerProvider.notifier,
+    );
+    container.read(serverProfilesControllerProvider);
+    var checks = 0;
+
+    final result = await controller.removeSecretFirst(
+      profileId: 'one',
+      isCurrent: () {
+        if (++checks > 1) throw StateError('stale');
+        return true;
+      },
+      secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+    );
+
+    expect(result, ServerProfilesGuardedRemoveResult.preconditionFailed);
+    expect(store.removeStarted.isCompleted, isFalse);
+    expect(store.snapshot.profiles, hasLength(1));
+  });
+
+  test('durable remove failure retains the published profile', () async {
+    final store = ControllableServerProfileStore(
+      ServerProfileSnapshot(
+        profiles: [profile('one', 'wss://one')],
+        selectedProfileId: 'one',
+      ),
+    )..failRemove = true;
+    final container = controllerContainer(store);
+    addTearDown(container.dispose);
+    final controller = container.read(
+      serverProfilesControllerProvider.notifier,
+    );
+    container.read(serverProfilesControllerProvider);
+
+    expect(
+      await controller.removeSecretFirst(
+        profileId: 'one',
+        secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+      ),
+      ServerProfilesGuardedRemoveResult.profileRemoveFailed,
+    );
+    expect(
+      container.read(serverProfilesControllerProvider).profiles,
+      hasLength(1),
+    );
+  });
+
+  test(
+    'disposal during a pending durable remove does not publish stale state',
+    () async {
+      final store = ControllableServerProfileStore(
+        ServerProfileSnapshot(
+          profiles: [profile('one', 'wss://one')],
+          selectedProfileId: 'one',
+        ),
+      )..allowRemove = Completer<void>();
+      final container = controllerContainer(store);
+      final controller = container.read(
+        serverProfilesControllerProvider.notifier,
+      );
+      container.read(serverProfilesControllerProvider);
+
+      final removal = controller.removeSecretFirst(
+        profileId: 'one',
+        secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+      );
+      await store.removeStarted.future;
+      container.dispose();
+      store.allowRemove!.complete();
+
+      expect(
+        await removal,
+        ServerProfilesGuardedRemoveResult.preconditionFailed,
+      );
+      expect(store.snapshot.profiles, isEmpty);
+    },
+  );
+
+  test('queued replacement observes the committed removal snapshot', () async {
+    final store = ControllableServerProfileStore(
+      ServerProfileSnapshot(
+        profiles: [profile('one', 'wss://old')],
+        selectedProfileId: 'one',
+      ),
+    )..allowRemove = Completer<void>();
+    final container = controllerContainer(store);
+    addTearDown(container.dispose);
+    final controller = container.read(
+      serverProfilesControllerProvider.notifier,
+    );
+    container.read(serverProfilesControllerProvider);
+
+    final removal = controller.removeSecretFirst(
+      profileId: 'one',
+      secretAction: (_) async => ServerProfilesSecretActionResult.succeeded,
+    );
+    await store.removeStarted.future;
+    final replacement = controller.registerAndSelect(
+      profile('one', 'wss://new'),
+    );
+    store.allowRemove!.complete();
+
+    expect(await removal, ServerProfilesGuardedRemoveResult.removed);
+    await replacement;
+    final state = container.read(serverProfilesControllerProvider);
+    expect(state.profiles.single.normalizedEndpoint, 'wss://new');
+    expect(store.snapshot.profiles.single.normalizedEndpoint, 'wss://new');
+  });
 }
