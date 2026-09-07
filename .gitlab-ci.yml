@@ -34,7 +34,9 @@ portable_quality_and_web:
     - (cd packages/truenas_api && dart analyze && dart test)
     - (cd packages/truedash_design_system && flutter analyze && flutter test)
     - (cd examples/design_system_consumer && flutter analyze && flutter test)
-    - (cd apps/truedash && flutter analyze && flutter test && flutter build web --release)
+    - (cd apps/truedash && dart run tool/verify_drift_web_assets.dart && flutter analyze && flutter test && flutter build web --release)
+    - test -f apps/truedash/build/web/sqlite3.wasm
+    - test -f apps/truedash/build/web/drift_worker.js
 
 macos_release:
   stage: verify
