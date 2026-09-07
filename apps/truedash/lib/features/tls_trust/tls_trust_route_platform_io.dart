@@ -1,4 +1,6 @@
 import 'dart:io';
 
-/// TOFU adapters currently exist only for Apple native platforms.
-bool supportsNativeTofuTrust() => Platform.isIOS || Platform.isMacOS;
+/// TOFU adapters exist only where a runner registers the native bridge
+/// channels: the Apple runners and the Android activity.
+bool supportsNativeTofuTrust() =>
+    Platform.isIOS || Platform.isMacOS || Platform.isAndroid;

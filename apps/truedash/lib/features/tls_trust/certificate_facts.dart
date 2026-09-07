@@ -43,8 +43,8 @@ final class NativePresentedLeaf {
 
 /// A display-safe certificate candidate. It deliberately has no DER field.
 ///
-/// `notAvailable` is used only by non-Apple/test adapters which did not
-/// evaluate platform trust. Apple capture always reports a measured result.
+/// `notAvailable` is used only by test adapters which did not
+/// evaluate platform trust. Native capture always reports a measured result.
 enum PlatformTrust { passed, didNotPass, notAvailable }
 
 final class PresentedCertificate {

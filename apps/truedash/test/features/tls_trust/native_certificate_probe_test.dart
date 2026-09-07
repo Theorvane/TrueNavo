@@ -20,7 +20,7 @@ void main() {
   group('Apple presented-leaf bridge backend', () {
     test('starts a versioned capture request with only operation identity and authority', () {
       final channel = _FakeAppleTlsMethodChannel();
-      final backend = ApplePresentedLeafProbeBackend(
+      final backend = PresentedLeafProbeBackend(
         channel: channel,
         now: () => now,
       );
@@ -53,7 +53,7 @@ void main() {
       'close after an outcome cancels only its operation and is idempotent',
       () async {
         final channel = _FakeAppleTlsMethodChannel();
-        final backend = ApplePresentedLeafProbeBackend(
+        final backend = PresentedLeafProbeBackend(
           channel: channel,
           now: () => now,
         );
@@ -97,7 +97,7 @@ void main() {
       'decodes only a matching successful capture response and evaluates it',
       () async {
         final channel = _FakeAppleTlsMethodChannel();
-        final backend = ApplePresentedLeafProbeBackend(
+        final backend = PresentedLeafProbeBackend(
           channel: channel,
           now: () => now,
         );
@@ -129,7 +129,7 @@ void main() {
 
     test('decodes a measured passing platform-trust fact', () async {
       final channel = _FakeAppleTlsMethodChannel();
-      final backend = ApplePresentedLeafProbeBackend(
+      final backend = PresentedLeafProbeBackend(
         channel: channel,
         now: () => now,
       );
@@ -155,7 +155,7 @@ void main() {
 
     test('fails closed for a stale response operation id', () async {
       final channel = _FakeAppleTlsMethodChannel();
-      final backend = ApplePresentedLeafProbeBackend(
+      final backend = PresentedLeafProbeBackend(
         channel: channel,
         now: () => now,
       );
@@ -267,7 +267,7 @@ void main() {
 
       for (final entry in cases.entries) {
         final channel = _FakeAppleTlsMethodChannel();
-        final backend = ApplePresentedLeafProbeBackend(
+        final backend = PresentedLeafProbeBackend(
           channel: channel,
           now: () => now,
         );
@@ -306,7 +306,7 @@ void main() {
         };
         for (final entry in cases.entries) {
           final channel = _FakeAppleTlsMethodChannel();
-          final backend = ApplePresentedLeafProbeBackend(
+          final backend = PresentedLeafProbeBackend(
             channel: channel,
             now: () => now,
           );
@@ -335,7 +335,7 @@ void main() {
       final channel = _FakeAppleTlsMethodChannel()..failCancel = true;
       final probe = createProbeForNativeTlsPlatform(
         NativeTlsPlatform.apple,
-        appleChannel: channel,
+        probeChannel: channel,
         now: () => now,
       );
       final future = probe.probe(
@@ -360,7 +360,7 @@ void main() {
     test('pre-cancelled attempt emits no capture request', () async {
       final source = CancellationSource()..cancel();
       final channel = _FakeAppleTlsMethodChannel();
-      final attempt = ApplePresentedLeafProbeBackend(
+      final attempt = PresentedLeafProbeBackend(
         channel: channel,
         now: () => now,
       ).startProbe(authority: authority, cancellation: source.token);
@@ -385,7 +385,7 @@ void main() {
         final channel = _FakeAppleTlsMethodChannel()
           ..throwCaptureSynchronously = true;
         final attempt =
-            ApplePresentedLeafProbeBackend(
+            PresentedLeafProbeBackend(
               channel: channel,
               now: () => now,
             ).startProbe(
@@ -412,7 +412,7 @@ void main() {
       () async {
         final channel = _FakeAppleTlsMethodChannel();
         final attempt =
-            ApplePresentedLeafProbeBackend(
+            PresentedLeafProbeBackend(
               channel: channel,
               now: () => now,
             ).startProbe(
@@ -667,38 +667,40 @@ void main() {
     });
   });
 
-  test(
-    'platform selection supports Apple only and Web remains browser-managed',
-    () async {
-      for (final platform in <NativeTlsPlatform>[
-        NativeTlsPlatform.android,
-        NativeTlsPlatform.linux,
-        NativeTlsPlatform.windows,
-        NativeTlsPlatform.other,
-      ]) {
-        final outcome = await native_io
-            .createProbeForNativeTlsPlatform(platform)
-            .probe(
-              authority: authority,
-              timeout: const Duration(seconds: 1),
-              cancellation: CancellationSource().token,
-            );
-        expect(
-          outcome,
-          const NativeProbeBoundaryFailure(
-            NativeTlsBoundaryFailure.backendUnavailable,
-          ),
-          reason: platform.name,
-        );
-      }
+  test('platform selection supports bridged runners only and Web remains '
+      'browser-managed', () async {
+    for (final platform in <NativeTlsPlatform>[
+      NativeTlsPlatform.linux,
+      NativeTlsPlatform.windows,
+      NativeTlsPlatform.other,
+    ]) {
+      final outcome = await native_io
+          .createProbeForNativeTlsPlatform(platform)
+          .probe(
+            authority: authority,
+            timeout: const Duration(seconds: 1),
+            cancellation: CancellationSource().token,
+          );
+      expect(
+        outcome,
+        const NativeProbeBoundaryFailure(
+          NativeTlsBoundaryFailure.backendUnavailable,
+        ),
+        reason: platform.name,
+      );
+    }
 
+    for (final platform in <NativeTlsPlatform>[
+      NativeTlsPlatform.apple,
+      NativeTlsPlatform.android,
+    ]) {
       final channel = _FakeAppleTlsMethodChannel();
-      final appleProbe = native_io.createProbeForNativeTlsPlatform(
-        NativeTlsPlatform.apple,
-        appleChannel: channel,
+      final bridgedProbe = native_io.createProbeForNativeTlsPlatform(
+        platform,
+        probeChannel: channel,
         now: () => now,
       );
-      final appleOutcomeFuture = appleProbe.probe(
+      final bridgedOutcomeFuture = bridgedProbe.probe(
         authority: authority,
         timeout: const Duration(seconds: 1),
         cancellation: CancellationSource().token,
@@ -708,16 +710,20 @@ void main() {
         operationId,
         _successResponse(operationId, validHostMatchingLeafDer),
       );
-      expect(await appleOutcomeFuture, isA<NativeProbeCertificate>());
-
-      final webOutcome = await web.createProbe().probe(
-        authority: authority,
-        timeout: const Duration(seconds: 1),
-        cancellation: CancellationSource().token,
+      expect(
+        await bridgedOutcomeFuture,
+        isA<NativeProbeCertificate>(),
+        reason: platform.name,
       );
-      expect(webOutcome, isA<NativeProbeBrowserManagedTls>());
-    },
-  );
+    }
+
+    final webOutcome = await web.createProbe().probe(
+      authority: authority,
+      timeout: const Duration(seconds: 1),
+      cancellation: CancellationSource().token,
+    );
+    expect(webOutcome, isA<NativeProbeBrowserManagedTls>());
+  });
 }
 
 Map<String, Object> _successResponse(
@@ -836,7 +842,7 @@ final class _FixtureExpectation {
   final CertificateTrustFailure? failure;
 }
 
-final class _FakeAppleTlsMethodChannel implements AppleTlsMethodChannel {
+final class _FakeAppleTlsMethodChannel implements PresentedLeafProbeChannel {
   final outbound = <_OutboundCall>[];
   final _pendingCaptures = <String, Completer<Object?>>{};
   var failCancel = false;

@@ -699,11 +699,10 @@ void main() {
         ),
         const NativePinnedBrowserManagedTls(),
       );
-      // Do not exercise the real Flutter MethodChannel in a unit test. Apple
-      // is covered through its injected channel; all other IO platforms are
-      // intentionally unavailable.
+      // Do not exercise the real Flutter MethodChannel in a unit test. The
+      // bridged runners are covered through their injected channels; all other
+      // IO platforms are intentionally unavailable.
       for (final platform in <native_io.NativeTlsPlatform>[
-        native_io.NativeTlsPlatform.android,
         native_io.NativeTlsPlatform.linux,
         native_io.NativeTlsPlatform.windows,
         native_io.NativeTlsPlatform.other,
@@ -967,7 +966,7 @@ void main() {
         // reconnect adapter implements RpcTransport.  The probe surface
         // below remains free of pins and application/auth payloads.
         expect(text, contains("package:truenas_api/truenas_api.dart"));
-        expect(text, contains('ApplePinnedRpcMethodChannel'));
+        expect(text, contains('PinnedRpcChannel'));
         expect(text, contains('Future<Object?> invokeMethod'));
         expect(text, contains("'truedash.capturePresentedLeaf'"));
         expect(text, contains("'truedash.cancelPresentedLeaf'"));
@@ -976,7 +975,7 @@ void main() {
         expect(text, contains("'host'"));
         expect(text, contains("'port'"));
         final probeAttempt = text.substring(
-          text.indexOf('final class _AppleProbeAttempt'),
+          text.indexOf('final class _ProbeAttempt'),
           text.indexOf('void _onResponse'),
         );
         final probeInvoke = probeAttempt.substring(
