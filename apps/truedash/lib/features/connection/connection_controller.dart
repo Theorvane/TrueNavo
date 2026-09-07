@@ -387,6 +387,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     Future<void> Function()? discardUnconsumed,
     _OneShotVerifiedConnector? verifiedConnector,
     bool Function()? isRepositoryCurrent,
+    void Function()? invalidateProviderOwnedRepositoryOnPersistenceFailure,
   }) async {
     // A verified repository starts caller-owned. Assigning it below transfers
     // that ownership to the controller, including across awaits while a prior
@@ -503,6 +504,11 @@ class ConnectionController extends Notifier<ConnectionState> {
       state = ConnectionSucceeded(summary);
     } catch (error) {
       await discardUnconsumed?.call();
+      if (!repositoryTransferred &&
+          !closeOnFailure &&
+          error is PersistenceFailure) {
+        invalidateProviderOwnedRepositoryOnPersistenceFailure?.call();
+      }
       final validity = _authenticationValidity(generation, isRepositoryCurrent);
       if (repositoryTransferred &&
           validity == _AuthenticationValidity.current) {
@@ -544,6 +550,9 @@ class ConnectionController extends Notifier<ConnectionState> {
       apiKey: apiKey,
       rememberApiKey: rememberApiKey,
       closeOnFailure: false,
+      invalidateProviderOwnedRepositoryOnPersistenceFailure: () {
+        ref.invalidate(sessionRepositoryProvider);
+      },
       isRepositoryCurrent: () =>
           identical(ref.read(_sessionRepositoryLeaseProvider), lease) &&
           lease.isCurrent,

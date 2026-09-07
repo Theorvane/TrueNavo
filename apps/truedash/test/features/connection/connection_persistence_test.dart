@@ -64,6 +64,39 @@ void main() {
     },
   );
 
+  test('capability persistence failure invalidates the authenticated normal repository', () async {
+    final repository = _Repository();
+    final store = _Store()
+      ..capabilities = () => Future<void>.error(StateError('/raw/sqlite/path'));
+    final container = ProviderContainer(
+      overrides: [
+        tlsTrustRouteProvider.overrideWithValue(
+          TlsTrustRoute.platformValidated,
+        ),
+        sessionRepositoryFactoryProvider.overrideWithValue(
+          ({required connector, required credentialVault}) => repository,
+        ),
+        serverProfileStoreProvider.overrideWithValue(store),
+        initialServerProfileSnapshotProvider.overrideWithValue(store.snapshot),
+        serverProfileClockProvider.overrideWithValue(
+          () => DateTime.utc(2026, 1, 1),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container
+        .read(connectionControllerProvider.notifier)
+        .connect(serverInput: 'https://nas.example', apiKey: 'key');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionFailed>(),
+    );
+    expect(repository.closeCalls, 1);
+  });
+
   test(
     'restored profile ids are skipped before registration after restart',
     () async {
@@ -171,6 +204,8 @@ final class _Store implements ServerProfileStore {
 }
 
 final class _Repository implements SessionRepository {
+  var closeCalls = 0;
+
   @override
   Future<ServerSummary> connect({
     required String serverInput,
@@ -185,5 +220,7 @@ final class _Repository implements SessionRepository {
     availableMethodNames: const {'core.get_jobs'},
   );
   @override
-  Future<void> close() async {}
+  Future<void> close() async {
+    closeCalls++;
+  }
 }
