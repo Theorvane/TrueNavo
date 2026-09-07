@@ -24,7 +24,8 @@ Future<void> main() async {
     if (expectedBytes is! int || expectedSha256 is! String) {
       throw const FormatException('Invalid Drift Web asset metadata.');
     }
-    if (bytes.length != expectedBytes || sha256.convert(bytes).toString() != expectedSha256) {
+    if (bytes.length != expectedBytes ||
+        sha256.convert(bytes).toString() != expectedSha256) {
       throw StateError('Drift Web asset integrity check failed: $name');
     }
   }
