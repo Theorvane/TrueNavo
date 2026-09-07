@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truenas_api/truenas_api.dart';
 
+import '../credentials/secure_credential_vault.dart';
 import '../local_persistence/persistence_failure.dart';
 import '../server_profiles/server_profile.dart';
 import '../server_profiles/server_profiles_controller.dart';
@@ -17,7 +18,7 @@ final rpcConnectorProvider = Provider<RpcConnector>(
 );
 
 final credentialVaultProvider = Provider<CredentialVault>(
-  (ref) => const NoopCredentialVault(),
+  (ref) => createSecureCredentialVault(),
 );
 
 /// UTC seam for capability-cache expiry. Bootstrap uses the real UTC clock.
