@@ -32,21 +32,34 @@ final class DriftServerProfileStore implements ServerProfileStore {
     _validateProfile(profile);
     try {
       return await _database.transaction(() async {
+        final sameId = await (_database.select(
+          _database.serverProfiles,
+        )..where((row) => row.id.equals(profile.id))).getSingleOrNull();
         final sameEndpoint =
             await (_database.select(_database.serverProfiles)..where(
                   (row) =>
                       row.normalizedEndpoint.equals(profile.normalizedEndpoint),
                 ))
                 .getSingleOrNull();
-        if (sameEndpoint != null) {
-          await _setSelection(sameEndpoint.id);
+
+        // The opaque id is authoritative when it collides. Deleting a
+        // different endpoint row first also makes the following update safe
+        // under the endpoint's unique constraint, and lets SQLite cascade its
+        // capability snapshot as part of this transaction.
+        if (sameId != null) {
+          if (sameEndpoint != null && sameEndpoint.id != sameId.id) {
+            await (_database.delete(
+              _database.serverProfiles,
+            )..where((row) => row.id.equals(sameEndpoint.id))).go();
+          }
+          await _updateProfile(sameId.id, profile);
+          await _setSelection(sameId.id);
           return _loadSnapshot();
         }
-        final sameId = await (_database.select(
-          _database.serverProfiles,
-        )..where((row) => row.id.equals(profile.id))).getSingleOrNull();
-        if (sameId != null) {
-          throw const PersistenceFailure(PersistenceFailureKind.conflict);
+        if (sameEndpoint != null) {
+          await _updateProfile(sameEndpoint.id, profile);
+          await _setSelection(sameEndpoint.id);
+          return _loadSnapshot();
         }
         final last =
             await (_database.select(_database.serverProfiles)
@@ -188,12 +201,17 @@ final class DriftServerProfileStore implements ServerProfileStore {
             ))
             .go();
         final rows =
-            await (_database.select(_database.profileCapabilities)..where(
-                  (row) =>
-                      row.profileId.equals(profileId) &
-                      row.expiresAtMs.isBiggerThanValue(nowMs),
-                ))
+            await (_database.select(_database.profileCapabilities)
+                  ..where(
+                    (row) =>
+                        row.profileId.equals(profileId) &
+                        row.expiresAtMs.isBiggerThanValue(nowMs),
+                  )
+                  ..limit(maxCapabilities + 1))
                 .get();
+        if (rows.length > maxCapabilities) {
+          throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+        }
         return Set.unmodifiable(rows.map((row) => row.methodName));
       });
     } on PersistenceFailure {
@@ -255,6 +273,19 @@ final class DriftServerProfileStore implements ServerProfileStore {
         AppSelectionCompanion(
           singletonId: const Value(1),
           selectedProfileId: Value(id),
+        ),
+      );
+
+  Future<void> _updateProfile(String retainedId, ServerProfile profile) =>
+      (_database.update(
+        _database.serverProfiles,
+      )..where((row) => row.id.equals(retainedId))).write(
+        ServerProfilesCompanion(
+          displayName: Value(profile.displayName),
+          originalHostInput: Value(profile.originalHostInput),
+          normalizedEndpoint: Value(profile.normalizedEndpoint),
+          lastKnownVersion: Value(profile.lastKnownVersion),
+          updatedAtMs: Value(_clock().toUtc().millisecondsSinceEpoch),
         ),
       );
 

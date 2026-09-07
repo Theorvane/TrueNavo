@@ -1132,6 +1132,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AppSelectionTable appSelection = $AppSelectionTable(this);
   late final $ProfileCapabilitiesTable profileCapabilities =
       $ProfileCapabilitiesTable(this);
+  late final Index profileCapabilitiesExpiryIdx = Index(
+    'profile_capabilities_expiry_idx',
+    'CREATE INDEX profile_capabilities_expiry_idx ON profile_capabilities (profile_id, expires_at_ms)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1140,6 +1144,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     serverProfiles,
     appSelection,
     profileCapabilities,
+    profileCapabilitiesExpiryIdx,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([

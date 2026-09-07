@@ -1,4 +1,4 @@
-/// Stable, credential-free failures exposed by local persistence.
+/// Stable, safe failures exposed by local persistence.
 enum PersistenceFailureKind { validation, conflict, notFound, unavailable }
 
 final class PersistenceFailure implements Exception {

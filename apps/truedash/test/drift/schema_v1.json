@@ -238,6 +238,29 @@
           "method_name"
         ]
       }
+    },
+    {
+      "id": 3,
+      "references": [
+        2
+      ],
+      "type": "index",
+      "data": {
+        "on": 2,
+        "name": "profile_capabilities_expiry_idx",
+        "sql": null,
+        "unique": false,
+        "columns": [
+          {
+            "column": "profile_id",
+            "order_by": null
+          },
+          {
+            "column": "expires_at_ms",
+            "order_by": null
+          }
+        ]
+      }
     }
   ],
   "fixed_sql": [
@@ -265,6 +288,15 @@
         {
           "dialect": "sqlite",
           "sql": "CREATE TABLE IF NOT EXISTS \"profile_capabilities\" (\"profile_id\" TEXT NOT NULL REFERENCES server_profiles (id) ON DELETE CASCADE, \"method_name\" TEXT NOT NULL CHECK (length(method_name) BETWEEN 1 AND 255 AND method_name NOT GLOB '*[^A-Za-z0-9_.]*' AND method_name NOT GLOB '.*' AND method_name NOT GLOB '*.' AND method_name NOT GLOB '*..*'), \"observed_at_ms\" INTEGER NOT NULL, \"expires_at_ms\" INTEGER NOT NULL CHECK (expires_at_ms > observed_at_ms), PRIMARY KEY (\"profile_id\", \"method_name\"));"
+        }
+      ]
+    },
+    {
+      "name": "profile_capabilities_expiry_idx",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE INDEX profile_capabilities_expiry_idx ON profile_capabilities (profile_id, expires_at_ms)"
         }
       ]
     }

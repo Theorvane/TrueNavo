@@ -8,6 +8,7 @@ import 'package:truedash/features/server_profiles/server_profile.dart';
 void main() {
   late AppDatabase database;
   late DriftServerProfileStore store;
+  late DateTime currentTime;
 
   ServerProfile profile(String id, String host) => ServerProfile(
     id: id,
@@ -19,34 +20,93 @@ void main() {
 
   setUp(() {
     database = AppDatabase.forTesting(NativeDatabase.memory());
-    store = DriftServerProfileStore(database, clock: () => DateTime.utc(2026));
+    currentTime = DateTime.utc(2026);
+    store = DriftServerProfileStore(database, clock: () => currentTime);
   });
   tearDown(() => store.close());
 
   test(
-    'registers in stable order, restores, and resolves endpoint collisions',
+    'registers in stable order and refreshes endpoint-collision metadata',
     () async {
       await store.registerAndSelect(profile('one', 'one.example'));
       await store.registerAndSelect(profile('two', 'two.example'));
-      final duplicate = await store.registerAndSelect(
-        profile('different', 'one.example'),
+      final original = await (database.select(
+        database.serverProfiles,
+      )..where((row) => row.id.equals('one'))).getSingle();
+      currentTime = currentTime.add(const Duration(minutes: 1));
+      final refreshed = await store.registerAndSelect(
+        ServerProfile(
+          id: 'different',
+          displayName: 'One refreshed',
+          originalHostInput: 'https://one.example',
+          normalizedEndpoint: 'wss://one.example/api/current',
+          lastKnownVersion: '26.04',
+        ),
       );
 
-      expect(duplicate.profiles.map((item) => item.id), ['one', 'two']);
-      expect(duplicate.selectedProfileId, 'one');
+      expect(refreshed.profiles.map((item) => item.id), ['one', 'two']);
+      expect(refreshed.profiles.first.displayName, 'One refreshed');
+      expect(refreshed.profiles.first.lastKnownVersion, '26.04');
+      expect(refreshed.selectedProfileId, 'one');
+      final retained = await (database.select(
+        database.serverProfiles,
+      )..where((row) => row.id.equals('one'))).getSingle();
+      expect(retained.createdAtMs, original.createdAtMs);
+      expect(retained.sortOrder, original.sortOrder);
+      expect(retained.updatedAtMs, currentTime.millisecondsSinceEpoch);
     },
   );
 
-  test('rejects id collisions and invalid profile endpoints without unsafe details', () async {
+  test(
+    'refreshes an id collision in place and rejects invalid endpoints',
+    () async {
+      await store.registerAndSelect(profile('one', 'one.example'));
+      final refreshed = await store.registerAndSelect(
+        profile('one', 'two.example'),
+      );
+      expect(refreshed.profiles.map((item) => item.id), ['one']);
+      expect(
+        refreshed.profiles.single.normalizedEndpoint,
+        'wss://two.example/api/current',
+      );
+      expect(refreshed.selectedProfileId, 'one');
+      await expectLater(
+        store.registerAndSelect(profile('bad', 'http://bad.example')),
+        throwsA(isA<PersistenceFailure>()),
+      );
+    },
+  );
+
+  test('merges an id and endpoint collision into the id entry', () async {
     await store.registerAndSelect(profile('one', 'one.example'));
-    await expectLater(
-      store.registerAndSelect(profile('one', 'two.example')),
-      throwsA(isA<PersistenceFailure>()),
+    await store.registerAndSelect(profile('two', 'two.example'));
+    await store.registerAndSelect(profile('three', 'three.example'));
+    final observed = DateTime.utc(2026, 1, 1);
+    await store.replaceCapabilities(
+      profileId: 'two',
+      methodNames: const {'system.info'},
+      observedAt: observed,
+      expiresAt: observed.add(const Duration(hours: 1)),
     );
-    await expectLater(
-      store.registerAndSelect(profile('bad', 'http://bad.example')),
-      throwsA(isA<PersistenceFailure>()),
+
+    final merged = await store.registerAndSelect(
+      ServerProfile(
+        id: 'one',
+        displayName: 'Merged',
+        originalHostInput: 'https://two.example',
+        normalizedEndpoint: 'wss://two.example/api/current',
+        lastKnownVersion: '26.04',
+      ),
     );
+
+    expect(merged.profiles.map((item) => item.id), ['one', 'three']);
+    expect(merged.profiles.first.displayName, 'Merged');
+    expect(
+      merged.profiles.first.normalizedEndpoint,
+      'wss://two.example/api/current',
+    );
+    expect(merged.selectedProfileId, 'one');
+    expect(await store.readCapabilities('two', observed), isEmpty);
   });
 
   test(
@@ -116,6 +176,29 @@ void main() {
     await store.remove('one');
     expect(await store.readCapabilities('one', DateTime.utc(2026)), isEmpty);
   });
+
+  test(
+    'fails closed when persisted capabilities exceed the snapshot cap',
+    () async {
+      await store.registerAndSelect(profile('one', 'one.example'));
+      const observedMs = 1767225600000;
+      const expiresMs = 1767312000000;
+      await database.batch((batch) {
+        for (var index = 0; index < 4097; index++) {
+          batch.customStatement(
+            "INSERT INTO profile_capabilities "
+            "(profile_id, method_name, observed_at_ms, expires_at_ms) "
+            "VALUES ('one', 'core.method_$index', $observedMs, $expiresMs)",
+          );
+        }
+      });
+
+      await expectLater(
+        store.readCapabilities('one', DateTime.utc(2026, 1, 1)),
+        throwsA(isA<PersistenceFailure>()),
+      );
+    },
+  );
 
   test(
     'fails closed instead of silently dropping a corrupt stored profile',

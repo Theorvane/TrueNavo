@@ -31,6 +31,7 @@ portable_quality_and_web:
   before_script: *linux_flutter_setup
   script:
     - dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
+    - (cd apps/truedash && ./tool/verify_drift_generated.sh && ./tool/verify_drift_generated.sh)
     - (cd packages/truenas_api && dart analyze && dart test)
     - (cd packages/truedash_design_system && flutter analyze && flutter test)
     - (cd examples/design_system_consumer && flutter analyze && flutter test)

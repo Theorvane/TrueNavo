@@ -1,28 +1,20 @@
-import 'package:drift/native.dart';
+import 'package:drift_dev/api/migrations_native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:truedash/features/local_persistence/app_database.dart';
 
+import '../../drift/generated/schema.dart';
+
 void main() {
-  test(
-    'version one creation migration creates all local-state tables',
-    () async {
-      final database = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(database.close);
+  test('committed schema v1 opens and migrates to AppDatabase', () async {
+    final verifier = SchemaVerifier(GeneratedHelper());
+    final connection = await verifier.startAt(1);
+    final database = AppDatabase.forTesting(connection);
 
-      final tables = await database
-          .customSelect(
-            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-          )
-          .get();
-
-      expect(
-        tables.map((row) => row.read<String>('name')),
-        containsAll(<String>[
-          'app_selection',
-          'profile_capabilities',
-          'server_profiles',
-        ]),
-      );
-    },
-  );
+    await verifier.migrateAndValidate(
+      database,
+      1,
+      options: const ValidationOptions(validateDropped: true),
+    );
+    await database.close();
+  });
 }

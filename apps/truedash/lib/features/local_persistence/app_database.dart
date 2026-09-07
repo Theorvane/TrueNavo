@@ -56,6 +56,10 @@ class AppSelection extends Table {
   Set<Column<Object>> get primaryKey => {singletonId};
 }
 
+@TableIndex(
+  name: 'profile_capabilities_expiry_idx',
+  columns: {#profileId, #expiresAtMs},
+)
 class ProfileCapabilities extends Table {
   @override
   String get tableName => 'profile_capabilities';
@@ -90,9 +94,6 @@ class AppDatabase extends _$AppDatabase {
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (migrator) async {
       await migrator.createAll();
-      await customStatement(
-        'CREATE INDEX profile_capabilities_expiry_idx ON profile_capabilities(profile_id, expires_at_ms)',
-      );
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');
