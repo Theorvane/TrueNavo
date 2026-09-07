@@ -1587,6 +1587,58 @@ void main() {
     },
   );
 
+  test('production normal provider replaces invalidated repository for a live controller', () async {
+    final first = _Repository();
+    final second = _Repository();
+    var factoryCalls = 0;
+    final container = ProviderContainer(
+      overrides: [
+        tlsTrustRouteProvider.overrideWithValue(
+          TlsTrustRoute.platformValidated,
+        ),
+        sessionRepositoryFactoryProvider.overrideWithValue(({
+          required connector,
+          required credentialVault,
+        }) {
+          factoryCalls++;
+          return factoryCalls == 1 ? first : second;
+        }),
+      ],
+    );
+    final controller = container.read(connectionControllerProvider.notifier);
+
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionSucceeded>(),
+    );
+    expect(factoryCalls, 1);
+    expect(first.apiKeys, [_sentinel]);
+
+    container.invalidate(sessionRepositoryProvider);
+    expect(first.closeCalls, 1);
+
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+
+    expect(factoryCalls, 2);
+    expect(first.apiKeys, [_sentinel]);
+    expect(second.apiKeys, [_sentinel]);
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionSucceeded>(),
+    );
+    expect(second.closeCalls, 0);
+
+    container.dispose();
+    expect(second.closeCalls, 1);
+  });
+
   test(
     'profile provider initialization cannot publish a stale profile or success',
     () async {

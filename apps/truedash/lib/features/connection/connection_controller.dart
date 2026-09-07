@@ -47,7 +47,6 @@ final connectionControllerProvider =
     );
 
 final class ConnectionController extends Notifier<ConnectionState> {
-  SessionRepository? _normalRepository;
   SessionRepository? _verifiedRepository;
   var _nextProfileId = 0;
   var _generation = 0;
@@ -61,7 +60,6 @@ final class ConnectionController extends Notifier<ConnectionState> {
       _disposed = true;
       _generation++;
       final verified = _verifiedRepository;
-      _normalRepository = null;
       _verifiedRepository = null;
       _closeSafely(verified);
     });
@@ -411,7 +409,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
   }) async {
     final SessionRepository repository;
     try {
-      repository = _normal(generation);
+      repository = ref.read(sessionRepositoryProvider);
     } catch (_) {
       if (_current(generation)) {
         _busy = false;
@@ -531,14 +529,6 @@ final class ConnectionController extends Notifier<ConnectionState> {
       await _closeTransport(transport);
     }
     return true;
-  }
-
-  SessionRepository _normal(int generation) {
-    final existing = _normalRepository;
-    if (existing != null) return existing;
-    final repository = ref.read(sessionRepositoryProvider);
-    if (_current(generation)) _normalRepository = repository;
-    return repository;
   }
 
   Future<void> _closeSafely(SessionRepository? repository) async {
