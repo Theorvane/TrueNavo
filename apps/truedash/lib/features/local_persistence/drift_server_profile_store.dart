@@ -35,6 +35,8 @@ final class DriftServerProfileStore implements ServerProfileStore {
   // stale guarded commit restores its exact prior state before a later,
   // recreated controller can begin its own mutation.
   Future<void> _lease = Future<void>.value();
+  Future<void>? _closeFuture;
+  bool _isClosed = false;
 
   @override
   Future<ServerProfileSnapshot> load() async {
@@ -241,6 +243,9 @@ final class DriftServerProfileStore implements ServerProfileStore {
           if (rows.length > maxCapabilities) {
             throw const PersistenceFailure(PersistenceFailureKind.unavailable);
           }
+          if (rows.any((row) => !_isValidMethodName(row.methodName))) {
+            throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+          }
           return Set.unmodifiable(rows.map((row) => row.methodName));
         });
       } on PersistenceFailure {
@@ -252,7 +257,17 @@ final class DriftServerProfileStore implements ServerProfileStore {
   }
 
   @override
-  Future<void> close() => _database.close();
+  Future<void> close() {
+    final existing = _closeFuture;
+    if (existing != null) return existing;
+    _isClosed = true;
+    final closing = _ownerZone.run(() async {
+      await _lease;
+      await _database.close();
+    });
+    _closeFuture = closing;
+    return closing;
+  }
 
   Future<T> _withLease<T>(Future<T> Function() operation) {
     // A validity callback runs inside Drift's transaction zone. Registering a
@@ -260,6 +275,11 @@ final class DriftServerProfileStore implements ServerProfileStore {
     // executor after it commits, so all lease continuations run in the zone
     // that owns this store.
     return _ownerZone.run(() {
+      if (_isClosed) {
+        return Future<T>.error(
+          const PersistenceFailure(PersistenceFailureKind.unavailable),
+        );
+      }
       final result = _lease.then((_) => operation());
       _lease = result.then<void>((_) {}, onError: (_, _) {});
       return result;
@@ -500,7 +520,29 @@ final class DriftServerProfileStore implements ServerProfileStore {
   }
 
   static bool _isBounded(String value, int max) =>
-      value.isNotEmpty && value.length <= max;
+      value.isNotEmpty &&
+      value.length <= max &&
+      !_containsUnsafePersistentContent(value);
   static bool _isValidMethodName(String value) =>
-      value.length <= 255 && _methodName.hasMatch(value);
+      value.length <= 255 &&
+      !_containsUnsafePersistentContent(value) &&
+      _methodName.hasMatch(value);
+
+  /// The persistence model has no secret or unstructured payload fields.
+  /// Keep this deliberately narrow so ordinary hosts, versions and RPC names
+  /// remain valid while obvious credential material fails before a transaction.
+  static bool _containsUnsafePersistentContent(String value) {
+    final trimmed = value.trimLeft();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return true;
+    if (value.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+      return true;
+    }
+    return RegExp(
+      r'(?:api[_ -]?key(?:[ _:=]|$)|authorization(?:[ _:=]|$)|'
+      r'auth[_ -]?header(?:[ _:=]|$)|bearer[ _-]|'
+      r'password(?:[ _:=]|$)|secret(?:[ _:=]|$)|'
+      r'token(?:[ _:=]|$)|AIza[\w-]{8,}|-----BEGIN)',
+      caseSensitive: false,
+    ).hasMatch(value);
+  }
 }
