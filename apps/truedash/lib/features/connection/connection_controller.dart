@@ -1,8 +1,12 @@
 import 'dart:async';
 
+export '../credentials/credential_vault_provider.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truenas_api/truenas_api.dart';
 
+import '../credentials/credential_vault_provider.dart';
+import '../local_persistence/persistence_failure.dart';
 import '../server_profiles/server_profile.dart';
 import '../server_profiles/server_profiles_controller.dart';
 import '../tls_trust/certificate_facts.dart';
@@ -15,9 +19,13 @@ final rpcConnectorProvider = Provider<RpcConnector>(
   (ref) => const WebSocketRpcConnector(),
 );
 
-final credentialVaultProvider = Provider<CredentialVault>(
-  (ref) => const NoopCredentialVault(),
+/// UTC seam for capability-cache expiry. Bootstrap uses the real UTC clock.
+final serverProfileClockProvider = Provider<DateTime Function()>(
+  (ref) =>
+      () => DateTime.now().toUtc(),
 );
+
+const _capabilityLifetime = Duration(hours: 24);
 
 typedef SessionRepositoryFactory = SessionRepository Function({
   required RpcConnector connector,
@@ -82,7 +90,7 @@ final connectionControllerProvider =
       ConnectionController.new,
     );
 
-final class ConnectionController extends Notifier<ConnectionState> {
+class ConnectionController extends Notifier<ConnectionState> {
   SessionRepository? _verifiedRepository;
   var _nextProfileId = 0;
   var _generation = 0;
@@ -104,7 +112,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
 
   Future<void> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
   }) async {
     if (_busy) return;
     final int generation = ++_generation;
@@ -170,6 +179,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         serverInput: serverInput,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
       );
       return;
     }
@@ -216,6 +226,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         serverInput: serverInput,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
       );
       return;
     }
@@ -223,12 +234,16 @@ final class ConnectionController extends Notifier<ConnectionState> {
       generation: generation,
       authority: authority,
       apiKey: apiKey,
+      rememberApiKey: rememberApiKey,
       trust: trust,
       fallbackToken: handle.token,
     );
   }
 
-  Future<void> approveTrust({required String apiKey}) async {
+  Future<void> approveTrust({
+    required String? apiKey,
+    bool rememberApiKey = false,
+  }) async {
     final review = state;
     if (review is! ConnectionTrustReview || _busy) return;
     final generation = ++_generation;
@@ -253,6 +268,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
       generation: generation,
       authority: review.authority,
       apiKey: apiKey,
+      rememberApiKey: rememberApiKey,
       trust: trust,
       fallbackToken: review.token,
     );
@@ -282,7 +298,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
     _publishTrust(generation, trust, review.token, review.authority);
   }
 
-  Future<void> retryTrust({String? apiKey}) async {
+  Future<void> retryTrust({String? apiKey, bool rememberApiKey = false}) async {
     final blocked = state;
     if (blocked is! ConnectionTrustBlocked || _busy) return;
     final generation = ++_generation;
@@ -303,27 +319,14 @@ final class ConnectionController extends Notifier<ConnectionState> {
       return;
     }
     if (await _staleCoordinatorResult(generation, trust)) return;
-    if (trust is VerifiedTrustTransport && apiKey != null) {
+    if (trust is VerifiedTrustTransport) {
       await _afterTrust(
         generation: generation,
         authority: blocked.authority,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
         trust: trust,
         fallbackToken: blocked.token,
-      );
-      return;
-    }
-    if (trust is VerifiedTrustTransport) {
-      final cleanupFailed = !await _closeTransport(trust.transport);
-      _publishTrust(
-        generation,
-        BlockedTrust(
-          cleanupFailed
-              ? CertificateTrustCoordinatorFailure.cleanup
-              : CertificateTrustCoordinatorFailure.invalidOperation,
-        ),
-        blocked.token,
-        blocked.authority,
       );
       return;
     }
@@ -333,7 +336,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
   Future<void> _afterTrust({
     required int generation,
     required NormalizedAuthority authority,
-    required String apiKey,
+    required String? apiKey,
+    required bool rememberApiKey,
     required CertificateTrustState trust,
     required TrustOperationToken fallbackToken,
   }) async {
@@ -363,6 +367,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
         repository: repository,
         serverInput: authority.rpcConnectionUri.toString(),
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
         closeOnFailure: true,
         discardUnconsumed: connector.discard,
         verifiedConnector: connector,
@@ -376,11 +381,13 @@ final class ConnectionController extends Notifier<ConnectionState> {
     required int generation,
     required SessionRepository repository,
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    required bool rememberApiKey,
     required bool closeOnFailure,
     Future<void> Function()? discardUnconsumed,
     _OneShotVerifiedConnector? verifiedConnector,
     bool Function()? isRepositoryCurrent,
+    void Function()? invalidateProviderOwnedRepositoryOnPersistenceFailure,
   }) async {
     // A verified repository starts caller-owned. Assigning it below transfers
     // that ownership to the controller, including across awaits while a prior
@@ -403,6 +410,10 @@ final class ConnectionController extends Notifier<ConnectionState> {
       final summary = await repository.connect(
         serverInput: serverInput,
         apiKey: apiKey,
+        rememberApiKey: rememberApiKey,
+        isConnectionCurrent: () =>
+            _authenticationValidity(generation, isRepositoryCurrent) ==
+            _AuthenticationValidity.current,
       );
       if (await _abandonAuthenticationIfNeeded(
         generation: generation,
@@ -454,11 +465,27 @@ final class ConnectionController extends Notifier<ConnectionState> {
       )) {
         return;
       }
-      profiles.registerAndSelect(
-        ServerProfile.fromSafeSummary(
-          id: 'profile-${++_nextProfileId}',
+      final observedAt = ref.read(serverProfileClockProvider)().toUtc();
+      if (await _abandonAuthenticationIfNeeded(
+        generation: generation,
+        validity: _authenticationValidity(generation, isRepositoryCurrent),
+        repository: repository,
+        closeOnFailure: closeOnFailure,
+        callerOwnsRepository: !repositoryTransferred,
+      )) {
+        return;
+      }
+      final registration = await profiles.registerAndSelectWithCapabilities(
+        profile: ServerProfile.fromSafeSummary(
+          id: _nextAvailableProfileId(),
           summary: summary,
         ),
+        methodNames: summary.availableMethodNames,
+        observedAt: observedAt,
+        expiresAt: observedAt.add(_capabilityLifetime),
+        isConnectionCurrent: () =>
+            _authenticationValidity(generation, isRepositoryCurrent) ==
+            _AuthenticationValidity.current,
       );
       if (await _abandonAuthenticationIfNeeded(
         generation: generation,
@@ -469,10 +496,19 @@ final class ConnectionController extends Notifier<ConnectionState> {
       )) {
         return;
       }
+      if (!registration.succeeded ||
+          registration.snapshot.selectedProfileId == null) {
+        throw const PersistenceFailure(PersistenceFailureKind.unavailable);
+      }
       _busy = false;
       state = ConnectionSucceeded(summary);
     } catch (error) {
       await discardUnconsumed?.call();
+      if (!repositoryTransferred &&
+          !closeOnFailure &&
+          error is PersistenceFailure) {
+        invalidateProviderOwnedRepositoryOnPersistenceFailure?.call();
+      }
       final validity = _authenticationValidity(generation, isRepositoryCurrent);
       if (repositoryTransferred &&
           validity == _AuthenticationValidity.current) {
@@ -492,7 +528,8 @@ final class ConnectionController extends Notifier<ConnectionState> {
   Future<void> _authenticateNormal({
     required int generation,
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    required bool rememberApiKey,
   }) async {
     final _SessionRepositoryLease lease;
     try {
@@ -511,7 +548,11 @@ final class ConnectionController extends Notifier<ConnectionState> {
       repository: lease.repository,
       serverInput: serverInput,
       apiKey: apiKey,
+      rememberApiKey: rememberApiKey,
       closeOnFailure: false,
+      invalidateProviderOwnedRepositoryOnPersistenceFailure: () {
+        ref.invalidate(sessionRepositoryProvider);
+      },
       isRepositoryCurrent: () =>
           identical(ref.read(_sessionRepositoryLeaseProvider), lease) &&
           lease.isCurrent,
@@ -591,6 +632,9 @@ final class ConnectionController extends Notifier<ConnectionState> {
     AuthenticationStateException(:final userMessage) => ConnectionFailed(
       userMessage,
     ),
+    CredentialUnavailableException(:final userMessage) => ConnectionFailed(
+      userMessage,
+    ),
     JsonRpcRemoteException() => const ConnectionFailed(
       'The server returned an RPC error. Check access and try again.',
     ),
@@ -604,6 +648,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
       'Unable to reach the server over a secure connection.',
     ),
   };
+
+  String _nextAvailableProfileId() {
+    final profiles = ref.read(serverProfilesControllerProvider).profiles;
+    String id;
+    do {
+      id = 'profile-${++_nextProfileId}';
+    } while (profiles.any((profile) => profile.id == id));
+    return id;
+  }
 
   bool _current(int generation) => !_disposed && generation == _generation;
 

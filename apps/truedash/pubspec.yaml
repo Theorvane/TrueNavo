@@ -13,6 +13,8 @@ dependencies:
   win32: 6.4.0
   ffi: 2.2.0
   crypto: 3.0.7
+  drift: 2.34.4
+  drift_flutter: 0.3.1
   path_provider: 2.1.6
   truenas_api:
     path: ../../packages/truenas_api
@@ -24,5 +26,8 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: '>=5.0.0 <7.0.0'
+  build_runner: 2.16.1
+  drift_dev: 2.34.6
+  web: 1.1.1
 flutter:
   uses-material-design: true

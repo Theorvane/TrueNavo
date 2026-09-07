@@ -44,7 +44,11 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            rememberApiKey: true,
+          );
 
       final review = container.read(connectionControllerProvider);
       expect(
@@ -59,9 +63,10 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .approveTrust(apiKey: _sentinel);
+          .approveTrust(apiKey: _sentinel, rememberApiKey: true);
 
       expect(verifiedRepository.apiKeys, [_sentinel]);
+      expect(verifiedRepository.rememberApiKeyIntents, [true]);
       expect(verifiedRepository.connectedEndpoints, [
         authority.rpcConnectionUri,
       ]);
@@ -143,7 +148,7 @@ void main() {
   );
 
   test(
-    'platform-validated route uses normal repository and safe error mapping',
+    'platform-validated route passes remember intent to the normal repository',
     () async {
       final repository = _Repository(
         error: const AuthenticationStateException(
@@ -162,9 +167,14 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            rememberApiKey: true,
+          );
 
       expect(repository.apiKeys, [_sentinel]);
+      expect(repository.rememberApiKeyIntents, [true]);
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFailed>().having(
@@ -412,7 +422,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            rememberApiKey: true,
+          );
       final connectedRepository = repository;
       expect(
         connectedRepository,
@@ -421,6 +435,7 @@ void main() {
       );
       expect(probe.calls, 0);
       expect(connectedRepository!.apiKeys, [_sentinel]);
+      expect(connectedRepository.rememberApiKeyIntents, [true]);
       expect(connectedRepository.connectedEndpoints, [
         authority.rpcConnectionUri,
       ]);
@@ -495,9 +510,10 @@ void main() {
       expect(review.certificate.leafDerSha256, _digest);
       expect(repository, isNull);
 
-      await controller.approveTrust(apiKey: _sentinel);
+      await controller.approveTrust(apiKey: _sentinel, rememberApiKey: true);
 
       expect(repository!.apiKeys, [_sentinel]);
+      expect(repository!.rememberApiKeyIntents, [true]);
       expect(
         events.indexOf('commit'),
         lessThan(events.indexOf('repositoryAuth')),
@@ -1068,7 +1084,7 @@ void main() {
     );
   });
 
-  test('retry without a key closes verified transport and reports invalid operation', () async {
+  test('retry without an explicit key attempts remembered credentials and closes when missing', () async {
     final authority = NormalizedAuthority.parse('https://nas.example');
     final transport = _CountingTransport();
     final store = InMemoryPinStore();
@@ -1076,6 +1092,7 @@ void main() {
       store: store,
       probe: _Probe(_certificate(authority)),
       connector: _Connector(NativePinnedVerified(transport)),
+      credentialVault: const NoopCredentialVault(),
     );
     addTearDown(container.dispose);
     final controller = container.read(connectionControllerProvider.notifier);
@@ -1091,52 +1108,54 @@ void main() {
 
     await controller.retryTrust();
 
-    final retried =
-        container.read(connectionControllerProvider) as ConnectionTrustBlocked;
+    final retried = container.read(connectionControllerProvider);
     expect(
-      retried.failure,
-      CertificateTrustCoordinatorFailure.invalidOperation,
+      retried,
+      isA<ConnectionFailed>().having(
+        (state) => state.message,
+        'message',
+        'An API key is required to connect to this server.',
+      ),
     );
-    expect(retried.token, same(blocked.token));
     expect(transport.closeCalls, 1);
   });
 
-  test(
-    'retry without a key reports cleanup and resets busy when close throws',
-    () async {
-      final authority = NormalizedAuthority.parse('https://nas.example');
-      final transport = _ThrowingCloseTransport();
-      final store = InMemoryPinStore();
-      final container = _nativeContainer(
-        store: store,
-        probe: _Probe(_certificate(authority)),
-        connector: _Connector(NativePinnedVerified(transport)),
-      );
-      addTearDown(container.dispose);
-      final controller = container.read(connectionControllerProvider.notifier);
-      await controller.connect(
-        serverInput: 'https://nas.example',
-        apiKey: _sentinel,
-      );
-      await controller.cancelTrust();
-      await _seed(store, authority, _digest);
+  test('retry without a key contains close failure and resets busy', () async {
+    final authority = NormalizedAuthority.parse('https://nas.example');
+    final transport = _ThrowingCloseTransport();
+    final store = InMemoryPinStore();
+    final container = _nativeContainer(
+      store: store,
+      probe: _Probe(_certificate(authority)),
+      connector: _Connector(NativePinnedVerified(transport)),
+      credentialVault: const NoopCredentialVault(),
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionControllerProvider.notifier);
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+    await controller.cancelTrust();
+    await _seed(store, authority, _digest);
 
-      await controller.retryTrust();
+    await controller.retryTrust();
 
-      expect(
-        (container.read(
-          connectionControllerProvider,
-        ) as ConnectionTrustBlocked).failure,
-        CertificateTrustCoordinatorFailure.cleanup,
-      );
-      expect(transport.closeCalls, 1);
-      await controller.connect(serverInput: 'not a server', apiKey: _sentinel);
-      expect(
-        container.read(connectionControllerProvider),
-        isA<ConnectionFailed>(),
-      );
-    },
-  );
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionFailed>().having(
+        (state) => state.message,
+        'message',
+        'An API key is required to connect to this server.',
+      ),
+    );
+    expect(transport.closeCalls, 1);
+    await controller.connect(serverInput: 'not a server', apiKey: _sentinel);
+    expect(
+      container.read(connectionControllerProvider),
+      isA<ConnectionFailed>(),
+    );
+  });
 
   test(
     'repository factory failure closes unconsumed verified transport',
@@ -1184,13 +1203,14 @@ void main() {
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
       );
-      await controller.approveTrust(apiKey: _sentinel);
+      await controller.approveTrust(apiKey: _sentinel, rememberApiKey: true);
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFailed>(),
       );
       expect(transport.closeCalls, 1);
       expect(repository.closeCalls, 1);
+      expect(repository.rememberApiKeyIntents, [true]);
     },
   );
 
@@ -1213,7 +1233,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            rememberApiKey: true,
+          );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionBrowserManagedTls>(),
@@ -1998,6 +2022,7 @@ class _Repository implements SessionRepository {
   final bool wrongEndpoint;
   final List<String>? events;
   final apiKeys = <String>[];
+  final rememberApiKeyIntents = <bool>[];
   final connectedEndpoints = <Uri>[];
   var closeCalls = 0;
   var connectorCalls = 0;
@@ -2013,9 +2038,12 @@ class _Repository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async {
-    apiKeys.add(apiKey);
+    apiKeys.add(apiKey ?? '');
+    rememberApiKeyIntents.add(rememberApiKey);
     events?.add('repositoryAuth');
     final endpoint = Uri.parse(serverInput);
     connectedEndpoints.add(endpoint);
@@ -2043,9 +2071,12 @@ final class _PendingRepository extends _Repository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) {
-    apiKeys.add(apiKey);
+    apiKeys.add(apiKey ?? '');
+    rememberApiKeyIntents.add(rememberApiKey);
     started.complete();
     return _result.future;
   }
@@ -2081,7 +2112,9 @@ final class _DelayedRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async {
     _transport = await connector.connect(Uri.parse(serverInput));
     started.complete();
@@ -2119,7 +2152,9 @@ final class _HeldCloseRepository implements SessionRepository {
   @override
   Future<ServerSummary> connect({
     required String serverInput,
-    required String apiKey,
+    required String? apiKey,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
   }) async {
     final endpoint = Uri.parse(serverInput);
     _transport = await connector.connect(endpoint);
@@ -2287,14 +2322,17 @@ final class _ThrowStageStore implements PinStore {
 final class _Vault implements CredentialVault {
   var calls = 0;
   @override
-  Future<void> deleteApiKey(String serverDisplayInput) async => calls++;
+  Future<void> deleteApiKey(String endpointIdentifier) async => calls++;
   @override
-  Future<String?> readApiKey(String serverDisplayInput) async {
+  Future<String?> readApiKey(String endpointIdentifier) async {
     calls++;
     return null;
   }
 
   @override
-  Future<void> writeApiKey(String serverDisplayInput, String apiKey) async =>
-      calls++;
+  Future<void> writeApiKey(
+    String endpointIdentifier,
+    String apiKey, {
+    bool Function()? isCurrent,
+  }) async => calls++;
 }

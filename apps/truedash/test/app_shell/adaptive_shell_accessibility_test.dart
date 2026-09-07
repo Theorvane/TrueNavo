@@ -44,7 +44,7 @@ void main() {
           try {
             await tester.binding.setSurfaceSize(Size(width, 800));
             addTearDown(() => tester.binding.setSurfaceSize(null));
-            final container = _profilesWithLongName();
+            final container = await _profilesWithLongName();
             addTearDown(container.dispose);
             await tester.pumpWidget(
               _shell(
@@ -215,7 +215,7 @@ void main() {
     (tester) async {
       final handle = tester.ensureSemantics();
       try {
-        final container = _profilesWithTwoProfiles();
+        final container = await _profilesWithTwoProfiles();
         addTearDown(container.dispose);
         await tester.pumpWidget(_shell(container: container));
         expect(find.bySemanticsLabel('Choose server'), findsOneWidget);
@@ -230,8 +230,10 @@ void main() {
         _expectServerFocusRing(tester);
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pumpAndSettle();
-        final items = find.byType(PopupMenuItem<String>);
-        expect(items, findsNWidgets(2));
+        final items = find.byWidgetPredicate(
+          (widget) => widget is PopupMenuItem,
+        );
+        expect(items, findsNWidgets(4));
         for (final item in items.evaluate()) {
           final box = item.renderObject! as RenderBox;
           expect(box.size.width, greaterThanOrEqualTo(44));
@@ -277,9 +279,9 @@ Widget _shell({
       : MediaQuery(data: mediaQuery, child: scoped);
 }
 
-ProviderContainer _profilesWithLongName() {
+Future<ProviderContainer> _profilesWithLongName() async {
   final container = ProviderContainer();
-  container
+  await container
       .read(serverProfilesControllerProvider.notifier)
       .registerAndSelect(
         const ServerProfile(
@@ -293,7 +295,7 @@ ProviderContainer _profilesWithLongName() {
   return container;
 }
 
-ProviderContainer _profilesWithTwoProfiles() {
+Future<ProviderContainer> _profilesWithTwoProfiles() async {
   final container = ProviderContainer();
   final controller = container.read(serverProfilesControllerProvider.notifier);
   for (final profile in const [
@@ -312,7 +314,7 @@ ProviderContainer _profilesWithTwoProfiles() {
       lastKnownVersion: '25.10',
     ),
   ]) {
-    controller.registerAndSelect(profile);
+    await controller.registerAndSelect(profile);
   }
   return container;
 }

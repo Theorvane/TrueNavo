@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash_design_system/truedash_design_system.dart';
 
+import '../credentials/credential_vault_provider.dart';
+import 'server_profile_forget_coordinator.dart';
 import 'server_profiles_controller.dart';
 
 const _serverMenuMinimumWidth = 220.0;
@@ -18,6 +22,8 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
   final _triggerKey = GlobalKey(debugLabel: 'server-catalog-trigger-anchor');
   var _triggerFocused = false;
   var _focusResolutionScheduled = false;
+  String? _removingProfileId;
+  String? _removalError;
 
   @override
   void initState() {
@@ -66,85 +72,166 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
     setState(() => _triggerFocused = focused);
   }
 
+  Future<void> _forget(String profileId) async {
+    if (_removingProfileId != null || !mounted) return;
+    setState(() {
+      _removingProfileId = profileId;
+      _removalError = null;
+    });
+    final outcome = await ServerProfileForgetCoordinator(
+      vault: ref.read(credentialVaultProvider),
+      removeSecretFirst: ref
+          .read(serverProfilesControllerProvider.notifier)
+          .removeSecretFirst,
+    ).forget(profileId, isCurrent: () => mounted);
+    if (!mounted) return;
+    setState(() {
+      _removingProfileId = null;
+      _removalError = switch (outcome) {
+        ForgetProfileOutcome.removed || ForgetProfileOutcome.cancelled => null,
+        ForgetProfileOutcome.invalidProfile =>
+          'This saved server cannot be forgotten safely. Try again.',
+        ForgetProfileOutcome.credentialDeleteFailed =>
+          'Could not forget the saved credential. Try again.',
+        ForgetProfileOutcome.profileRemoveFailed =>
+          'Credential forgotten, but the saved server remains. Try again.',
+      };
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(serverProfilesControllerProvider);
     final empty = state.profiles.isEmpty;
     final label = empty ? 'Server catalog: empty' : 'Choose server';
-    return Semantics(
-      container: true,
-      excludeSemantics: true,
-      label: label,
-      button: true,
-      child: DecoratedBox(
-        key: const ValueKey('server-catalog-focus-ring'),
-        decoration: BoxDecoration(
-          border: _triggerFocused
-              ? Border.all(
-                  color: context.tdTheme.actionFocusOnSurface,
-                  width: _focusRingThickness,
-                )
-              : null,
-        ),
-        child: PopupMenuButton<String>(
-          tooltip: label,
-          requestFocus: false,
-          constraints: const BoxConstraints(minWidth: _serverMenuMinimumWidth),
-          // PopupMenuButton restores focus to its InkWell trigger when
-          // the route closes. Keeping that one native focus target avoids
-          // a second, wrapper-only stop in the Tab order.
-          onCanceled: () {},
-          onSelected: (id) {
-            ref.read(serverProfilesControllerProvider.notifier).select(id);
-          },
-          itemBuilder: (context) => empty
-              ? const [
-                  PopupMenuItem<String>(
-                    enabled: false,
-                    height: TdSizing.minimumTouchTarget,
-                    child: Text('No servers in this session catalog.'),
-                  ),
-                ]
-              : [
-                  for (final profile in state.profiles)
-                    PopupMenuItem(
-                      value: profile.id,
-                      height: TdSizing.minimumTouchTarget,
-                      child: Semantics(
-                        selected: profile.id == state.selectedProfileId,
-                        child: Text(profile.displayName),
-                      ),
-                    ),
-                ],
-          child: ConstrainedBox(
-            key: _triggerKey,
-            constraints: const BoxConstraints(
-              minWidth: TdSizing.minimumTouchTarget,
-              minHeight: TdSizing.minimumTouchTarget,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // This must remain a sibling of the excluding trigger semantics: an
+        // announcement inside that node would be hidden from assistive tech.
+        if (_removalError != null)
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              _removalError!,
+              style: TdTypography.bodyLarge.copyWith(
+                color: context.tdTheme.textSecondary,
+              ),
             ),
-            child: DecoratedBox(
-              key: const ValueKey('server-catalog-trigger'),
-              decoration: const BoxDecoration(),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.storage_outlined),
-                  const SizedBox(width: TdSpacing.inline),
-                  Flexible(
-                    child: Text(
-                      state.selectedProfile?.displayName ??
-                          'No server selected',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+          ),
+        Semantics(
+          container: true,
+          excludeSemantics: true,
+          label: label,
+          button: true,
+          child: DecoratedBox(
+            key: const ValueKey('server-catalog-focus-ring'),
+            decoration: BoxDecoration(
+              border: _triggerFocused
+                  ? Border.all(
+                      color: context.tdTheme.actionFocusOnSurface,
+                      width: _focusRingThickness,
+                    )
+                  : null,
+            ),
+            child: PopupMenuButton<_ServerMenuAction>(
+              tooltip: label,
+              enabled: _removingProfileId == null,
+              requestFocus: false,
+              constraints: const BoxConstraints(
+                minWidth: _serverMenuMinimumWidth,
+              ),
+              // PopupMenuButton restores focus to its InkWell trigger when
+              // the route closes. Keeping that one native focus target avoids
+              // a second, wrapper-only stop in the Tab order.
+              onCanceled: () {},
+              onSelected: (action) {
+                // The controller contains storage failures so this callback never
+                // leaves an unhandled Future behind.
+                switch (action) {
+                  case _SelectProfileAction(:final profileId):
+                    unawaited(
+                      ref
+                          .read(serverProfilesControllerProvider.notifier)
+                          .select(profileId),
+                    );
+                  case _ForgetProfileAction(:final profileId):
+                    unawaited(_forget(profileId));
+                }
+              },
+              itemBuilder: (context) => empty
+                  ? const [
+                      PopupMenuItem<_ServerMenuAction>(
+                        enabled: false,
+                        height: TdSizing.minimumTouchTarget,
+                        child: Text('No servers in this session catalog.'),
+                      ),
+                    ]
+                  : [
+                      for (final profile in state.profiles) ...[
+                        PopupMenuItem<_ServerMenuAction>(
+                          value: _SelectProfileAction(profile.id),
+                          height: TdSizing.minimumTouchTarget,
+                          child: Semantics(
+                            selected: profile.id == state.selectedProfileId,
+                            child: Text(profile.displayName),
+                          ),
+                        ),
+                        PopupMenuItem<_ServerMenuAction>(
+                          key: Key('forget-profile-${profile.id}'),
+                          value: _ForgetProfileAction(profile.id),
+                          enabled: _removingProfileId == null,
+                          height: TdSizing.minimumTouchTarget,
+                          child: Text('Forget ${profile.displayName}'),
+                        ),
+                      ],
+                    ],
+              child: ConstrainedBox(
+                key: _triggerKey,
+                constraints: const BoxConstraints(
+                  minWidth: TdSizing.minimumTouchTarget,
+                  minHeight: TdSizing.minimumTouchTarget,
+                ),
+                child: DecoratedBox(
+                  key: const ValueKey('server-catalog-trigger'),
+                  decoration: const BoxDecoration(),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.storage_outlined),
+                      const SizedBox(width: TdSpacing.inline),
+                      Flexible(
+                        child: Text(
+                          state.selectedProfile?.displayName ??
+                              'No server selected',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
                   ),
-                  const Icon(Icons.arrow_drop_down),
-                ],
+                ),
               ),
             ),
           ),
         ),
-      ),
+      ],
     );
   }
+}
+
+sealed class _ServerMenuAction {
+  const _ServerMenuAction();
+}
+
+final class _SelectProfileAction extends _ServerMenuAction {
+  const _SelectProfileAction(this.profileId);
+  final String profileId;
+}
+
+final class _ForgetProfileAction extends _ServerMenuAction {
+  const _ForgetProfileAction(this.profileId);
+  final String profileId;
 }
