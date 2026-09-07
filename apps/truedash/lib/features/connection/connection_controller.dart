@@ -32,12 +32,14 @@ final sessionRepositoryFactoryProvider = Provider<SessionRepositoryFactory>(
 );
 
 /// Retained as the normal public-certificate repository seam used by M0.
-final sessionRepositoryProvider = Provider<SessionRepository>(
-  (ref) => ref.watch(sessionRepositoryFactoryProvider)(
+final sessionRepositoryProvider = Provider<SessionRepository>((ref) {
+  final repository = ref.watch(sessionRepositoryFactoryProvider)(
     connector: ref.watch(rpcConnectorProvider),
     credentialVault: ref.watch(credentialVaultProvider),
-  ),
-);
+  );
+  ref.onDispose(repository.close);
+  return repository;
+});
 
 final connectionControllerProvider =
     NotifierProvider<ConnectionController, ConnectionState>(
@@ -58,14 +60,10 @@ final class ConnectionController extends Notifier<ConnectionState> {
     ref.onDispose(() {
       _disposed = true;
       _generation++;
-      final normal = _normalRepository;
       final verified = _verifiedRepository;
       _normalRepository = null;
       _verifiedRepository = null;
-      _closeSafely(normal);
-      if (verified != null && !identical(verified, normal)) {
-        _closeSafely(verified);
-      }
+      _closeSafely(verified);
     });
     return const ConnectionIdle();
   }
@@ -386,15 +384,15 @@ final class ConnectionController extends Notifier<ConnectionState> {
           await _closeSafely(displaced);
         }
       }
+      final profiles = ref.read(serverProfilesControllerProvider.notifier);
       if (!_current(generation)) return;
-      ref
-          .read(serverProfilesControllerProvider.notifier)
-          .registerAndSelect(
-            ServerProfile.fromSafeSummary(
-              id: 'profile-${++_nextProfileId}',
-              summary: summary,
-            ),
-          );
+      profiles.registerAndSelect(
+        ServerProfile.fromSafeSummary(
+          id: 'profile-${++_nextProfileId}',
+          summary: summary,
+        ),
+      );
+      if (!_current(generation)) return;
       _busy = false;
       state = ConnectionSucceeded(summary);
     } catch (error) {

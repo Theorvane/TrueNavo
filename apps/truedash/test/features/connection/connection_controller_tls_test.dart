@@ -1523,21 +1523,50 @@ void main() {
     },
   );
 
+  test('production normal provider owns a stale repository disposed during composition', () async {
+    final repository = _Repository();
+    late ProviderContainer container;
+    container = ProviderContainer(
+      overrides: [
+        tlsTrustRouteProvider.overrideWithValue(
+          TlsTrustRoute.platformValidated,
+        ),
+        sessionRepositoryFactoryProvider.overrideWithValue(({
+          required connector,
+          required credentialVault,
+        }) {
+          container.invalidate(connectionControllerProvider);
+          return repository;
+        }),
+      ],
+    );
+    final controller = container.read(connectionControllerProvider.notifier);
+
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+    );
+
+    expect(repository.apiKeys, isEmpty);
+    expect(container.read(serverProfilesControllerProvider).profiles, isEmpty);
+    expect(container.read(connectionControllerProvider), isA<ConnectionIdle>());
+    expect(repository.closeCalls, 0);
+    container.dispose();
+    expect(repository.closeCalls, 1);
+  });
+
   test(
-    'normal provider disposal cannot hand a key to stale authentication',
+    'production normal provider closes a successful repository exactly once',
     () async {
       final repository = _Repository();
-      late ProviderContainer container;
-      container = ProviderContainer(
+      final container = ProviderContainer(
         overrides: [
           tlsTrustRouteProvider.overrideWithValue(
             TlsTrustRoute.platformValidated,
           ),
-          sessionRepositoryProvider.overrideWith((ref) {
-            ref.onDispose(repository.close);
-            container.invalidate(connectionControllerProvider);
-            return repository;
-          }),
+          sessionRepositoryFactoryProvider.overrideWithValue(
+            ({required connector, required credentialVault}) => repository,
+          ),
         ],
       );
       final controller = container.read(connectionControllerProvider.notifier);
@@ -1547,7 +1576,40 @@ void main() {
         apiKey: _sentinel,
       );
 
-      expect(repository.apiKeys, isEmpty);
+      expect(
+        container.read(connectionControllerProvider),
+        isA<ConnectionSucceeded>(),
+      );
+      expect(repository.apiKeys, [_sentinel]);
+      expect(repository.closeCalls, 0);
+      container.dispose();
+      expect(repository.closeCalls, 1);
+    },
+  );
+
+  test(
+    'profile provider initialization cannot publish a stale profile or success',
+    () async {
+      final repository = _Repository();
+      final observer = _InvalidateConnectionOnFirstProfileProviderAdd();
+      final container = ProviderContainer(
+        observers: [observer],
+        overrides: [
+          tlsTrustRouteProvider.overrideWithValue(
+            TlsTrustRoute.platformValidated,
+          ),
+          sessionRepositoryFactoryProvider.overrideWithValue(
+            ({required connector, required credentialVault}) => repository,
+          ),
+        ],
+      );
+
+      await container
+          .read(connectionControllerProvider.notifier)
+          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+
+      expect(observer.didInvalidate, isTrue);
+      expect(repository.apiKeys, [_sentinel]);
       expect(
         container.read(serverProfilesControllerProvider).profiles,
         isEmpty,
@@ -1561,6 +1623,20 @@ void main() {
       expect(repository.closeCalls, 1);
     },
   );
+}
+
+final class _InvalidateConnectionOnFirstProfileProviderAdd
+    extends ProviderObserver {
+  var didInvalidate = false;
+
+  @override
+  void didAddProvider(ProviderObserverContext context, Object? value) {
+    if (didInvalidate || context.provider != serverProfilesControllerProvider) {
+      return;
+    }
+    didInvalidate = true;
+    context.container.invalidate(connectionControllerProvider);
+  }
 }
 
 CertificateTrustCoordinator _coordinator({
