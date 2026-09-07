@@ -1483,6 +1483,84 @@ void main() {
       expect(events.where((event) => event == 'probe'), hasLength(2));
     },
   );
+
+  test(
+    'factory-triggered disposal cannot hand a key to stale authentication',
+    () async {
+      final authority = NormalizedAuthority.parse('https://nas.example');
+      final transport = _CountingTransport();
+      late _Repository repository;
+      late ProviderContainer container;
+      container = _nativeContainer(
+        store: InMemoryPinStore(),
+        probe: _Probe(_certificate(authority)),
+        connector: _Connector(NativePinnedVerified(transport)),
+        factory: ({required connector, required credentialVault}) {
+          container.invalidate(connectionControllerProvider);
+          return repository = _Repository(connector: connector, consume: false);
+        },
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionControllerProvider.notifier);
+
+      await controller.connect(
+        serverInput: 'https://nas.example',
+        apiKey: _sentinel,
+      );
+      await controller.approveTrust(apiKey: _sentinel);
+
+      expect(repository.apiKeys, isEmpty);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+      expect(
+        container.read(connectionControllerProvider),
+        isA<ConnectionIdle>(),
+      );
+      expect(transport.closeCalls, 1);
+      expect(repository.closeCalls, 1);
+    },
+  );
+
+  test(
+    'normal provider disposal cannot hand a key to stale authentication',
+    () async {
+      final repository = _Repository();
+      late ProviderContainer container;
+      container = ProviderContainer(
+        overrides: [
+          tlsTrustRouteProvider.overrideWithValue(
+            TlsTrustRoute.platformValidated,
+          ),
+          sessionRepositoryProvider.overrideWith((ref) {
+            ref.onDispose(repository.close);
+            container.invalidate(connectionControllerProvider);
+            return repository;
+          }),
+        ],
+      );
+      final controller = container.read(connectionControllerProvider.notifier);
+
+      await controller.connect(
+        serverInput: 'https://nas.example',
+        apiKey: _sentinel,
+      );
+
+      expect(repository.apiKeys, isEmpty);
+      expect(
+        container.read(serverProfilesControllerProvider).profiles,
+        isEmpty,
+      );
+      expect(
+        container.read(connectionControllerProvider),
+        isA<ConnectionIdle>(),
+      );
+      expect(repository.closeCalls, 0);
+      container.dispose();
+      expect(repository.closeCalls, 1);
+    },
+  );
 }
 
 CertificateTrustCoordinator _coordinator({

@@ -349,6 +349,14 @@ final class ConnectionController extends Notifier<ConnectionState> {
     Future<void> Function()? discardUnconsumed,
     _OneShotVerifiedConnector? verifiedConnector,
   }) async {
+    // Factory/provider reads may synchronously dispose this controller. Keep
+    // this immediately before the key handoff so every authentication path is
+    // protected after its final synchronous dependency read.
+    if (!_current(generation)) {
+      await discardUnconsumed?.call();
+      if (closeOnFailure) await _closeSafely(repository);
+      return;
+    }
     try {
       final summary = await repository.connect(
         serverInput: serverInput,
@@ -405,7 +413,7 @@ final class ConnectionController extends Notifier<ConnectionState> {
   }) async {
     final SessionRepository repository;
     try {
-      repository = _normal();
+      repository = _normal(generation);
     } catch (_) {
       if (_current(generation)) {
         _busy = false;
@@ -527,11 +535,11 @@ final class ConnectionController extends Notifier<ConnectionState> {
     return true;
   }
 
-  SessionRepository _normal() {
+  SessionRepository _normal(int generation) {
     final existing = _normalRepository;
     if (existing != null) return existing;
     final repository = ref.read(sessionRepositoryProvider);
-    _normalRepository = repository;
+    if (_current(generation)) _normalRepository = repository;
     return repository;
   }
 
