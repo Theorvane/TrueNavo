@@ -230,8 +230,10 @@ void main() {
         _expectServerFocusRing(tester);
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pumpAndSettle();
-        final items = find.byType(PopupMenuItem<String>);
-        expect(items, findsNWidgets(2));
+        final items = find.byWidgetPredicate(
+          (widget) => widget is PopupMenuItem,
+        );
+        expect(items, findsNWidgets(4));
         for (final item in items.evaluate()) {
           final box = item.renderObject! as RenderBox;
           expect(box.size.width, greaterThanOrEqualTo(44));

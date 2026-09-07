@@ -1,9 +1,11 @@
 import 'dart:async';
 
+export '../credentials/credential_vault_provider.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truenas_api/truenas_api.dart';
 
-import '../credentials/secure_credential_vault.dart';
+import '../credentials/credential_vault_provider.dart';
 import '../local_persistence/persistence_failure.dart';
 import '../server_profiles/server_profile.dart';
 import '../server_profiles/server_profiles_controller.dart';
@@ -15,10 +17,6 @@ import 'connection_state.dart';
 
 final rpcConnectorProvider = Provider<RpcConnector>(
   (ref) => const WebSocketRpcConnector(),
-);
-
-final credentialVaultProvider = Provider<CredentialVault>(
-  (ref) => createSecureCredentialVault(),
 );
 
 /// UTC seam for capability-cache expiry. Bootstrap uses the real UTC clock.
@@ -92,7 +90,7 @@ final connectionControllerProvider =
       ConnectionController.new,
     );
 
-final class ConnectionController extends Notifier<ConnectionState> {
+class ConnectionController extends Notifier<ConnectionState> {
   SessionRepository? _verifiedRepository;
   var _nextProfileId = 0;
   var _generation = 0;
