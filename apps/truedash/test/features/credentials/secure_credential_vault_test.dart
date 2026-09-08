@@ -29,6 +29,7 @@ void main() {
       final connecting = repository.connect(
         serverInput: 'https://vault-unit.example:8443',
         apiKey: 'replacement-key',
+        username: 'test-account',
         rememberApiKey: true,
         isConnectionCurrent: () {
           if (!port.hasWritten) return true;

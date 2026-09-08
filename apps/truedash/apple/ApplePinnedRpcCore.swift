@@ -21,7 +21,9 @@ struct ApplePinnedRpcDebugFixture {
 /// transport and a transport is created fresh for each connect request.
 final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate {
   static let protocolVersion = 1
-  static let maximumFrameBytes = 1024 * 1024
+  // A real TrueNAS `core.get_methods` reply is several megabytes. This stays a
+  // hard bound; an oversized frame closes the session rather than buffering.
+  static let maximumFrameBytes = 16 * 1024 * 1024
   private let queue = DispatchQueue(label: "com.truedash.pinned-rpc")
   private let now: () -> Date
   private var operations: [String: Operation] = [:]
@@ -191,7 +193,12 @@ final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessio
         leafDER: leafData,
         verifyDate: verifyDate
       ) {
-        let policy = SecPolicyCreateSSL(true, operation.request.host as CFString)
+        // A pinned connection's identity is the exact leaf the user approved
+        // for this authority, the way an SSH known-hosts entry works, so a
+        // certificate that does not name the address is not by itself a reason
+        // to refuse; the approval screen says so before any pin is written.
+        // Chain, protocol, and validity policy still apply.
+        let policy = SecPolicyCreateSSL(true, nil)
         SecTrustSetPolicies(trust, policy)
         SecTrustSetAnchorCertificates(trust, [leaf] as CFArray)
         SecTrustSetAnchorCertificatesOnly(trust, true)

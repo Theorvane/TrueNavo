@@ -116,9 +116,15 @@ void main() {
         'https://nas.example',
       );
       await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
+      await tester.enterText(
         find.byKey(const Key('api-key-field')),
         'test-api-key',
       );
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
 
@@ -162,6 +168,7 @@ final class _SuccessRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async => ServerSummary(

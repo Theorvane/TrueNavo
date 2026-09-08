@@ -47,6 +47,7 @@ void main() {
           .connect(
             serverInput: 'https://nas.example',
             apiKey: _sentinel,
+            username: 'test-account',
             rememberApiKey: true,
           );
 
@@ -63,7 +64,11 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .approveTrust(apiKey: _sentinel, rememberApiKey: true);
+          .approveTrust(
+            apiKey: _sentinel,
+            username: 'test-account',
+            rememberApiKey: true,
+          );
 
       expect(verifiedRepository.apiKeys, [_sentinel]);
       expect(verifiedRepository.rememberApiKeyIntents, [true]);
@@ -86,6 +91,7 @@ void main() {
         probe: _Probe(
           NativeProbeCertificate(
             PresentedCertificate(
+              namesAuthority: true,
               authority: authority,
               platformTrust: PlatformTrust.didNotPass,
               facts: CertificateFacts(
@@ -117,13 +123,17 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
       final review = container.read(
         connectionControllerProvider,
       ) as ConnectionFirstTrustReview;
       await container
           .read(connectionControllerProvider.notifier)
-          .approveTrust(apiKey: _sentinel);
+          .approveTrust(apiKey: _sentinel, username: 'test-account');
 
       final blocked = container.read(connectionControllerProvider);
       expect(blocked, isA<ConnectionTrustBlocked>());
@@ -136,6 +146,7 @@ void main() {
     'review state exposes only display-safe current and previous digests',
     () async {
       final certificate = TrustReviewCertificate(
+        namesAuthority: true,
         subjectSummary: 'nas.example',
         issuerSummary: 'issuer',
         leafDerSha256: _digest,
@@ -170,6 +181,7 @@ void main() {
           .connect(
             serverInput: 'https://nas.example',
             apiKey: _sentinel,
+            username: 'test-account',
             rememberApiKey: true,
           );
 
@@ -200,7 +212,11 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
 
       expect(
         container.read(connectionControllerProvider),
@@ -231,12 +247,17 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFirstTrustReview>(),
       );
-      await controller.connect(serverInput: 'not a server', apiKey: _sentinel);
+      await controller.connect(
+        serverInput: 'not a server',
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFailed>(),
@@ -244,6 +265,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
 
       expect(
@@ -279,8 +301,12 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
-      await controller.approveTrust(apiKey: _sentinel);
+      await controller.approveTrust(
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
 
       expect(
         container.read(connectionControllerProvider),
@@ -322,7 +348,11 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
 
       expect(
         container.read(connectionControllerProvider),
@@ -352,7 +382,11 @@ void main() {
 
     await container
         .read(connectionControllerProvider.notifier)
-        .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+        .connect(
+          serverInput: 'https://nas.example',
+          apiKey: _sentinel,
+          username: 'test-account',
+        );
 
     expect(repository.apiKeys, [_sentinel]);
     expect(
@@ -387,7 +421,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFirstTrustReview>(),
@@ -425,6 +463,7 @@ void main() {
           .connect(
             serverInput: 'https://nas.example',
             apiKey: _sentinel,
+            username: 'test-account',
             rememberApiKey: true,
           );
       final connectedRepository = repository;
@@ -465,7 +504,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
       final review = container.read(
         connectionControllerProvider,
       ) as ConnectionReplacementTrustReview;
@@ -502,6 +545,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       final review = container.read(
         connectionControllerProvider,
@@ -510,7 +554,11 @@ void main() {
       expect(review.certificate.leafDerSha256, _digest);
       expect(repository, isNull);
 
-      await controller.approveTrust(apiKey: _sentinel, rememberApiKey: true);
+      await controller.approveTrust(
+        apiKey: _sentinel,
+        username: 'test-account',
+        rememberApiKey: true,
+      );
 
       expect(repository!.apiKeys, [_sentinel]);
       expect(repository!.rememberApiKeyIntents, [true]);
@@ -566,6 +614,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(
         container.read(connectionControllerProvider),
@@ -580,6 +629,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(
         container.read(connectionControllerProvider),
@@ -605,10 +655,14 @@ void main() {
           );
           await container
               .read(connectionControllerProvider.notifier)
-              .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+              .connect(
+                serverInput: 'https://nas.example',
+                apiKey: _sentinel,
+                username: 'test-account',
+              );
           await container
               .read(connectionControllerProvider.notifier)
-              .approveTrust(apiKey: _sentinel);
+              .approveTrust(apiKey: _sentinel, username: 'test-account');
           container.dispose();
         },
         (vault) async {
@@ -624,7 +678,11 @@ void main() {
           );
           await container
               .read(connectionControllerProvider.notifier)
-              .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+              .connect(
+                serverInput: 'https://nas.example',
+                apiKey: _sentinel,
+                username: 'test-account',
+              );
           container.dispose();
         },
         (vault) async {
@@ -647,8 +705,12 @@ void main() {
           await controller.connect(
             serverInput: 'https://nas.example',
             apiKey: _sentinel,
+            username: 'test-account',
           );
-          await controller.approveTrust(apiKey: _sentinel);
+          await controller.approveTrust(
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
           container.dispose();
         },
         (vault) async {
@@ -661,7 +723,11 @@ void main() {
           );
           await container
               .read(connectionControllerProvider.notifier)
-              .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+              .connect(
+                serverInput: 'https://nas.example',
+                apiKey: _sentinel,
+                username: 'test-account',
+              );
           container.dispose();
         },
         (vault) async {
@@ -676,7 +742,11 @@ void main() {
           );
           await container
               .read(connectionControllerProvider.notifier)
-              .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+              .connect(
+                serverInput: 'https://nas.example',
+                apiKey: _sentinel,
+                username: 'test-account',
+              );
           container.dispose();
         },
       ];
@@ -707,8 +777,12 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
-    final approving = controller.approveTrust(apiKey: _sentinel);
+    final approving = controller.approveTrust(
+      apiKey: _sentinel,
+      username: 'test-account',
+    );
     final repository = await repositoryReady.future;
     await repository.started.future;
     container.invalidate(connectionControllerProvider);
@@ -736,7 +810,11 @@ void main() {
       addTearDown(container.dispose);
       final connecting = container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
 
       await connector.started.future;
       container.invalidate(connectionControllerProvider);
@@ -772,8 +850,12 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
-    final approving = controller.approveTrust(apiKey: _sentinel);
+    final approving = controller.approveTrust(
+      apiKey: _sentinel,
+      username: 'test-account',
+    );
 
     await connector.started.future;
     container.invalidate(connectionControllerProvider);
@@ -803,10 +885,14 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     await controller.cancelTrust();
     await _seed(store, authority, _digest);
-    final retrying = controller.retryTrust(apiKey: _sentinel);
+    final retrying = controller.retryTrust(
+      apiKey: _sentinel,
+      username: 'test-account',
+    );
 
     await connector.started.future;
     container.invalidate(connectionControllerProvider);
@@ -838,11 +924,13 @@ void main() {
       await controller.connect(
         serverInput: 'https://old.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
 
       final switching = controller.connect(
         serverInput: 'https://new.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       container.invalidate(connectionControllerProvider);
       await switching;
@@ -895,6 +983,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://first.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     expect(
       container.read(serverProfilesControllerProvider).profiles,
@@ -904,6 +993,7 @@ void main() {
     final second = controller.connect(
       serverInput: 'https://second.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     await firstRepository.closeStarted.future;
     container.invalidate(connectionControllerProvider);
@@ -940,6 +1030,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(
         container.read(connectionControllerProvider),
@@ -950,6 +1041,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(
         container.read(connectionControllerProvider),
@@ -979,7 +1071,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
       expect(repository.apiKeys, [_sentinel]);
       expect(
         events.indexOf('cancel'),
@@ -1012,12 +1108,14 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       route = TlsTrustRoute.browserManaged;
       container.invalidate(tlsTrustRouteProvider);
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(
         container.read(connectionControllerProvider),
@@ -1028,6 +1126,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       expect(repository.apiKeys, [_sentinel]);
     },
@@ -1049,6 +1148,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       final review = container.read(
         connectionControllerProvider,
@@ -1076,8 +1176,9 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
-    await controller.approveTrust(apiKey: _sentinel);
+    await controller.approveTrust(apiKey: _sentinel, username: 'test-account');
     expect(
       container.read(connectionControllerProvider),
       isA<ConnectionTrustBlocked>(),
@@ -1099,6 +1200,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     await controller.cancelTrust();
     final blocked =
@@ -1106,7 +1208,7 @@ void main() {
     expect(blocked.failure, CertificateTrustCoordinatorFailure.cancelled);
     await _seed(store, authority, _digest);
 
-    await controller.retryTrust();
+    await controller.retryTrust(username: 'test-account');
 
     final retried = container.read(connectionControllerProvider);
     expect(
@@ -1135,11 +1237,12 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     await controller.cancelTrust();
     await _seed(store, authority, _digest);
 
-    await controller.retryTrust();
+    await controller.retryTrust(username: 'test-account');
 
     expect(
       container.read(connectionControllerProvider),
@@ -1150,7 +1253,11 @@ void main() {
       ),
     );
     expect(transport.closeCalls, 1);
-    await controller.connect(serverInput: 'not a server', apiKey: _sentinel);
+    await controller.connect(
+      serverInput: 'not a server',
+      apiKey: _sentinel,
+      username: 'test-account',
+    );
     expect(
       container.read(connectionControllerProvider),
       isA<ConnectionFailed>(),
@@ -1174,8 +1281,12 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
-      await controller.approveTrust(apiKey: _sentinel);
+      await controller.approveTrust(
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFailed>(),
@@ -1202,8 +1313,13 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
-      await controller.approveTrust(apiKey: _sentinel, rememberApiKey: true);
+      await controller.approveTrust(
+        apiKey: _sentinel,
+        username: 'test-account',
+        rememberApiKey: true,
+      );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFailed>(),
@@ -1236,6 +1352,7 @@ void main() {
           .connect(
             serverInput: 'https://nas.example',
             apiKey: _sentinel,
+            username: 'test-account',
             rememberApiKey: true,
           );
       expect(
@@ -1270,6 +1387,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     throwCoordinator = true;
     container.invalidate(certificateTrustCoordinatorProvider);
@@ -1285,6 +1403,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     expect(
       container.read(connectionControllerProvider),
@@ -1318,11 +1437,12 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     await controller.cancelTrust();
     throwCoordinator = true;
     container.invalidate(certificateTrustCoordinatorProvider);
-    await controller.retryTrust();
+    await controller.retryTrust(username: 'test-account');
     expect(
       container.read(connectionControllerProvider),
       isA<ConnectionFailed>(),
@@ -1334,6 +1454,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     expect(
       container.read(connectionControllerProvider),
@@ -1357,10 +1478,12 @@ void main() {
       final first = controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       final second = controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       await Future<void>.delayed(Duration.zero);
       expect(probe.calls, 1);
@@ -1387,12 +1510,13 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     final first = container.read(
       connectionControllerProvider,
     ) as ConnectionFirstTrustReview;
     await controller.cancelTrust();
-    await controller.retryTrust();
+    await controller.retryTrust(username: 'test-account');
     final fresh = container.read(
       connectionControllerProvider,
     ) as ConnectionFirstTrustReview;
@@ -1424,8 +1548,12 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
-      await controller.approveTrust(apiKey: _sentinel);
+      await controller.approveTrust(
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
       expect(
         container.read(connectionControllerProvider),
         isA<ConnectionFailed>(),
@@ -1455,8 +1583,9 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
-    await controller.approveTrust(apiKey: _sentinel);
+    await controller.approveTrust(apiKey: _sentinel, username: 'test-account');
     expect(
       container.read(connectionControllerProvider),
       isA<ConnectionSucceeded>(),
@@ -1491,6 +1620,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://old.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       final old = container.read(
         connectionControllerProvider,
@@ -1498,6 +1628,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://new.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       final replacement = container.read(
         connectionControllerProvider,
@@ -1530,8 +1661,12 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
-      await controller.approveTrust(apiKey: _sentinel);
+      await controller.approveTrust(
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
 
       expect(repository.apiKeys, isEmpty);
       expect(
@@ -1569,6 +1704,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
 
     expect(repository.apiKeys, isEmpty);
@@ -1598,6 +1734,7 @@ void main() {
       await controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
 
       expect(
@@ -1634,6 +1771,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     expect(
       container.read(connectionControllerProvider),
@@ -1648,6 +1786,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
 
     expect(factoryCalls, 2);
@@ -1686,6 +1825,7 @@ void main() {
       final connecting = controller.connect(
         serverInput: 'https://nas.example',
         apiKey: _sentinel,
+        username: 'test-account',
       );
       await first.started.future;
       expect(first.apiKeys, [_sentinel]);
@@ -1736,6 +1876,7 @@ void main() {
     final connecting = controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
     await first.started.future;
     container.invalidate(sessionRepositoryProvider);
@@ -1762,6 +1903,7 @@ void main() {
     await controller.connect(
       serverInput: 'https://nas.example',
       apiKey: _sentinel,
+      username: 'test-account',
     );
 
     expect(
@@ -1816,7 +1958,11 @@ void main() {
 
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: _sentinel);
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: _sentinel,
+            username: 'test-account',
+          );
 
       expect(observer.didInvalidate, isTrue);
       expect(repository.apiKeys, [_sentinel]);
@@ -1858,6 +2004,7 @@ CertificateTrustCoordinator _coordinator({
   probe: _Probe(
     NativeProbeCertificate(
       PresentedCertificate(
+        namesAuthority: true,
         authority: authority,
         platformTrust: platformTrust,
         facts: CertificateFacts(
@@ -2039,6 +2186,7 @@ class _Repository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async {
@@ -2072,6 +2220,7 @@ final class _PendingRepository extends _Repository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) {
@@ -2113,6 +2262,7 @@ final class _DelayedRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async {
@@ -2153,6 +2303,7 @@ final class _HeldCloseRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async {
@@ -2183,6 +2334,7 @@ NativeProbeCertificate _certificate(
   PlatformTrust trust = PlatformTrust.didNotPass,
 ]) => NativeProbeCertificate(
   PresentedCertificate(
+    namesAuthority: true,
     authority: authority,
     platformTrust: trust,
     facts: CertificateFacts(

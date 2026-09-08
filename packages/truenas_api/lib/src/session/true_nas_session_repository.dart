@@ -11,6 +11,7 @@ abstract interface class SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   });
@@ -36,10 +37,14 @@ final class TrueNasSessionRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async {
     final endpoint = ValidatedEndpoint.parse(serverInput);
+    // `auth.login_ex` binds an API key to the account that owns it, so the
+    // account name is part of the credential, not an optional hint.
+    final account = validateTrueNasAccountName(username);
     RpcTransport? connectedTransport;
     JsonRpcClient? client;
     try {
@@ -64,7 +69,11 @@ final class TrueNasSessionRepository implements SessionRepository {
         'auth.login_ex',
         id: _id(),
         params: [
-          <String, Object?>{'mechanism': 'API_KEY_PLAIN', 'api_key': key},
+          <String, Object?>{
+            'mechanism': 'API_KEY_PLAIN',
+            'username': account,
+            'api_key': key,
+          },
         ],
       );
       _requireSuccess(login);
@@ -175,7 +184,12 @@ final class TrueNasSessionRepository implements SessionRepository {
   String _id() => 'm0-${++_nextId}';
 
   void _requireSuccess(Object? response) {
-    final state = response is Map ? response['state'] : response;
+    // TrueNAS 25.10 names this field `response_type`; older middleware used
+    // `state`. Read whichever the server actually sent, and never treat an
+    // unrecognized shape as success.
+    final state = response is Map
+        ? response['response_type'] ?? response['state']
+        : response;
     if (state == 'SUCCESS') return;
     throw AuthenticationStateException(switch (state) {
       'OTP_REQUIRED' => AuthenticationState.otpRequired,

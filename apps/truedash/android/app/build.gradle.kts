@@ -27,11 +27,23 @@ android {
         versionName = flutter.versionName
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+}
+
+dependencies {
+    // The TLS trust bridge needs a WebSocket client whose TLS trust manager and
+    // hostname policy are replaceable before the HTTP upgrade.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 flutter {

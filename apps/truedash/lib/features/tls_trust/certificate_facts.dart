@@ -43,20 +43,27 @@ final class NativePresentedLeaf {
 
 /// A display-safe certificate candidate. It deliberately has no DER field.
 ///
-/// `notAvailable` is used only by non-Apple/test adapters which did not
-/// evaluate platform trust. Apple capture always reports a measured result.
+/// `notAvailable` is used only by test adapters which did not
+/// evaluate platform trust. Native capture always reports a measured result.
 enum PlatformTrust { passed, didNotPass, notAvailable }
 
 final class PresentedCertificate {
   const PresentedCertificate({
     required this.authority,
     required this.facts,
+    required this.namesAuthority,
     this.platformTrust = PlatformTrust.notAvailable,
   });
 
   final NormalizedAuthority authority;
   final CertificateFacts facts;
   final PlatformTrust platformTrust;
+
+  /// Whether the leaf actually identifies [authority] through a supported SAN
+  /// or common name. A certificate that does not is still approvable, because
+  /// an exact-leaf pin is the identity this app commits to, but the review must
+  /// say so before anyone approves it.
+  final bool namesAuthority;
 
   String get groupedFingerprint => facts.leafDerSha256
       .replaceAllMapped(RegExp(r'.{4}'), (match) => '${match.group(0)} ')
@@ -132,12 +139,6 @@ final class CertificateFactsPolicy {
         CertificateTrustFailure.notYetValidCertificate,
       );
     }
-    if (!_matchesAuthority(authority, validation)) {
-      return CertificateProbeResult.failed(
-        CertificateTrustFailure.hostnameMismatch,
-      );
-    }
-
     final digest = sha256.convert(leaf.leafDer).toString().toUpperCase();
     final subject = validation.hasSubjectAlternativeNames
         ? _sanSummary(validation)
@@ -146,6 +147,7 @@ final class CertificateFactsPolicy {
       PresentedCertificate(
         authority: authority,
         platformTrust: platformTrust,
+        namesAuthority: _matchesAuthority(authority, validation),
         facts: CertificateFacts(
           subjectSummary: subject,
           issuerSummary: validation.issuer,

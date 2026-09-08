@@ -19,6 +19,7 @@ class ConnectionScreen extends ConsumerStatefulWidget {
 
 class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
   final _url = TextEditingController();
+  final _username = TextEditingController();
   final _apiKey = TextEditingController();
   bool _showKey = false;
   bool _rememberApiKey = false;
@@ -26,6 +27,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
   @override
   void dispose() {
     _url.dispose();
+    _username.dispose();
     _apiKey.dispose();
     super.dispose();
   }
@@ -111,6 +113,15 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
         ),
         const SizedBox(height: TdSpacing.component),
         TdTextField(
+          label: 'User name',
+          fieldKey: const Key('username-field'),
+          controller: _username,
+          hintText: 'truenas_admin',
+          prefixIcon: Icons.person_outline,
+          enabled: !busy,
+        ),
+        const SizedBox(height: TdSpacing.component),
+        TdTextField(
           label: 'API key',
           fieldKey: const Key('api-key-field'),
           controller: _apiKey,
@@ -149,6 +160,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                     .connect(
                       serverInput: _url.text,
                       apiKey: _apiKey.text,
+                      username: _username.text,
                       rememberApiKey: !browserManaged && _rememberApiKey,
                     ),
         ),
@@ -161,6 +173,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                 .read(connectionControllerProvider.notifier)
                 .approveTrust(
                   apiKey: _apiKey.text,
+                  username: _username.text,
                   rememberApiKey: !browserManaged && _rememberApiKey,
                 ),
             onCancel: () =>
@@ -186,6 +199,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                       .read(connectionControllerProvider.notifier)
                       .retryTrust(
                         apiKey: _apiKey.text,
+                        username: _username.text,
                         rememberApiKey: !browserManaged && _rememberApiKey,
                       ),
           ),
@@ -279,6 +293,19 @@ class _TrustReviewPanel extends StatelessWidget {
               label: 'New fingerprint',
               value: certificate.leafDerSha256,
               fieldKey: const Key('new-fingerprint'),
+            ),
+          ],
+          if (!certificate.namesAuthority) ...[
+            const SizedBox(height: TdSpacing.related),
+            const TdStateView(
+              key: Key('hostname-mismatch-warning'),
+              kind: TdStateKind.error,
+              title: 'This certificate does not name this server address.',
+              description:
+                  'Only the fingerprint above identifies the server. Approve it '
+                  'only if you can confirm that fingerprint on the server '
+                  'itself.',
+              compact: true,
             ),
           ],
           const SizedBox(height: TdSpacing.related),

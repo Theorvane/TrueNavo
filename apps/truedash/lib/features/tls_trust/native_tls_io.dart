@@ -15,6 +15,10 @@ export 'der_x509_parser.dart' show parsePresentedLeafDer;
 
 const _protocolVersion = 1;
 const _maximumDerBytes = 64 * 1024;
+// A real TrueNAS `core.get_methods` reply is several megabytes, so a 1 MiB cap
+// closed every working session. This is still a hard bound, not an absence of
+// one: an oversized frame fails the transport closed rather than buffering.
+const _maximumFrameBytes = 16 * 1024 * 1024;
 const _captureMethod = 'truedash.capturePresentedLeaf';
 const _cancelMethod = 'truedash.cancelPresentedLeaf';
 const _pinnedConnectMethod = 'truedash.connectPinnedRpc';
@@ -23,13 +27,14 @@ const _pinnedSendMethod = 'truedash.sendPinnedRpc';
 const _pinnedReceiveMethod = 'truedash.receivePinnedRpc';
 const _pinnedCloseMethod = 'truedash.closePinnedRpc';
 
-/// The deliberately tiny bridge used by the Apple capture adapter.
-abstract interface class AppleTlsMethodChannel {
+/// The deliberately tiny bridge used by the native capture adapters.
+abstract interface class PresentedLeafProbeChannel {
   Future<Object?> invokeMethod(String method, Map<String, Object?> arguments);
 }
 
-final class _FlutterAppleTlsMethodChannel implements AppleTlsMethodChannel {
-  const _FlutterAppleTlsMethodChannel();
+final class _FlutterPresentedLeafProbeChannel
+    implements PresentedLeafProbeChannel {
+  const _FlutterPresentedLeafProbeChannel();
   static const _channel = MethodChannel('truedash.presented_leaf_probe.v1');
 
   @override
@@ -37,14 +42,13 @@ final class _FlutterAppleTlsMethodChannel implements AppleTlsMethodChannel {
       _channel.invokeMethod<Object?>(method, arguments);
 }
 
-/// The intentionally small, transport-only Apple reconnect bridge.
-abstract interface class ApplePinnedRpcMethodChannel {
+/// The intentionally small, transport-only native reconnect bridge.
+abstract interface class PinnedRpcChannel {
   Future<Object?> invokeMethod(String method, Map<String, Object?> arguments);
 }
 
-final class _FlutterApplePinnedRpcMethodChannel
-    implements ApplePinnedRpcMethodChannel {
-  const _FlutterApplePinnedRpcMethodChannel();
+final class _FlutterPinnedRpcChannel implements PinnedRpcChannel {
+  const _FlutterPinnedRpcChannel();
   static const _channel = MethodChannel('truedash.pinned_rpc.v1');
 
   @override
@@ -54,41 +58,47 @@ final class _FlutterApplePinnedRpcMethodChannel
 
 enum NativeTlsPlatform { apple, android, linux, windows, other }
 
-NativeCertificateProbe createProbe() {
-  final platform = Platform.isIOS || Platform.isMacOS
-      ? NativeTlsPlatform.apple
-      : NativeTlsPlatform.other;
-  return createProbeForNativeTlsPlatform(platform);
+/// The set of platforms whose runner registers the bridge channels.
+bool _hasNativeBridge(NativeTlsPlatform platform) =>
+    platform == NativeTlsPlatform.apple ||
+    platform == NativeTlsPlatform.android;
+
+NativeTlsPlatform currentNativeTlsPlatform() {
+  if (Platform.isIOS || Platform.isMacOS) return NativeTlsPlatform.apple;
+  if (Platform.isAndroid) return NativeTlsPlatform.android;
+  if (Platform.isLinux) return NativeTlsPlatform.linux;
+  if (Platform.isWindows) return NativeTlsPlatform.windows;
+  return NativeTlsPlatform.other;
 }
+
+NativeCertificateProbe createProbe() =>
+    createProbeForNativeTlsPlatform(currentNativeTlsPlatform());
 
 NativeCertificateProbe createProbeForNativeTlsPlatform(
   NativeTlsPlatform platform, {
-  AppleTlsMethodChannel? appleChannel,
+  PresentedLeafProbeChannel? probeChannel,
   DateTime Function()? now,
 }) {
-  if (platform != NativeTlsPlatform.apple) return _UnavailableProbe();
+  if (!_hasNativeBridge(platform)) return _UnavailableProbe();
   return BoundedNativeTlsPorts(
-    backend: ApplePresentedLeafProbeBackend(
-      channel: appleChannel ?? const _FlutterAppleTlsMethodChannel(),
+    backend: PresentedLeafProbeBackend(
+      channel: probeChannel ?? const _FlutterPresentedLeafProbeChannel(),
       now: now ?? DateTime.now,
     ),
   );
 }
 
-PinnedRpcConnector createReconnect() => createReconnectForNativeTlsPlatform(
-  Platform.isIOS || Platform.isMacOS
-      ? NativeTlsPlatform.apple
-      : NativeTlsPlatform.other,
-);
+PinnedRpcConnector createReconnect() =>
+    createReconnectForNativeTlsPlatform(currentNativeTlsPlatform());
 
 PinnedRpcConnector createReconnectForNativeTlsPlatform(
   NativeTlsPlatform platform, {
-  ApplePinnedRpcMethodChannel? appleChannel,
+  PinnedRpcChannel? probeChannel,
 }) {
-  if (platform != NativeTlsPlatform.apple) return _UnavailableReconnect();
+  if (!_hasNativeBridge(platform)) return _UnavailableReconnect();
   return BoundedNativeTlsPorts(
-    backend: ApplePinnedRpcBackend(
-      channel: appleChannel ?? const _FlutterApplePinnedRpcMethodChannel(),
+    backend: PinnedRpcBackend(
+      channel: probeChannel ?? const _FlutterPinnedRpcChannel(),
     ),
   );
 }
@@ -130,14 +140,14 @@ final class _UnavailableReconnect implements PinnedRpcConnector {
   }
 }
 
-/// Apple-only, capture-only backend. It intentionally has no reconnect path.
-final class ApplePresentedLeafProbeBackend implements NativeTlsAttemptBackend {
-  ApplePresentedLeafProbeBackend({
+/// Native, capture-only backend. It intentionally has no reconnect path.
+final class PresentedLeafProbeBackend implements NativeTlsAttemptBackend {
+  PresentedLeafProbeBackend({
     required this._channel,
     required DateTime Function() now,
   }) : _policy = CertificateFactsPolicy(now: now);
 
-  final AppleTlsMethodChannel _channel;
+  final PresentedLeafProbeChannel _channel;
   final CertificateFactsPolicy _policy;
 
   @override
@@ -145,7 +155,7 @@ final class ApplePresentedLeafProbeBackend implements NativeTlsAttemptBackend {
     required NormalizedAuthority authority,
     required CancellationToken cancellation,
   }) {
-    final attempt = _AppleProbeAttempt(
+    final attempt = _ProbeAttempt(
       operationId: _newOperationId(),
       channel: _channel,
       policy: _policy,
@@ -166,9 +176,9 @@ final class ApplePresentedLeafProbeBackend implements NativeTlsAttemptBackend {
 
 /// A separate backend from the capture-only probe; it owns no certificate
 /// capture capability and sends no application frames during connection.
-final class ApplePinnedRpcBackend implements NativeTlsAttemptBackend {
-  ApplePinnedRpcBackend({required this.channel});
-  final ApplePinnedRpcMethodChannel channel;
+final class PinnedRpcBackend implements NativeTlsAttemptBackend {
+  PinnedRpcBackend({required this.channel});
+  final PinnedRpcChannel channel;
 
   @override
   NativeProbeAttempt startProbe({
@@ -183,7 +193,7 @@ final class ApplePinnedRpcBackend implements NativeTlsAttemptBackend {
     required PinRecord pin,
     required CancellationToken cancellation,
   }) {
-    final attempt = _ApplePinnedAttempt(
+    final attempt = _PinnedAttempt(
       operationId: _newOperationId(),
       authority: authority,
       pin: pin,
@@ -195,8 +205,8 @@ final class ApplePinnedRpcBackend implements NativeTlsAttemptBackend {
   }
 }
 
-final class _ApplePinnedAttempt implements NativePinnedAttempt {
-  _ApplePinnedAttempt({
+final class _PinnedAttempt implements NativePinnedAttempt {
+  _PinnedAttempt({
     required this.operationId,
     required this.authority,
     required this.pin,
@@ -207,14 +217,14 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   final NormalizedAuthority authority;
   final PinRecord pin;
   final CancellationToken cancellation;
-  final ApplePinnedRpcMethodChannel channel;
+  final PinnedRpcChannel channel;
   final _outcome = Completer<NativePinnedOutcome>();
   CancellationRegistration? _registration;
   Future<void>? _closeFuture;
   Future<void>? _discardFuture;
   Future<void>? _transportCloseFuture;
   Future<void>? _lateTransportCloseFuture;
-  _ApplePinnedRpcTransport? _transport;
+  _PinnedRpcTransport? _transport;
   var _transferred = false;
   var _discardRequested = false;
 
@@ -254,7 +264,7 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
       return;
     }
     final sessionId = decoded.sessionId!;
-    _transport = _ApplePinnedRpcTransport(channel, sessionId);
+    _transport = _PinnedRpcTransport(channel, sessionId);
     _complete(NativePinnedVerified(_transport!));
   }
 
@@ -281,7 +291,7 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
   }
 
   void _closeLateTransport(String sessionId) {
-    final transport = _ApplePinnedRpcTransport(channel, sessionId);
+    final transport = _PinnedRpcTransport(channel, sessionId);
     final close = _closeTransport(transport);
     // A session delivered while cleanup is still pending remains owned by this
     // attempt, so its close failure must remain observable to the boundary.
@@ -302,7 +312,7 @@ final class _ApplePinnedAttempt implements NativePinnedAttempt {
     }
   }
 
-  Future<void> _closeTransport(_ApplePinnedRpcTransport transport) =>
+  Future<void> _closeTransport(_PinnedRpcTransport transport) =>
       _transportCloseFuture ??= transport.close();
 
   @override
@@ -401,9 +411,9 @@ Map<String, Object?>? _stringMap(Object? value) {
 bool _validId(Object? value) =>
     value is String && RegExp(r'^[0-9a-f]{32}$').hasMatch(value);
 
-final class _ApplePinnedRpcTransport implements RpcTransport {
-  _ApplePinnedRpcTransport(this._channel, this._sessionId);
-  final ApplePinnedRpcMethodChannel _channel;
+final class _PinnedRpcTransport implements RpcTransport {
+  _PinnedRpcTransport(this._channel, this._sessionId);
+  final PinnedRpcChannel _channel;
   final String _sessionId;
   final _frames = StreamController<String>();
   bool _started = false;
@@ -424,7 +434,7 @@ final class _ApplePinnedRpcTransport implements RpcTransport {
     if (_closed) {
       throw const RpcTransportClosedException();
     }
-    if (utf8.encode(frame).length > 1024 * 1024) {
+    if (utf8.encode(frame).length > _maximumFrameBytes) {
       await _failClosed();
       throw const RpcTransportClosedException();
     }
@@ -462,7 +472,7 @@ final class _ApplePinnedRpcTransport implements RpcTransport {
         }
         if (map.length == 3 && map['frame'] is String) {
           final frame = map['frame']! as String;
-          if (utf8.encode(frame).length > 1024 * 1024) {
+          if (utf8.encode(frame).length > _maximumFrameBytes) {
             await _failClosed();
             return;
           }
@@ -539,8 +549,8 @@ final class _ApplePinnedRpcTransport implements RpcTransport {
   });
 }
 
-final class _AppleProbeAttempt implements NativeProbeAttempt {
-  _AppleProbeAttempt({
+final class _ProbeAttempt implements NativeProbeAttempt {
+  _ProbeAttempt({
     required this.operationId,
     required this._channel,
     required this._policy,
@@ -549,7 +559,7 @@ final class _AppleProbeAttempt implements NativeProbeAttempt {
   });
 
   final String operationId;
-  final AppleTlsMethodChannel _channel;
+  final PresentedLeafProbeChannel _channel;
   final CertificateFactsPolicy _policy;
   final NormalizedAuthority authority;
   final CancellationToken _cancellation;

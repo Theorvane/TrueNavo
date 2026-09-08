@@ -19,7 +19,11 @@ void main() {
 
     await container
         .read(connectionControllerProvider.notifier)
-        .connect(serverInput: 'https://nas.example', apiKey: 'probe-key');
+        .connect(
+          serverInput: 'https://nas.example',
+          apiKey: 'probe-key',
+          username: 'test-account',
+        );
 
     expect(
       container.read(connectionControllerProvider),
@@ -35,7 +39,11 @@ void main() {
 
     final connecting = container
         .read(connectionControllerProvider.notifier)
-        .connect(serverInput: 'https://nas.example', apiKey: 'probe-key');
+        .connect(
+          serverInput: 'https://nas.example',
+          apiKey: 'probe-key',
+          username: 'test-account',
+        );
     await store.registrationStarted.future;
     container.invalidate(connectionControllerProvider);
     store.releaseRegistration();
@@ -63,6 +71,7 @@ final class ProbeRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async => ServerSummary(

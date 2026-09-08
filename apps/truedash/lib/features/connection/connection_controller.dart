@@ -113,6 +113,7 @@ class ConnectionController extends Notifier<ConnectionState> {
   Future<void> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
   }) async {
     if (_busy) return;
@@ -157,6 +158,15 @@ class ConnectionController extends Notifier<ConnectionState> {
       state = ConnectionFailed(error.message);
       return;
     }
+    // Refuse an unusable account name before any TLS work: the trust flow would
+    // otherwise probe, prompt, and pin for a login that cannot be attempted.
+    try {
+      validateTrueNasAccountName(username);
+    } on AccountNameValidationException catch (error) {
+      _busy = false;
+      state = ConnectionFailed(error.message);
+      return;
+    }
     final TlsTrustRoute route;
     try {
       route = ref.read(tlsTrustRouteProvider);
@@ -179,6 +189,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         serverInput: serverInput,
         apiKey: apiKey,
+        username: username,
         rememberApiKey: rememberApiKey,
       );
       return;
@@ -226,6 +237,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         serverInput: serverInput,
         apiKey: apiKey,
+        username: username,
         rememberApiKey: rememberApiKey,
       );
       return;
@@ -234,6 +246,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       generation: generation,
       authority: authority,
       apiKey: apiKey,
+      username: username,
       rememberApiKey: rememberApiKey,
       trust: trust,
       fallbackToken: handle.token,
@@ -242,6 +255,7 @@ class ConnectionController extends Notifier<ConnectionState> {
 
   Future<void> approveTrust({
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
   }) async {
     final review = state;
@@ -268,6 +282,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       generation: generation,
       authority: review.authority,
       apiKey: apiKey,
+      username: username,
       rememberApiKey: rememberApiKey,
       trust: trust,
       fallbackToken: review.token,
@@ -298,7 +313,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     _publishTrust(generation, trust, review.token, review.authority);
   }
 
-  Future<void> retryTrust({String? apiKey, bool rememberApiKey = false}) async {
+  Future<void> retryTrust({
+    String? apiKey,
+    String? username,
+    bool rememberApiKey = false,
+  }) async {
     final blocked = state;
     if (blocked is! ConnectionTrustBlocked || _busy) return;
     final generation = ++_generation;
@@ -324,6 +343,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         generation: generation,
         authority: blocked.authority,
         apiKey: apiKey,
+        username: username,
         rememberApiKey: rememberApiKey,
         trust: trust,
         fallbackToken: blocked.token,
@@ -337,6 +357,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     required int generation,
     required NormalizedAuthority authority,
     required String? apiKey,
+    required String? username,
     required bool rememberApiKey,
     required CertificateTrustState trust,
     required TrustOperationToken fallbackToken,
@@ -367,6 +388,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         repository: repository,
         serverInput: authority.rpcConnectionUri.toString(),
         apiKey: apiKey,
+        username: username,
         rememberApiKey: rememberApiKey,
         closeOnFailure: true,
         discardUnconsumed: connector.discard,
@@ -382,6 +404,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     required SessionRepository repository,
     required String serverInput,
     required String? apiKey,
+    required String? username,
     required bool rememberApiKey,
     required bool closeOnFailure,
     Future<void> Function()? discardUnconsumed,
@@ -410,6 +433,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       final summary = await repository.connect(
         serverInput: serverInput,
         apiKey: apiKey,
+        username: username,
         rememberApiKey: rememberApiKey,
         isConnectionCurrent: () =>
             _authenticationValidity(generation, isRepositoryCurrent) ==
@@ -529,6 +553,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     required int generation,
     required String serverInput,
     required String? apiKey,
+    required String? username,
     required bool rememberApiKey,
   }) async {
     final _SessionRepositoryLease lease;
@@ -548,6 +573,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       repository: lease.repository,
       serverInput: serverInput,
       apiKey: apiKey,
+      username: username,
       rememberApiKey: rememberApiKey,
       closeOnFailure: false,
       invalidateProviderOwnedRepositoryOnPersistenceFailure: () {
@@ -572,10 +598,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         state = ConnectionFirstTrustReview(
           token: review.token,
           authority: review.authority,
-          certificate: _display(
-            review.certificate.facts,
-            review.certificate.platformTrust,
-          ),
+          certificate: _display(review.certificate),
         );
       case ReplacementTrustReview review:
         state = ConnectionReplacementTrustReview(
@@ -585,10 +608,7 @@ class ConnectionController extends Notifier<ConnectionState> {
             leafDerSha256: review.previousPin.leafDerSha256,
             createdAt: review.previousPin.createdAt,
           ),
-          certificate: _display(
-            review.certificate.facts,
-            review.certificate.platformTrust,
-          ),
+          certificate: _display(review.certificate),
         );
       case BlockedTrust blocked:
         if (fallbackToken == null) {
@@ -619,13 +639,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
   }
 
-  TrustReviewCertificate _display(
-    CertificateFacts facts,
-    PlatformTrust trust,
-  ) => TrustReviewCertificate.fromFacts(facts, trust);
+  TrustReviewCertificate _display(PresentedCertificate certificate) =>
+      TrustReviewCertificate.fromCertificate(certificate);
 
   ConnectionFailed _safeFailure(Object error) => switch (error) {
     EndpointValidationException(:final message) => ConnectionFailed(message),
+    AccountNameValidationException(:final message) => ConnectionFailed(message),
     TlsCertificateException(:final userMessage) => ConnectionFailed(
       userMessage,
     ),
@@ -644,6 +663,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     RpcTransportClosedException() => const ConnectionFailed(
       'The secure connection closed before setup finished.',
     ),
+    PersistenceFailure(:final message) => ConnectionFailed(message),
     _ => const ConnectionFailed(
       'Unable to reach the server over a secure connection.',
     ),

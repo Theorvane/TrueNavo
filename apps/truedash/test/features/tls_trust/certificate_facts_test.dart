@@ -276,22 +276,22 @@ void main() {
       ).isApprovable,
       isTrue,
     );
-    expect(
-      assess(
-        NormalizedAuthority.parse('https://a.node.example.test'),
+    for (final input in const <String>[
+      'https://a.node.example.test',
+      'https://example.test',
+    ]) {
+      final result = assess(
+        NormalizedAuthority.parse(input),
         validHostMatchingLeafDer,
         wildcardFacts,
-      ).failure,
-      CertificateTrustFailure.hostnameMismatch,
-    );
-    expect(
-      assess(
-        NormalizedAuthority.parse('https://example.test'),
-        validHostMatchingLeafDer,
-        wildcardFacts,
-      ).failure,
-      CertificateTrustFailure.hostnameMismatch,
-    );
+      );
+      expect(result.isApprovable, isTrue, reason: input);
+      expect(
+        result.presentedCertificate!.namesAuthority,
+        isFalse,
+        reason: input,
+      );
+    }
     expect(
       assess(
         authority,
@@ -381,18 +381,17 @@ void main() {
       ).isApprovable,
       isTrue,
     );
-    expect(
-      assess(
-        ipv4,
-        validHostMatchingLeafDer,
-        parsed(
-          hasSubjectAlternativeNames: false,
-          dnsSans: const <String>[],
-          commonName: '192.0.2.10',
-        ),
-      ).failure,
-      CertificateTrustFailure.hostnameMismatch,
+    final commonNameOnly = assess(
+      ipv4,
+      validHostMatchingLeafDer,
+      parsed(
+        hasSubjectAlternativeNames: false,
+        dnsSans: const <String>[],
+        commonName: '192.0.2.10',
+      ),
     );
+    expect(commonNameOnly.isApprovable, isTrue);
+    expect(commonNameOnly.presentedCertificate!.namesAuthority, isFalse);
   });
 
   test(
@@ -568,70 +567,81 @@ void main() {
     }
   });
 
-  test(
-    'fails closed for malformed data, mismatched host, and invalid validity',
-    () {
-      expect(
-        assess(authority, malformedLeafDer, parsed()).failure,
-        CertificateTrustFailure.malformedCertificate,
-      );
-      expect(
-        assess(
-          authority,
-          validHostMatchingLeafDer,
-          parsed(dnsSans: const <String>['other.example.test']),
-        ).failure,
-        CertificateTrustFailure.hostnameMismatch,
-      );
-      expect(
-        assess(
-          NormalizedAuthority.parse('https://$expiredLeafName'),
-          expiredLeafDer,
-          expiredFacts,
-        ).failure,
-        CertificateTrustFailure.expiredCertificate,
-      );
-      expect(
-        assess(
-          NormalizedAuthority.parse('https://$notYetValidLeafName'),
-          notYetValidLeafDer,
-          notYetValidFacts,
-        ).failure,
-        CertificateTrustFailure.notYetValidCertificate,
-      );
-      expect(
-        assess(
-          authority,
-          hostnameMismatchingLeafDer,
-          hostnameMismatchingFacts,
-        ).failure,
-        CertificateTrustFailure.hostnameMismatch,
-      );
-      expect(
-        assess(
-          authority,
-          changedLeafDer,
-          parsed(
-            notValidBefore: now.add(const Duration(days: 1)),
-            notValidAfter: now.subtract(const Duration(days: 1)),
-          ),
-        ).failure,
-        CertificateTrustFailure.malformedCertificate,
-      );
-      expect(
-        assess(authority, changedLeafDer, parsed(issuer: '')).failure,
-        CertificateTrustFailure.malformedCertificate,
-      );
-      expect(
-        assess(
-          authority,
-          changedLeafDer,
-          parsed(dnsSans: const <String>['xn--bad.example.test']),
-        ).failure,
-        CertificateTrustFailure.malformedCertificate,
-      );
-    },
-  );
+  test('a leaf that does not name the authority is approvable but flagged', () {
+    final mismatched = assess(
+      authority,
+      hostnameMismatchingLeafDer,
+      hostnameMismatchingFacts,
+    );
+    expect(mismatched.isApprovable, isTrue);
+    expect(mismatched.presentedCertificate!.namesAuthority, isFalse);
+    expect(
+      mismatched.presentedCertificate!.facts.leafDerSha256,
+      sha256.convert(hostnameMismatchingLeafDer).toString().toUpperCase(),
+    );
+
+    final matching = assess(authority, validHostMatchingLeafDer, validFacts);
+    expect(matching.presentedCertificate!.namesAuthority, isTrue);
+
+    // An expired or malformed leaf stays fail-closed: only the hostname
+    // condition became an approval decision the review surfaces.
+    expect(
+      assess(
+        NormalizedAuthority.parse('https://$expiredLeafName'),
+        expiredLeafDer,
+        expiredFacts,
+      ).failure,
+      CertificateTrustFailure.expiredCertificate,
+    );
+  });
+
+  test('fails closed for malformed data and invalid validity', () {
+    expect(
+      assess(authority, malformedLeafDer, parsed()).failure,
+      CertificateTrustFailure.malformedCertificate,
+    );
+
+    expect(
+      assess(
+        NormalizedAuthority.parse('https://$expiredLeafName'),
+        expiredLeafDer,
+        expiredFacts,
+      ).failure,
+      CertificateTrustFailure.expiredCertificate,
+    );
+    expect(
+      assess(
+        NormalizedAuthority.parse('https://$notYetValidLeafName'),
+        notYetValidLeafDer,
+        notYetValidFacts,
+      ).failure,
+      CertificateTrustFailure.notYetValidCertificate,
+    );
+
+    expect(
+      assess(
+        authority,
+        changedLeafDer,
+        parsed(
+          notValidBefore: now.add(const Duration(days: 1)),
+          notValidAfter: now.subtract(const Duration(days: 1)),
+        ),
+      ).failure,
+      CertificateTrustFailure.malformedCertificate,
+    );
+    expect(
+      assess(authority, changedLeafDer, parsed(issuer: '')).failure,
+      CertificateTrustFailure.malformedCertificate,
+    );
+    expect(
+      assess(
+        authority,
+        changedLeafDer,
+        parsed(dnsSans: const <String>['xn--bad.example.test']),
+      ).failure,
+      CertificateTrustFailure.malformedCertificate,
+    );
+  });
 
   test('validity endpoints are inclusive and raw DER never escapes result or error text', () {
     final boundary = assess(

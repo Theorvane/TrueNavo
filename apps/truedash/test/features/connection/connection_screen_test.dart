@@ -42,6 +42,10 @@ void main() {
         find.byKey(const Key('server-url-field')),
         'https://nas.example',
       );
+      await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
       await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
       expect(
         tester
@@ -50,6 +54,8 @@ void main() {
         isTrue,
       );
       expect(_visibleTextContains(sentinel), findsNothing);
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
       expect(find.text('Home'), findsWidgets);
@@ -78,7 +84,13 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'wss://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
     await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pumpAndSettle();
     expect(find.text('The server rejected the API key.'), findsOneWidget);
@@ -105,7 +117,13 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'https://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
     await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pumpAndSettle();
 
@@ -133,7 +151,13 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'wss://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
     await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pump();
     expect(find.text('Connecting securely…'), findsOneWidget);
@@ -176,12 +200,20 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'https://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
     await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pumpAndSettle();
     expect(repository.rememberIntents, [false]);
 
     await tester.tap(remember);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pumpAndSettle();
     expect(repository.rememberIntents, [false, true]);
@@ -206,6 +238,12 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'https://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pumpAndSettle();
 
@@ -244,6 +282,12 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'https://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pumpAndSettle();
     expect(repository.apiKeys, isEmpty);
@@ -265,7 +309,17 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'https://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('remember-api-key-control')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('remember-api-key-control')));
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('connect-button')));
     await tester.pump();
     expect(
@@ -277,6 +331,113 @@ void main() {
     );
     repository.complete();
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('a blank user name is refused before any connection', (
+    tester,
+  ) async {
+    final repository = _RecordingRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          _platformValidatedRoute,
+          sessionRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const TrueDashApp(),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('server-url-field')),
+      'https://nas.example',
+    );
+    await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('A TrueNAS user name is required with an API key.'),
+      findsOneWidget,
+    );
+    expect(repository.apiKeys, isEmpty);
+  });
+
+  testWidgets(
+    'a certificate that does not name the server warns before approval',
+    (tester) async {
+      final authority = NormalizedAuthority.parse('https://nas.example');
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tlsTrustRouteProvider.overrideWithValue(TlsTrustRoute.native),
+            certificateTrustCoordinatorProvider.overrideWithValue(
+              _trustCoordinator(authority: authority, namesAuthority: false),
+            ),
+          ],
+          child: const TrueDashApp(),
+        ),
+      );
+      await tester.enterText(
+        find.byKey(const Key('server-url-field')),
+        'https://nas.example',
+      );
+      await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
+      await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('hostname-mismatch-warning')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('This certificate does not name this server address.'),
+        findsOneWidget,
+      );
+      // The mismatch is a warning, not a block: approval stays reachable and
+      // the fingerprint is still the identity the user is asked to confirm.
+      expect(find.byKey(const Key('approve-trust-button')), findsOneWidget);
+      expect(find.byKey(const Key('current-fingerprint')), findsOneWidget);
+    },
+  );
+
+  testWidgets('a matching certificate shows no mismatch warning', (
+    tester,
+  ) async {
+    final authority = NormalizedAuthority.parse('https://nas.example');
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tlsTrustRouteProvider.overrideWithValue(TlsTrustRoute.native),
+          certificateTrustCoordinatorProvider.overrideWithValue(
+            _trustCoordinator(authority: authority),
+          ),
+        ],
+        child: const TrueDashApp(),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('server-url-field')),
+      'https://nas.example',
+    );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
+    await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.ensureVisible(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('hostname-mismatch-warning')), findsNothing);
+    expect(find.byKey(const Key('approve-trust-button')), findsOneWidget);
   });
 
   testWidgets(
@@ -302,8 +463,18 @@ void main() {
         find.byKey(const Key('server-url-field')),
         'https://nas.example',
       );
+      await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
       await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+      await tester.ensureVisible(
+        find.byKey(const Key('remember-api-key-control')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('remember-api-key-control')));
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
 
@@ -380,6 +551,12 @@ void main() {
         find.byKey(const Key('server-url-field')),
         'https://nas.example',
       );
+      await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
 
@@ -452,8 +629,18 @@ void main() {
         find.byKey(const Key('server-url-field')),
         'https://nas.example',
       );
+      await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
       await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+      await tester.ensureVisible(
+        find.byKey(const Key('remember-api-key-control')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('remember-api-key-control')));
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
 
@@ -488,6 +675,7 @@ void main() {
       token: nativeReview.token,
       authority: authority,
       certificate: TrustReviewCertificate(
+        namesAuthority: true,
         subjectSummary: 'CN: nas.example',
         issuerSummary: 'Example Test CA',
         leafDerSha256: 'NOT-HEX',
@@ -541,6 +729,10 @@ void main() {
       find.byKey(const Key('server-url-field')),
       'https://nas.example',
     );
+    await tester.enterText(
+      find.byKey(const Key('username-field')),
+      'test-account',
+    );
     await _tapVisible(tester, const Key('connect-button'));
     await tester.scrollUntilVisible(
       find.byKey(const Key('approve-trust-button')),
@@ -579,6 +771,10 @@ void main() {
         await tester.enterText(
           find.byKey(const Key('server-url-field')),
           'https://nas.example',
+        );
+        await tester.enterText(
+          find.byKey(const Key('username-field')),
+          'test-account',
         );
         await tester.scrollUntilVisible(
           find.byKey(const Key('remember-api-key-control')),
@@ -654,7 +850,13 @@ void main() {
         find.byKey(const Key('server-url-field')),
         'wss://nas.example',
       );
+      await tester.enterText(
+        find.byKey(const Key('username-field')),
+        'test-account',
+      );
       await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+      await tester.ensureVisible(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('connect-button')));
       await tester.pumpAndSettle();
 
@@ -715,6 +917,7 @@ final class _SuccessRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async => ServerSummary(
@@ -733,6 +936,7 @@ final class _FailureRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async => throw const AuthenticationStateException(
@@ -748,6 +952,7 @@ final class _PendingRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) => _completion.future;
@@ -773,6 +978,7 @@ final class _RecordingRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async {
@@ -791,6 +997,7 @@ final class _ThrowingRepository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) => Future<ServerSummary>.error(error);
@@ -819,11 +1026,13 @@ CertificateTrustCoordinator _trustCoordinator({
   required NormalizedAuthority authority,
   PinStore? store,
   PinnedRpcConnector? connector,
+  bool namesAuthority = true,
 }) => CertificateTrustCoordinator(
   pinStore: store ?? InMemoryPinStore(),
   probe: _TrustProbe(
     NativeProbeCertificate(
       PresentedCertificate(
+        namesAuthority: namesAuthority,
         authority: authority,
         platformTrust: PlatformTrust.didNotPass,
         facts: CertificateFacts(

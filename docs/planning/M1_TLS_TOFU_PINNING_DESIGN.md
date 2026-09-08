@@ -48,7 +48,9 @@ PinnedTransport connectPinned(NormalizedAuthority, PinRecord, timeout)
 void commitPinAfterVerifiedReconnect(NormalizedAuthority, PinRecord)
 ```
 
-`CertificateProbeResult` carries parsed, non-secret certificate facts plus whether platform trust succeeded; it never opens the RPC session. `PinnedTlsConnector` must reject every leaf other than the candidate pin and must also preserve hostname, validity, and protocol checks. A secure-store write is not a successful trust decision until the fresh pinned TLS connection succeeds. An implementation may use platform APIs/adapters, but it must not expose a callback whose default behavior can accept arbitrary certificates.
+`CertificateProbeResult` carries parsed, non-secret certificate facts plus whether platform trust succeeded; it never opens the RPC session. `PinnedTlsConnector` must reject every leaf other than the candidate pin and must also preserve validity and protocol checks.
+
+**Revision (implemented):** a certificate that does not name the authority is an *approvable* condition, not a refusal. A TrueNAS appliance ships a self-signed certificate naming only `localhost`, so requiring the leaf to name the address refused every such server before the user could see a fingerprint at all. The probe reports whether the leaf names the authority, the review shows an explicit warning when it does not, and the exact leaf pin — bound to the canonical authority — is the identity the pinned reconnect enforces, as an SSH known-hosts entry does. The pinned connection still asserts it is talking to the pinned authority and still applies validity and protocol policy. A secure-store write is not a successful trust decision until the fresh pinned TLS connection succeeds. An implementation may use platform APIs/adapters, but it must not expose a callback whose default behavior can accept arbitrary certificates.
 
 ## 4. Certificate identity and secure-store lifecycle
 
@@ -123,7 +125,7 @@ Every action is at least 44×44 logical pixels with an icon and text label; the 
 |---|---|
 | Active MITM on first contact | User sees the leaf identity/fingerprint; explicit TOFU approval is required; no credential leaves before approval. Document the out-of-band fingerprint verification expectation. |
 | MITM or legitimate certificate replacement later | Mismatch blocks by default; old/new comparison and explicit replacement; overwrite only after a fresh pinned reconnect. |
-| Host rebinding / equivalent URL ambiguity | Canonical authority includes scheme, lowercased IDNA host, and effective port; normal hostname validation remains required. |
+| Host rebinding / equivalent URL ambiguity | Canonical authority includes scheme, lowercased IDNA host, and effective port. Certificate hostname matching is reported to the user rather than required (see §3); the exact leaf pin is the identity a pinned reconnect enforces. |
 | Stolen local application data | OS secure storage contains only a non-secret certificate pin record, never API keys or profile metadata. |
 | Malformed or stale local record | Version/algorithm validation and fail-closed error; no fallback to unpinned behavior. |
 | Race/cancel/late probe result | Per-authority coordinator, cancellation tokens, candidate re-check before storage commit. |

@@ -29,7 +29,11 @@ void main() {
       final probe = _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       );
       final connector = _Connector(events);
@@ -98,7 +102,11 @@ void main() {
     final probe = _Probe(
       events,
       NativeProbeCertificate(
-        PresentedCertificate(authority: authority, facts: newFacts),
+        PresentedCertificate(
+          namesAuthority: true,
+          authority: authority,
+          facts: newFacts,
+        ),
       ),
     );
     final connector = _Connector(events)
@@ -132,7 +140,11 @@ void main() {
     final probe = _Probe(
       events,
       NativeProbeCertificate(
-        PresentedCertificate(authority: authority, facts: facts),
+        PresentedCertificate(
+          namesAuthority: true,
+          authority: authority,
+          facts: facts,
+        ),
       ),
     );
     final connector = _Connector(events)
@@ -228,15 +240,27 @@ void main() {
         _Probe(
             events,
             NativeProbeCertificate(
-              PresentedCertificate(authority: first, facts: firstFacts),
+              PresentedCertificate(
+                namesAuthority: true,
+                authority: first,
+                facts: firstFacts,
+              ),
             ),
           )
           ..byAuthority = {
             first: NativeProbeCertificate(
-              PresentedCertificate(authority: first, facts: firstFacts),
+              PresentedCertificate(
+                namesAuthority: true,
+                authority: first,
+                facts: firstFacts,
+              ),
             ),
             second: NativeProbeCertificate(
-              PresentedCertificate(authority: second, facts: secondFacts),
+              PresentedCertificate(
+                namesAuthority: true,
+                authority: second,
+                facts: secondFacts,
+              ),
             ),
           };
     final coordinator = _coordinator(_Store(events), probe, _Connector(events));
@@ -298,7 +322,11 @@ void main() {
       _Probe(
         [],
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       _Connector([]),
@@ -321,7 +349,11 @@ void main() {
         _Probe(
           events,
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: facts),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: facts,
+            ),
           ),
         ),
         _Connector(events),
@@ -389,7 +421,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       connector,
@@ -417,7 +453,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       _Connector(events)..outcome = NativePinnedVerified(transport),
@@ -442,7 +482,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: wrong, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: wrong,
+            facts: facts,
+          ),
         ),
       ),
       _Connector(events),
@@ -473,7 +517,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       _Connector(events)..outcome = NativePinnedVerified(_Transport()),
@@ -502,7 +550,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       _Connector(events),
@@ -520,7 +572,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       connector,
@@ -611,7 +667,11 @@ void main() {
         _Probe(
           events,
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: facts),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: facts,
+            ),
           ),
         ),
         _Connector(events),
@@ -654,7 +714,11 @@ void main() {
         _Probe(
           events,
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: replacement),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: replacement,
+            ),
           ),
         ),
         connector,
@@ -701,7 +765,11 @@ void main() {
       store.active = changed;
       wait.complete(
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       );
       expect(
@@ -721,6 +789,7 @@ void main() {
           [],
           NativeProbeCertificate(
             PresentedCertificate(
+              namesAuthority: true,
               authority: authority,
               facts: facts,
               platformTrust: PlatformTrust.didNotPass,
@@ -755,7 +824,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       _Connector(events)..outcome = NativePinnedVerified(transport),
@@ -781,7 +854,11 @@ void main() {
         _Probe(
           events,
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: facts),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: facts,
+            ),
           ),
         ),
         _Connector(events)
@@ -855,7 +932,11 @@ void main() {
         _Probe(
           events,
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: facts),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: facts,
+            ),
           ),
         ),
         _Connector(events)..outcome = NativePinnedVerified(_Transport()),
@@ -878,7 +959,11 @@ void main() {
       _Probe(
         events,
         NativeProbeCertificate(
-          PresentedCertificate(authority: authority, facts: facts),
+          PresentedCertificate(
+            namesAuthority: true,
+            authority: authority,
+            facts: facts,
+          ),
         ),
       ),
       _Connector(events),
@@ -910,7 +995,11 @@ void main() {
         _Probe(
           events,
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: facts),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: facts,
+            ),
           ),
         ),
         connector,
@@ -951,6 +1040,7 @@ void main() {
           events,
           NativeProbeCertificate(
             PresentedCertificate(
+              namesAuthority: true,
               authority: authority,
               facts: facts,
               platformTrust: PlatformTrust.passed,
@@ -993,6 +1083,7 @@ void main() {
         events,
         NativeProbeCertificate(
           PresentedCertificate(
+            namesAuthority: true,
             authority: authority,
             facts: facts,
             platformTrust: PlatformTrust.passed,
@@ -1039,6 +1130,7 @@ void main() {
           events,
           NativeProbeCertificate(
             PresentedCertificate(
+              namesAuthority: true,
               authority: authority,
               facts: replacement,
               platformTrust: PlatformTrust.passed,
@@ -1089,6 +1181,7 @@ void main() {
         events,
         NativeProbeCertificate(
           PresentedCertificate(
+            namesAuthority: true,
             authority: authority,
             facts: replacement,
             platformTrust: PlatformTrust.passed,
@@ -1130,6 +1223,7 @@ void main() {
         events,
         NativeProbeCertificate(
           PresentedCertificate(
+            namesAuthority: true,
             authority: authority,
             facts: facts,
             platformTrust: PlatformTrust.passed,
@@ -1160,6 +1254,7 @@ void main() {
             events,
             NativeProbeCertificate(
               PresentedCertificate(
+                namesAuthority: true,
                 authority: authority,
                 facts: facts,
                 platformTrust: PlatformTrust.passed,
@@ -1192,7 +1287,11 @@ void main() {
         _Probe(
           [],
           NativeProbeCertificate(
-            PresentedCertificate(authority: authority, facts: facts),
+            PresentedCertificate(
+              namesAuthority: true,
+              authority: authority,
+              facts: facts,
+            ),
           ),
         )..preservePlatformTrust = true,
         _Connector([]),
@@ -1249,6 +1348,7 @@ void main() {
         events,
         NativeProbeCertificate(
           PresentedCertificate(
+            namesAuthority: true,
             authority: authority,
             facts: facts,
             platformTrust: PlatformTrust.passed,
@@ -1331,6 +1431,7 @@ void main() {
         events,
         NativeProbeCertificate(
           PresentedCertificate(
+            namesAuthority: true,
             authority: authority,
             facts: CertificateFacts(
               subjectSummary: facts.subjectSummary,
@@ -1396,6 +1497,7 @@ CertificateTrustCoordinator _persistentCoordinator(
     events,
     NativeProbeCertificate(
       PresentedCertificate(
+        namesAuthority: true,
         authority: authority,
         facts: facts,
         platformTrust: PlatformTrust.passed,
@@ -1544,6 +1646,7 @@ final class _Probe implements NativeCertificateProbe {
     // measured result. Individual tests opt out to exercise fail-closed input.
     return NativeProbeCertificate(
       PresentedCertificate(
+        namesAuthority: true,
         authority: value.certificate.authority,
         facts: value.certificate.facts,
         platformTrust: PlatformTrust.didNotPass,

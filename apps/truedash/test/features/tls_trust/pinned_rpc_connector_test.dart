@@ -9,7 +9,7 @@ import 'package:truenas_api/truenas_api.dart';
 
 /// Task 6 RED contract for the Apple-only, exact-pin RPC reconnect bridge.
 ///
-/// The deliberately small [ApplePinnedRpcMethodChannel] is an intended API:
+/// The deliberately small [PinnedRpcChannel] is an intended API:
 /// the native side receives only these versioned, session-scoped messages.
 void main() {
   final authority = NormalizedAuthority.parse(
@@ -55,7 +55,7 @@ void main() {
           final probe =
               createProbeForNativeTlsPlatform(
                 NativeTlsPlatform.apple,
-                appleChannel: channel,
+                probeChannel: channel,
               ).probe(
                 authority: authority,
                 timeout: const Duration(milliseconds: 100),
@@ -75,24 +75,32 @@ void main() {
       },
     );
 
-    test('is bounded on Apple and unavailable everywhere else', () async {
-      final apple = _FakePinnedChannel();
-      final connector = createReconnectForNativeTlsPlatform(
+    test('is bounded on bridged runners and unavailable elsewhere', () async {
+      for (final platform in [
         NativeTlsPlatform.apple,
-        appleChannel: apple,
-      );
-      final future = connector.reconnect(
-        authority: authority,
-        pin: pin,
-        timeout: const Duration(milliseconds: 100),
-        cancellation: CancellationSource().token,
-      );
-      expect(apple.calls, hasLength(1));
-      apple.completeConnect(apple.calls.single.operationId);
-      expect(await future, isA<NativePinnedVerified>());
+        NativeTlsPlatform.android,
+      ]) {
+        final channel = _FakePinnedChannel();
+        final connector = createReconnectForNativeTlsPlatform(
+          platform,
+          probeChannel: channel,
+        );
+        final future = connector.reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(milliseconds: 100),
+          cancellation: CancellationSource().token,
+        );
+        expect(channel.calls, hasLength(1), reason: platform.name);
+        channel.completeConnect(channel.calls.single.operationId);
+        expect(
+          await future,
+          isA<NativePinnedVerified>(),
+          reason: platform.name,
+        );
+      }
 
       for (final platform in [
-        NativeTlsPlatform.android,
         NativeTlsPlatform.linux,
         NativeTlsPlatform.windows,
         NativeTlsPlatform.other,
@@ -120,7 +128,7 @@ void main() {
         final future =
             createReconnectForNativeTlsPlatform(
               NativeTlsPlatform.apple,
-              appleChannel: channel,
+              probeChannel: channel,
             ).reconnect(
               authority: authority,
               pin: pin,
@@ -193,7 +201,7 @@ void main() {
           final future =
               createReconnectForNativeTlsPlatform(
                 NativeTlsPlatform.apple,
-                appleChannel: channel,
+                probeChannel: channel,
               ).reconnect(
                 authority: authority,
                 pin: pin,
@@ -442,8 +450,10 @@ void main() {
         authority,
         pin,
       )).transport;
-      final tooLarge = List<String>.filled(262145, '😀').join();
-      expect(tooLarge.length, lessThan(1024 * 1024));
+      // Each emoji is four UTF-8 bytes but two UTF-16 code units, so this
+      // exceeds the 16 MiB byte cap while staying under it by `String.length`.
+      final tooLarge = List<String>.filled(4194305, '😀').join();
+      expect(tooLarge.length, lessThan(16 * 1024 * 1024));
       await expectLater(
         transport.send(tooLarge),
         throwsA(isA<RpcTransportClosedException>()),
@@ -489,8 +499,8 @@ void main() {
           authority,
           pin,
         )).transport;
-        final tooLarge = List<String>.filled(262145, '😀').join();
-        expect(tooLarge.length, lessThan(1024 * 1024));
+        final tooLarge = List<String>.filled(4194305, '😀').join();
+        expect(tooLarge.length, lessThan(16 * 1024 * 1024));
         final received = expectLater(
           transport.inboundFrames,
           emitsInOrder(<Object>[
@@ -567,7 +577,7 @@ void main() {
       final timedOut =
           await createReconnectForNativeTlsPlatform(
             NativeTlsPlatform.apple,
-            appleChannel: timeoutChannel,
+            probeChannel: timeoutChannel,
           ).reconnect(
             authority: authority,
             pin: pin,
@@ -592,7 +602,7 @@ void main() {
       final pending =
           createReconnectForNativeTlsPlatform(
             NativeTlsPlatform.apple,
-            appleChannel: cancelledChannel,
+            probeChannel: cancelledChannel,
           ).reconnect(
             authority: authority,
             pin: pin,
@@ -614,7 +624,7 @@ void main() {
       final handoff =
           createReconnectForNativeTlsPlatform(
             NativeTlsPlatform.apple,
-            appleChannel: handoffChannel,
+            probeChannel: handoffChannel,
           ).reconnect(
             authority: authority,
             pin: pin,
@@ -638,7 +648,7 @@ void main() {
       final owned =
           createReconnectForNativeTlsPlatform(
             NativeTlsPlatform.apple,
-            appleChannel: ownerChannel,
+            probeChannel: ownerChannel,
           ).reconnect(
             authority: authority,
             pin: pin,
@@ -656,7 +666,7 @@ void main() {
       expect(
         await createReconnectForNativeTlsPlatform(
           NativeTlsPlatform.apple,
-          appleChannel: idle,
+          probeChannel: idle,
         ).reconnect(
           authority: authority,
           pin: pin,
@@ -676,7 +686,7 @@ void main() {
         final reconnect =
             createReconnectForNativeTlsPlatform(
               NativeTlsPlatform.apple,
-              appleChannel: channel,
+              probeChannel: channel,
             ).reconnect(
               authority: authority,
               pin: pin,
@@ -718,7 +728,7 @@ void main() {
         final reconnect =
             createReconnectForNativeTlsPlatform(
               NativeTlsPlatform.apple,
-              appleChannel: channel,
+              probeChannel: channel,
             ).reconnect(
               authority: authority,
               pin: pin,
@@ -749,7 +759,7 @@ void main() {
         final reconnect =
             createReconnectForNativeTlsPlatform(
               NativeTlsPlatform.apple,
-              appleChannel: channel,
+              probeChannel: channel,
             ).reconnect(
               authority: authority,
               pin: pin,
@@ -790,7 +800,7 @@ void main() {
         final future =
             createReconnectForNativeTlsPlatform(
               NativeTlsPlatform.apple,
-              appleChannel: channel,
+              probeChannel: channel,
             ).reconnect(
               authority: authority,
               pin: pin,
@@ -811,7 +821,7 @@ void main() {
       }
       final probeChannel = _FakeProbeChannel();
       final probe =
-          ApplePresentedLeafProbeBackend(
+          PresentedLeafProbeBackend(
             channel: probeChannel,
             now: DateTime.now,
           ).startProbe(
@@ -824,7 +834,7 @@ void main() {
       final reconnect =
           createReconnectForNativeTlsPlatform(
             NativeTlsPlatform.apple,
-            appleChannel: reconnectChannel,
+            probeChannel: reconnectChannel,
           ).reconnect(
             authority: authority,
             pin: pin,
@@ -861,7 +871,7 @@ Future<NativePinnedVerified> _successfulReconnect(
   final future =
       createReconnectForNativeTlsPlatform(
         NativeTlsPlatform.apple,
-        appleChannel: channel,
+        probeChannel: channel,
       ).reconnect(
         authority: authority,
         pin: pin,
@@ -872,7 +882,7 @@ Future<NativePinnedVerified> _successfulReconnect(
   return await future as NativePinnedVerified;
 }
 
-final class _FakePinnedChannel implements ApplePinnedRpcMethodChannel {
+final class _FakePinnedChannel implements PinnedRpcChannel {
   static const sessionId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
   static const _unset = _Unset();
   final calls = <_Message>[];
@@ -1008,7 +1018,7 @@ final class _Unset {
   const _Unset();
 }
 
-final class _FakeProbeChannel implements AppleTlsMethodChannel {
+final class _FakeProbeChannel implements PresentedLeafProbeChannel {
   final calls = <_Message>[];
 
   @override
@@ -1025,7 +1035,7 @@ final class _FakeProbeChannel implements AppleTlsMethodChannel {
   }
 }
 
-final class _FakeCaptureChannel implements AppleTlsMethodChannel {
+final class _FakeCaptureChannel implements PresentedLeafProbeChannel {
   final cancelCalls = <_Message>[];
   Object? cancelResult;
 
