@@ -60,7 +60,7 @@ void main() {
     );
   });
 
-  testWidgets('each destination has its own honest scope and common status', (
+  testWidgets('each destination has its own honest no-server state', (
     tester,
   ) async {
     final handle = tester.ensureSemantics();
@@ -78,7 +78,7 @@ void main() {
         await tester.pump();
         expect(find.text(destination.label), findsWidgets);
         expect(
-          find.text('Data connection is provided in a later slice.'),
+          find.text('${destination.label} needs a server connection'),
           findsOneWidget,
         );
         expect(find.text(_scopeFor(destination)), findsOneWidget);
@@ -106,7 +106,13 @@ void main() {
         ),
       );
 
-      expect(find.text('No server selected'), findsWidgets);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('server-catalog-trigger')),
+          matching: find.text('No server selected'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.text('Return to connection'));
       await tester.pumpAndSettle();
       expect(find.byType(ConnectionScreen), findsOneWidget);
@@ -153,11 +159,10 @@ Finder _nativeDestinationAction(
 ) => _nativeDestinationActions(tester).at(destination.index);
 
 String _scopeFor(AppDestination destination) => switch (destination) {
-  AppDestination.home => 'Dashboard content is not available in this slice.',
-  AppDestination.alerts => 'Alert data is not available in this slice.',
-  AppDestination.manage =>
-    'Management commands are not available in this slice.',
-  AppDestination.jobs => 'Job feed content is not available in this slice.',
+  AppDestination.home => 'Read-only server overview.',
+  AppDestination.alerts => 'Read-only alerts from the connected server.',
+  AppDestination.manage => 'Read-only inventory and service status.',
+  AppDestination.jobs => 'Read-only job history from the connected server.',
 };
 
 final class _SuccessRepository implements SessionRepository {

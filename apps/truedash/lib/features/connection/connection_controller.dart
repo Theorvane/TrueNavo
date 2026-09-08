@@ -90,12 +90,40 @@ final connectionControllerProvider =
       ConnectionController.new,
     );
 
+/// A live, authenticated session is memory-only. Profile persistence remains
+/// credential-free and cannot restore this capability after an app restart.
+final activeAuthenticatedSessionProvider = Provider<AuthenticatedSession?>((
+  ref,
+) {
+  ref.watch(connectionControllerProvider);
+  return ref.read(connectionControllerProvider.notifier).activeSession;
+});
+
+final class AuthenticatedSession {
+  const AuthenticatedSession({
+    required this.profileId,
+    required this.repository,
+    required this.availableMethodNames,
+  });
+
+  /// The durable profile selected by the successful registration that created
+  /// this live session. It prevents a display-only profile switch from
+  /// exposing this connection's data under another server label.
+  final String profileId;
+  final SessionRepository repository;
+  final Set<String> availableMethodNames;
+}
+
 class ConnectionController extends Notifier<ConnectionState> {
   SessionRepository? _verifiedRepository;
+  SessionRepository? _activeNormalRepository;
+  AuthenticatedSession? _activeSession;
   var _nextProfileId = 0;
   var _generation = 0;
   var _busy = false;
   var _disposed = false;
+
+  AuthenticatedSession? get activeSession => _activeSession;
 
   @override
   ConnectionState build() {
@@ -105,6 +133,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       _generation++;
       final verified = _verifiedRepository;
       _verifiedRepository = null;
+      _activeNormalRepository = null;
+      _activeSession = null;
       _closeSafely(verified);
     });
     return const ConnectionIdle();
@@ -117,6 +147,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     bool rememberApiKey = false,
   }) async {
     if (_busy) return;
+    // A new attempt cannot share the session capability published by a prior
+    // connection. In particular, a provider-owned normal repository mutates
+    // its client while connecting, so leaving it visible would let dashboard
+    // reads reach the new, unauthenticated transport.
+    _activeSession = null;
     final int generation = ++_generation;
     final visibleReview = state;
     if (visibleReview is ConnectionTrustReview) {
@@ -185,6 +220,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _busy = true;
     state = const ConnectionInProgress();
     if (route == TlsTrustRoute.platformValidated) {
+      _activeNormalRepository = null;
       await _authenticateNormal(
         generation: generation,
         serverInput: serverInput,
@@ -233,6 +269,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         _publishTrust(generation, cancelled, handle.token, authority);
         return;
       }
+      _activeNormalRepository = null;
       await _authenticateNormal(
         generation: generation,
         serverInput: serverInput,
@@ -524,7 +561,29 @@ class ConnectionController extends Notifier<ConnectionState> {
           registration.snapshot.selectedProfileId == null) {
         throw const PersistenceFailure(PersistenceFailureKind.unavailable);
       }
+      // A normal TLS repository remains provider-owned, while a pinned-route
+      // repository is controller-owned. A later normal success must still
+      // release any previous controller-owned pinned session.
+      if (!closeOnFailure) {
+        final displaced = _verifiedRepository;
+        _verifiedRepository = null;
+        if (displaced != null && !identical(displaced, repository)) {
+          await _closeSafely(displaced);
+        }
+        _activeNormalRepository = repository;
+      } else if (_activeNormalRepository != null) {
+        // A verified route now supersedes the provider-owned normal session.
+        // Invalidate only after pinned authentication and persistence succeed,
+        // so a failed pinned attempt leaves the normal repository untouched.
+        _activeNormalRepository = null;
+        ref.invalidate(sessionRepositoryProvider);
+      }
       _busy = false;
+      _activeSession = AuthenticatedSession(
+        profileId: registration.snapshot.selectedProfileId!,
+        repository: repository,
+        availableMethodNames: Set.unmodifiable(summary.availableMethodNames),
+      );
       state = ConnectionSucceeded(summary);
     } catch (error) {
       await discardUnconsumed?.call();
@@ -558,6 +617,10 @@ class ConnectionController extends Notifier<ConnectionState> {
   }) async {
     final _SessionRepositoryLease lease;
     try {
+      // A normal connection attempt owns a new provider repository. Invalidating
+      // it lets Riverpod dispose the previous provider value exactly once,
+      // including its transport, before this attempt obtains its lease.
+      ref.invalidate(sessionRepositoryProvider);
       lease = ref.read(_sessionRepositoryLeaseProvider);
     } catch (_) {
       if (_current(generation)) {
