@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:truedash/features/connection/connection_controller.dart';
 import 'package:truedash/features/connection/connection_state.dart';
+import 'package:truedash/features/dashboard/dashboard_controller.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
 import 'package:truedash/features/tls_trust/certificate_facts.dart';
 import 'package:truedash/features/tls_trust/certificate_trust_coordinator.dart';
@@ -1748,6 +1749,64 @@ void main() {
     },
   );
 
+  test('successful pinned authentication replaces and closes the active normal repository', () async {
+    final authority = NormalizedAuthority.parse('https://nas.example');
+    final normal = _QueryingRepository();
+    late _Repository verified;
+    final store = InMemoryPinStore();
+    await _seed(store, authority, _digest);
+    var route = TlsTrustRoute.platformValidated;
+    var factoryCalls = 0;
+    final container = ProviderContainer(
+      overrides: [
+        tlsTrustRouteProvider.overrideWith((ref) => route),
+        certificateTrustCoordinatorProvider.overrideWithValue(
+          CertificateTrustCoordinator(
+            pinStore: store,
+            probe: _Probe(_certificate(authority)),
+            connector: _Connector(NativePinnedVerified(_Transport())),
+            now: () => DateTime.utc(2026, 2),
+            probeTimeout: const Duration(seconds: 1),
+            reconnectTimeout: const Duration(seconds: 1),
+          ),
+        ),
+        sessionRepositoryFactoryProvider.overrideWithValue(({
+          required connector,
+          required credentialVault,
+        }) {
+          if (++factoryCalls == 1) return normal;
+          return verified = _Repository(connector: connector);
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionControllerProvider.notifier);
+
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+      username: 'test-account',
+    );
+    await container.read(dashboardLoadProvider('home').future);
+    expect(normal.queriedMethods, ['system.info']);
+    expect(normal.closeCalls, 0);
+
+    route = TlsTrustRoute.native;
+    container.invalidate(tlsTrustRouteProvider);
+    await controller.connect(
+      serverInput: 'https://nas.example',
+      apiKey: _sentinel,
+      username: 'test-account',
+    );
+
+    expect(normal.closeCalls, 1);
+    expect(verified.closeCalls, 0);
+    expect(
+      container.read(activeAuthenticatedSessionProvider)!.repository,
+      same(verified),
+    );
+  });
+
   test('production normal provider replaces invalidated repository for a live controller', () async {
     final first = _Repository();
     final second = _Repository();
@@ -1801,6 +1860,60 @@ void main() {
     container.dispose();
     expect(second.closeCalls, 1);
   });
+
+  test(
+    'a new normal attempt suspends dashboard and uses a fresh repository',
+    () async {
+      final first = _QueryingRepository();
+      final second = _PendingRepository();
+      var factoryCalls = 0;
+      final container = ProviderContainer(
+        overrides: [
+          tlsTrustRouteProvider.overrideWithValue(
+            TlsTrustRoute.platformValidated,
+          ),
+          sessionRepositoryFactoryProvider.overrideWithValue(
+            ({required connector, required credentialVault}) =>
+                ++factoryCalls == 1 ? first : second,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionControllerProvider.notifier);
+
+      await controller.connect(
+        serverInput: 'https://nas.example',
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
+      expect(container.read(dashboardRepositoryProvider), isNotNull);
+      await container.read(dashboardLoadProvider('home').future);
+      expect(first.queriedMethods, ['system.info']);
+
+      final retry = controller.connect(
+        serverInput: 'https://nas.example',
+        apiKey: _sentinel,
+        username: 'test-account',
+      );
+
+      expect(container.read(dashboardRepositoryProvider), isNull);
+      expect(container.read(activeAuthenticatedSessionProvider), isNull);
+      await second.started.future;
+      expect(factoryCalls, 2);
+      expect(first.closeCalls, 1);
+
+      second.fail(StateError('second handshake failed'));
+      await retry;
+
+      expect(
+        container.read(connectionControllerProvider),
+        isA<ConnectionFailed>(),
+      );
+      expect(container.read(dashboardRepositoryProvider), isNull);
+      expect(container.read(activeAuthenticatedSessionProvider), isNull);
+      expect(first.closeCalls, 1);
+    },
+  );
 
   test(
     'invalidating the normal repository abandons its pending authentication',
@@ -2212,6 +2325,41 @@ class _Repository implements SessionRepository {
   }
 }
 
+final class _QueryingRepository extends _Repository
+    implements AuthenticatedSessionQueries {
+  final queriedMethods = <String>[];
+
+  @override
+  Future<ServerSummary> connect({
+    required String serverInput,
+    required String? apiKey,
+    required String? username,
+    bool rememberApiKey = false,
+    bool Function()? isConnectionCurrent,
+  }) async {
+    final summary = await super.connect(
+      serverInput: serverInput,
+      apiKey: apiKey,
+      username: username,
+      rememberApiKey: rememberApiKey,
+      isConnectionCurrent: isConnectionCurrent,
+    );
+    return ServerSummary(
+      originalHostInput: summary.originalHostInput,
+      endpointUri: summary.endpointUri,
+      identity: summary.identity,
+      version: summary.version,
+      availableMethodNames: const {'system.info'},
+    );
+  }
+
+  @override
+  Future<Object?> query(String method) async {
+    queriedMethods.add(method);
+    return <String, Object?>{'hostname': 'nas', 'version': '1'};
+  }
+}
+
 final class _PendingRepository extends _Repository {
   final started = Completer<void>();
   final _result = Completer<ServerSummary>();
@@ -2239,6 +2387,8 @@ final class _PendingRepository extends _Repository {
       availableMethodNames: const {},
     ),
   );
+
+  void fail(Object error) => _result.completeError(error);
 }
 
 final class _ThrowingCloseRepository extends _Repository {

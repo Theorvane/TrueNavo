@@ -409,9 +409,8 @@ void _expectServerFocusRing(WidgetTester tester) {
 }
 
 String _scopeFor(AppDestination destination) => switch (destination) {
-  AppDestination.home => 'Dashboard content is not available in this slice.',
-  AppDestination.alerts => 'Alert data is not available in this slice.',
-  AppDestination.manage =>
-    'Management commands are not available in this slice.',
-  AppDestination.jobs => 'Job feed content is not available in this slice.',
+  AppDestination.home => 'Read-only server overview.',
+  AppDestination.alerts => 'Read-only alerts from the connected server.',
+  AppDestination.manage => 'Read-only inventory and service status.',
+  AppDestination.jobs => 'Read-only job history from the connected server.',
 };

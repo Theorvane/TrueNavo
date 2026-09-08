@@ -55,10 +55,7 @@ void main() {
     await tester.pump();
     expect(find.text('One'), findsWidgets);
     expect(
-      find.text(
-        'Server selection changes what is shown in this app. It does not '
-        'reconnect.',
-      ),
+      find.text('Server switching is display-only and does not reconnect.'),
       findsOneWidget,
     );
     expect(
@@ -78,7 +75,14 @@ void main() {
       ),
     );
 
-    expect(find.text('No server selected'), findsWidgets);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('server-catalog-trigger')),
+        matching: find.text('No server selected'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Home needs a server connection'), findsOneWidget);
     expect(find.bySemanticsLabel('Server catalog: empty'), findsOneWidget);
     expect(find.text('No saved server profile is selected.'), findsOneWidget);
     expect(find.text('Return to connection'), findsOneWidget);

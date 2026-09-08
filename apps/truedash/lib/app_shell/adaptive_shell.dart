@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash_design_system/truedash_design_system.dart';
 
 import '../features/connection/connection_screen.dart';
+import '../features/dashboard/dashboard_page.dart';
 import '../features/server_profiles/server_profiles_controller.dart';
 import '../features/server_profiles/server_switcher.dart';
 import 'app_destination.dart';
@@ -294,13 +295,15 @@ class _Content extends ConsumerWidget {
                     Text(_scopeFor(destination)),
                     const SizedBox(height: TdSpacing.related),
                     Text(
-                      'No server selected',
+                      '${destination.label} needs a server connection',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: TdSpacing.related),
                     const Text('No saved server profile is selected.'),
                     const SizedBox(height: TdSpacing.related),
-                    const Text('Data connection is provided in a later slice.'),
+                    const Text(
+                      'Connect to a server to view live, read-only data.',
+                    ),
                     const SizedBox(height: TdSpacing.related),
                     TdButton(
                       label: 'Return to connection',
@@ -326,13 +329,12 @@ class _Content extends ConsumerWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(height: TdSpacing.related),
-                    const Text('Data connection is provided in a later slice.'),
-                    const SizedBox(height: TdSpacing.related),
+                    const SizedBox(height: TdSpacing.sectionDesktop),
                     const Text(
-                      'Server selection changes what is shown in this app. '
-                      'It does not reconnect.',
+                      'Server switching is display-only and does not reconnect.',
                     ),
+                    const SizedBox(height: TdSpacing.related),
+                    DashboardPage(destination: destination),
                   ],
                 ),
         ),
@@ -342,9 +344,8 @@ class _Content extends ConsumerWidget {
 }
 
 String _scopeFor(AppDestination destination) => switch (destination) {
-  AppDestination.home => 'Dashboard content is not available in this slice.',
-  AppDestination.alerts => 'Alert data is not available in this slice.',
-  AppDestination.manage =>
-    'Management commands are not available in this slice.',
-  AppDestination.jobs => 'Job feed content is not available in this slice.',
+  AppDestination.home => 'Read-only server overview.',
+  AppDestination.alerts => 'Read-only alerts from the connected server.',
+  AppDestination.manage => 'Read-only inventory and service status.',
+  AppDestination.jobs => 'Read-only job history from the connected server.',
 };

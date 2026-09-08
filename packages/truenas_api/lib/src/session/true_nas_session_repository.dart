@@ -7,6 +7,19 @@ import 'server_summary.dart';
 
 typedef JsonRpcClientFactory = JsonRpcClient Function(RpcTransport transport);
 
+/// The only application-protocol capability exposed after authentication.
+/// It deliberately accepts no parameters and only permits safe inventory reads.
+abstract interface class AuthenticatedSessionQueries {
+  Future<Object?> query(String method);
+}
+
+final class SessionQueryException implements Exception {
+  const SessionQueryException();
+
+  /// Never expose remote messages or payloads to the app layer.
+  String get userMessage => 'Unable to load server data safely.';
+}
+
 abstract interface class SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
@@ -18,7 +31,8 @@ abstract interface class SessionRepository {
   Future<void> close();
 }
 
-final class TrueNasSessionRepository implements SessionRepository {
+final class TrueNasSessionRepository
+    implements SessionRepository, AuthenticatedSessionQueries {
   TrueNasSessionRepository({
     required RpcConnector connector,
     CredentialVault? credentialVault,
@@ -32,6 +46,29 @@ final class TrueNasSessionRepository implements SessionRepository {
   final JsonRpcClientFactory _clientFactory;
   JsonRpcClient? _client;
   var _nextId = 0;
+
+  static const readOnlyMethods = <String>{
+    'system.info',
+    'pool.query',
+    'pool.dataset.query',
+    'service.query',
+    'alert.list',
+    'core.get_jobs',
+  };
+
+  @override
+  Future<Object?> query(String method) async {
+    // Validate before obtaining the client or writing a frame. This is the
+    // security boundary between dashboard code and JSON-RPC.
+    if (!readOnlyMethods.contains(method)) throw const SessionQueryException();
+    final client = _client;
+    if (client == null) throw const SessionQueryException();
+    try {
+      return await client.call(method, id: _id());
+    } on Object {
+      throw const SessionQueryException();
+    }
+  }
 
   @override
   Future<ServerSummary> connect({

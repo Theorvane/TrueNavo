@@ -10,6 +10,38 @@ const sentinel = 'test-api-key';
 
 void main() {
   const account = 'test-account';
+  test(
+    'authenticated queries only permit the fixed read-only allowlist',
+    () async {
+      final transport = InMemoryTransport();
+      final repository = TrueNasSessionRepository(
+        connector: FakeConnector(transport),
+      );
+      final connected = repository.connect(
+        serverInput: 'https://nas.example',
+        apiKey: sentinel,
+        username: account,
+      );
+      await _respondHandshake(transport);
+      await connected;
+
+      await expectLater(
+        repository.query('pool.delete'),
+        throwsA(isA<SessionQueryException>()),
+      );
+      expect(transport.sentFrames, hasLength(4));
+
+      final frameCountBeforeQuery = transport.sentFrames.length;
+      final query = repository.query('pool.query');
+      await _respondToNextRequest(
+        transport,
+        afterFrameCount: frameCountBeforeQuery,
+        result: const <Object?>[],
+      );
+      expect(await query, isEmpty);
+      await repository.close();
+    },
+  );
   test('either login state field is understood and nothing else is', () async {
     for (final field in const ['response_type', 'state']) {
       final transport = InMemoryTransport();
@@ -848,6 +880,16 @@ Future<void> _respondHandshake(
 Future<void> _respondWith(InMemoryTransport transport, Object result) async {
   await _waitForSend(transport, transport.sentFrames.length + 1);
   final id = jsonDecode(transport.sentFrames.last)['id'];
+  transport.add(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': result}));
+}
+
+Future<void> _respondToNextRequest(
+  InMemoryTransport transport, {
+  required int afterFrameCount,
+  required Object result,
+}) async {
+  await _waitForSend(transport, afterFrameCount + 1);
+  final id = jsonDecode(transport.sentFrames[afterFrameCount])['id'];
   transport.add(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': result}));
 }
 
