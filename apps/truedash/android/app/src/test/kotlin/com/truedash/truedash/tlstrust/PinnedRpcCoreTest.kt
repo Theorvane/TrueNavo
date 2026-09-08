@@ -47,6 +47,38 @@ class PinnedRpcCoreTest {
     }
 
     @Test
+    fun `an open delivered before the handle is returned still opens a session`() {
+        // OkHttp dispatches callbacks on its own threads, so `onOpen` can land
+        // while `newWebSocket` has not returned yet. Dropping that open left the
+        // caller waiting for its timeout instead of connecting.
+        val transport = RacingTransport()
+        val core = core(transport)
+        val responses = mutableListOf<Map<String, Any>>()
+        core.connect(connectRequest()) { responses.add(it) }
+        transport.opened.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        for (attempt in 0 until 200) {
+            if (responses.isNotEmpty()) break
+            Thread.sleep(10)
+        }
+        assertEquals(
+            mapOf(
+                "protocolVersion" to 1,
+                "operationId" to operationId,
+                "sessionId" to sessionId,
+            ),
+            responses.single(),
+        )
+
+        // The session must be usable, which proves it holds the real handle.
+        val sent = mutableListOf<Map<String, Any>>()
+        core.send(
+            mapOf("protocolVersion" to 1, "sessionId" to sessionId, "frame" to "{}"),
+        ) { sent.add(it) }
+        assertEquals(mapOf("protocolVersion" to 1, "sessionId" to sessionId), sent.single())
+        assertEquals(listOf("{}"), transport.socket.sent)
+    }
+
+    @Test
     fun `no frame is sent before the socket opens`() {
         val transport = FakeTransport()
         val core = core(transport)
@@ -200,7 +232,7 @@ class PinnedRpcCoreTest {
         assertEquals("pinnedReconnectFailed", second.single()["failureCode"])
     }
 
-    private fun core(transport: FakeTransport) = PinnedRpcCore(
+    private fun core(transport: PinnedTransportFactory) = PinnedRpcCore(
         transports = transport,
         now = { Date(0) },
         newSessionId = { sessionId },
@@ -216,6 +248,25 @@ class PinnedRpcCoreTest {
             events: PinnedWebSocketEvents,
         ): PinnedWebSocket {
             this.events = events
+            return socket
+        }
+    }
+
+    /// Raises `onOpen` from another thread before `connect` returns its handle.
+    private class RacingTransport : PinnedTransportFactory {
+        val socket = FakeSocket()
+        val opened = java.util.concurrent.CountDownLatch(1)
+
+        override fun connect(
+            request: PinnedRpcRequest,
+            verifyDate: Date,
+            events: PinnedWebSocketEvents,
+        ): PinnedWebSocket {
+            Thread {
+                events.onOpen()
+                opened.countDown()
+            }.start()
+            Thread.sleep(50)
             return socket
         }
     }

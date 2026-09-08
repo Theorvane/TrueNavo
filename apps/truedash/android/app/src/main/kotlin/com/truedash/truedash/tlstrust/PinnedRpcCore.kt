@@ -3,6 +3,8 @@ package com.truedash.truedash.tlstrust
 import java.util.ArrayDeque
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /// The parsed, fully validated connect request. Construction is the only place
 /// an authority, path, or digest can enter the pinned transport.
@@ -56,6 +58,8 @@ internal fun interface PinnedTransportFactory {
 /// Per-process core for exact leaf-pin WebSocket sessions. It is deliberately
 /// independent of [PresentedLeafProbeCore]: a probe is never a transport and a
 /// transport is created fresh for each connect request.
+private const val SOCKET_HANDOFF_TIMEOUT_MILLIS = 5_000L
+
 internal class PinnedRpcCore(
     private val transports: PinnedTransportFactory = OkHttpPinnedTransportFactory(),
     private val now: () -> Date = { Date() },
@@ -89,7 +93,7 @@ internal class PinnedRpcCore(
         }
         val abandoned = synchronized(lock) {
             val live = operations[request.operationId] === operation
-            if (live) operation.socket = socket
+            operation.attach(socket)
             !live
         }
         if (abandoned) socket.close()
@@ -211,13 +215,17 @@ internal class PinnedRpcCore(
 
     private inner class Events(private val operation: Operation) : PinnedWebSocketEvents {
         override fun onOpen() {
+            // The transport is only returned by `connect`, so an open callback
+            // delivered on the client's own thread can arrive before this
+            // operation owns its handle. Wait for that hand-off instead of
+            // dropping the session and leaving the caller to time out.
+            val socket = operation.awaitSocket() ?: return
             val response: Map<String, Any>
             synchronized(lock) {
                 if (operations[operation.request.operationId] !== operation) return
                 if (operation.sessionId != null) return
                 var id = newSessionId()
                 while (sessions.containsKey(id)) id = newSessionId()
-                val socket = operation.socket ?: return
                 operation.sessionId = id
                 sessions[id] = Session(socket, operation.request.operationId)
                 response = mapOf(
@@ -268,10 +276,25 @@ internal class PinnedRpcCore(
     ) {
         @Volatile
         var socket: PinnedWebSocket? = null
+            private set
+
+        private val attached = CountDownLatch(1)
 
         @Volatile
         var sessionId: String? = null
         private var completed = false
+
+        fun attach(value: PinnedWebSocket) {
+            socket = value
+            attached.countDown()
+        }
+
+        /// Bounded so a backend that never returns a handle cannot pin a
+        /// callback thread; the caller then treats the open as not owned.
+        fun awaitSocket(): PinnedWebSocket? {
+            attached.await(SOCKET_HANDOFF_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            return socket
+        }
 
         fun finish(response: Map<String, Any>) {
             synchronized(this) {
