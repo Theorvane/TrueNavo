@@ -104,6 +104,7 @@ final class AuthenticatedSession {
     required this.profileId,
     required this.repository,
     required this.availableMethodNames,
+    this.version = 'unknown',
   });
 
   /// The durable profile selected by the successful registration that created
@@ -112,6 +113,9 @@ final class AuthenticatedSession {
   final String profileId;
   final SessionRepository repository;
   final Set<String> availableMethodNames;
+
+  /// Memory-only compatibility context for the active authenticated session.
+  final String version;
 }
 
 class ConnectionController extends Notifier<ConnectionState> {
@@ -583,6 +587,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         profileId: registration.snapshot.selectedProfileId!,
         repository: repository,
         availableMethodNames: Set.unmodifiable(summary.availableMethodNames),
+        version: summary.version,
       );
       state = ConnectionSucceeded(summary);
     } catch (error) {

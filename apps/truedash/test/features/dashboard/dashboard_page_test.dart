@@ -62,12 +62,67 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('manage refreshes its own load state', (tester) async {
+  testWidgets('storage presents unsupported sections without overflow', (
+    tester,
+  ) async {
+    await _pumpDashboard(
+      tester,
+      AppDestination.storage,
+      const DashboardStorage(
+        pools: [],
+        datasets: [],
+        poolsAvailable: true,
+        datasetsAvailable: false,
+      ),
+    );
+
+    expect(find.text('VDEVs and disks unavailable'), findsOneWidget);
+    expect(find.text('Snapshots unavailable'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('storage refreshes its own load state', (tester) async {
     await _expectSecondaryRefresh(
       tester,
-      AppDestination.manage,
-      const DashboardManage(pools: [], datasets: [], services: []),
+      AppDestination.storage,
+      const DashboardStorage(
+        pools: [],
+        datasets: [],
+        poolsAvailable: true,
+        datasetsAvailable: true,
+      ),
     );
+  });
+
+  testWidgets('workloads filters normalized services client-side', (
+    tester,
+  ) async {
+    await _pumpDashboard(
+      tester,
+      AppDestination.workloads,
+      const DashboardWorkloads(
+        services: [
+          DashboardService(
+            name: 'ssh',
+            status: 'Running',
+            statusKind: DashboardStatus.success,
+          ),
+          DashboardService(
+            name: 'nfs',
+            status: 'Stopped',
+            statusKind: DashboardStatus.neutral,
+          ),
+        ],
+        servicesAvailable: true,
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('workloads-status-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Running').last);
+    await tester.pumpAndSettle();
+    expect(find.text('ssh'), findsOneWidget);
+    expect(find.text('nfs'), findsNothing);
   });
 
   testWidgets('jobs refresh their own load state', (tester) async {
@@ -143,7 +198,12 @@ Future<void> _expectSecondaryRefresh(
       ],
       child: MaterialApp(
         theme: TrueDashTheme.light(),
-        home: Scaffold(body: DashboardPage(destination: destination)),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: DashboardPage(destination: destination),
+          ),
+        ),
       ),
     ),
   );

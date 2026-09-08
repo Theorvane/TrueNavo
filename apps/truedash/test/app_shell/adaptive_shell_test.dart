@@ -10,7 +10,7 @@ import 'package:truedash_design_system/truedash_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
 void main() {
-  for (final width in [599.0, 600.0, 999.0, 1000.0]) {
+  for (final width in [320.0, 599.0, 600.0, 999.0, 1000.0]) {
     testWidgets('uses the approved navigation at ${width.toInt()}', (
       tester,
     ) async {
@@ -56,7 +56,7 @@ void main() {
     expect(find.text('Jobs'), findsWidgets);
     expect(
       tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
-      3,
+      AppDestination.jobs.index,
     );
   });
 
@@ -160,8 +160,9 @@ Finder _nativeDestinationAction(
 
 String _scopeFor(AppDestination destination) => switch (destination) {
   AppDestination.home => 'Read-only server overview.',
+  AppDestination.storage => 'Read-only pools and dataset inventory.',
+  AppDestination.workloads => 'Read-only service inventory and status.',
   AppDestination.alerts => 'Read-only alerts from the connected server.',
-  AppDestination.manage => 'Read-only inventory and service status.',
   AppDestination.jobs => 'Read-only job history from the connected server.',
 };
 

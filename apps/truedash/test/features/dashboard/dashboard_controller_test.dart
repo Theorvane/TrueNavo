@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash/features/connection/connection_controller.dart';
 import 'package:truedash/features/dashboard/dashboard_controller.dart';
+import 'package:truedash/features/dashboard/dashboard_capabilities.dart';
 import 'package:truedash/features/dashboard/dashboard_repository.dart';
 import 'package:truedash/features/server_profiles/server_profile.dart';
 import 'package:truedash/features/server_profiles/server_profiles_controller.dart';
@@ -16,6 +17,139 @@ void main() {
 
     expect(result, isA<DashboardUnavailable>());
     expect(queries.calledMethods, isEmpty);
+  });
+
+  test('classifies versions without expanding the bounded RPC surface', () {
+    final capabilities = DashboardCapabilities.forSession(
+      version: 'TrueNAS-SCALE-25.10.1',
+      availableMethodNames: const {'pool.query', 'vdev.query'},
+    );
+    final v25_04 = DashboardCapabilities.forSession(
+      version: 'TrueNAS-SCALE-25.04.2',
+      availableMethodNames: const {},
+    );
+    final v26Plus = DashboardCapabilities.forSession(
+      version: 'TrueNAS-SCALE-26.0',
+      availableMethodNames: const {},
+    );
+    final unsupported = DashboardCapabilities.forSession(
+      version: '24.10.3',
+      availableMethodNames: const {},
+    );
+
+    expect(capabilities.versionFamily, DashboardVersionFamily.v25_10);
+    expect(v25_04.versionFamily, DashboardVersionFamily.v25_04);
+    expect(v26Plus.versionFamily, DashboardVersionFamily.v26Plus);
+    expect(
+      unsupported.versionFamily,
+      DashboardVersionFamily.unknownUnsupported,
+    );
+    expect(capabilities.supports(DashboardFeature.pools), isTrue);
+    expect(capabilities.supports(DashboardFeature.vdevs), isFalse);
+    expect(capabilities.allowedMethods, const {'pool.query'});
+  });
+
+  test(
+    'loads bounded storage with dataset pool context and no unsupported RPCs',
+    () async {
+      final queries = _Queries(
+        results: {
+          'pool.query': [
+            {'name': 'tank', 'status': 'HEALTHY'},
+          ],
+          'pool.dataset.query': [
+            {'name': 'tank/media'},
+          ],
+        },
+      );
+
+      final result = await DashboardRepository(queries)
+          .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+      final storage = (result as DashboardData<DashboardStorage>).value;
+      expect(storage.pools.single.name, 'tank');
+      expect(storage.datasets.single.poolName, 'tank');
+      expect(storage.datasets.single.name, 'tank/media');
+      expect(queries.calledMethods, ['pool.query', 'pool.dataset.query']);
+    },
+  );
+
+  test('keeps partial storage when dataset inventory is unavailable', () async {
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          {'name': 'tank', 'status': 'HEALTHY'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.poolsAvailable, isTrue);
+    expect(storage.datasetsAvailable, isFalse);
+  });
+
+  test('returns failure when every advertised storage query fails', () async {
+    final queries = _Queries(
+      failingMethods: const {'pool.query', 'pool.dataset.query'},
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    expect(result, isA<DashboardFailure<DashboardStorage>>());
+    expect(queries.calledMethods, ['pool.query', 'pool.dataset.query']);
+  });
+
+  test('returns unavailable when no storage query is advertised', () async {
+    final queries = _Queries();
+
+    final result = await DashboardRepository(queries).loadStorage(const {});
+
+    expect(result, isA<DashboardUnavailable<DashboardStorage>>());
+    expect(queries.calledMethods, isEmpty);
+  });
+
+  test(
+    'keeps partial storage when an advertised companion query fails',
+    () async {
+      final queries = _Queries(
+        results: {
+          'pool.query': [
+            {'name': 'tank', 'status': 'HEALTHY'},
+          ],
+        },
+        failingMethods: const {'pool.dataset.query'},
+      );
+
+      final result = await DashboardRepository(queries)
+          .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+      final storage = (result as DashboardData<DashboardStorage>).value;
+      expect(storage.poolsAvailable, isTrue);
+      expect(storage.datasetsAvailable, isFalse);
+      expect(storage.pools.single.name, 'tank');
+      expect(queries.calledMethods, ['pool.query', 'pool.dataset.query']);
+    },
+  );
+
+  test('loads workloads only through service.query', () async {
+    final queries = _Queries(
+      results: {
+        'service.query': [
+          {'service': 'ssh', 'state': 'RUNNING'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadWorkloads(const {'service.query'});
+
+    final workloads = (result as DashboardData<DashboardWorkloads>).value;
+    expect(workloads.services.single.statusKind, DashboardStatus.success);
+    expect(queries.calledMethods, ['service.query']);
   });
 
   test('maps a supported jobs response into bounded display items', () async {
@@ -135,6 +269,35 @@ void main() {
     expect(home.pools.first.capacityPercent, 100);
     expect(home.alerts.first.status, DashboardStatus.warning);
     expect(queries.calledMethods, ['system.info', 'pool.query', 'alert.list']);
+  });
+
+  test('bounds explicit pool status for home and storage', () async {
+    final longStatus = 'x' * 200;
+    final queries = _Queries(
+      results: {
+        'system.info': {'hostname': 'atlas', 'version': '24.10'},
+        'pool.query': [
+          {'name': 'tank', 'status': longStatus},
+        ],
+      },
+    );
+    final repository = DashboardRepository(queries);
+
+    final homeResult = await repository.loadHome(const {
+      'system.info',
+      'pool.query',
+    });
+    final storageResult = await repository.loadStorage(const {'pool.query'});
+
+    final homePool =
+        (homeResult as DashboardData<DashboardHome>).value.pools.single;
+    final storagePool =
+        (storageResult as DashboardData<DashboardStorage>).value.pools.single;
+    for (final pool in [homePool, storagePool]) {
+      expect(pool.status, '${'x' * 159}…');
+      expect(pool.status.length, 160);
+      expect(pool.statusKind, DashboardStatus.info);
+    }
   });
 
   test('normalizes pool capacity according to its source field', () async {
@@ -265,7 +428,7 @@ void main() {
     },
   );
 
-  test('keeps inventory loading confined to Manage', () async {
+  test('keeps storage inventory loading outside Home', () async {
     final queries = _Queries(
       results: {
         'system.info': {'hostname': 'atlas', 'version': '24.10'},
@@ -290,12 +453,11 @@ void main() {
 
     final homeResult = await repository.loadHome(methods);
     expect(queries.calledMethods, ['system.info', 'pool.query']);
-    final manageResult = await repository.loadManage(methods);
+    final manageResult = await repository.loadStorage(methods);
 
     expect(homeResult, isA<DashboardData<DashboardHome>>());
-    final manage = (manageResult as DashboardData<DashboardManage>).value;
+    final manage = (manageResult as DashboardData<DashboardStorage>).value;
     expect(manage.datasets, hasLength(50));
-    expect(manage.services, hasLength(50));
   });
 
   test('keeps core home state when advertised alert query fails', () async {

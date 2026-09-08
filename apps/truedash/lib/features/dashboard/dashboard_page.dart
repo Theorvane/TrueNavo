@@ -36,7 +36,7 @@ class DashboardPage extends ConsumerWidget {
               'Connect to the selected server to view live, read-only data.',
         ),
         DashboardFailure() => _failure(ref, key),
-        DashboardData(:final value) => _data(value, ref, key),
+        DashboardData(:final value) => _data(context, value, ref, key),
       },
     );
   }
@@ -49,12 +49,18 @@ class DashboardPage extends ConsumerWidget {
     onAction: () => ref.invalidate(dashboardLoadProvider(key)),
   );
 
-  Widget _data(Object? value, WidgetRef ref, String key) => Column(
+  Widget _data(
+    BuildContext context,
+    Object? value,
+    WidgetRef ref,
+    String key,
+  ) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       if (value is DashboardHome) _home(value, ref, key),
       if (value is List<DashboardAlert>) _alerts(value, ref, key),
-      if (value is DashboardManage) _manage(value, ref, key),
+      if (value is DashboardStorage) _storage(context, value, ref, key),
+      if (value is DashboardWorkloads) _workloads(value, ref, key),
       if (value is DashboardJobs) _jobs(value, ref, key),
     ],
   );
@@ -214,105 +220,74 @@ class DashboardPage extends ConsumerWidget {
     ),
   );
 
-  Widget _alerts(List<DashboardAlert> alerts, WidgetRef ref, String key) {
-    final groups = <DashboardStatus, List<DashboardAlert>>{
-      DashboardStatus.critical: [],
-      DashboardStatus.warning: [],
-      DashboardStatus.info: [],
-    };
-    for (final alert in alerts) {
-      (groups[alert.status] ?? groups[DashboardStatus.info])!.add(alert);
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _titleWithRefresh('Alerts', ref, key),
-        const SizedBox(height: TdSpacing.inline),
-        Text(
-          'Showing ${alerts.length} active alerts from the current server state.',
-        ),
-        const SizedBox(height: TdSpacing.sectionMobile),
-        _alertGroup(
-          'Critical',
-          DashboardStatus.critical,
-          groups[DashboardStatus.critical]!,
-        ),
-        _alertGroup(
-          'Warnings',
-          DashboardStatus.warning,
-          groups[DashboardStatus.warning]!,
-        ),
-        _alertGroup(
-          'Information',
-          DashboardStatus.info,
-          groups[DashboardStatus.info]!,
-        ),
-      ],
-    );
-  }
+  Widget _alerts(List<DashboardAlert> alerts, WidgetRef ref, String key) =>
+      _FilteredAlerts(
+        alerts: alerts,
+        title: _titleWithRefresh('Alerts', ref, key),
+      );
 
-  Widget _alertGroup(
-    String title,
-    DashboardStatus status,
-    List<DashboardAlert> alerts,
-  ) => Padding(
-    padding: const EdgeInsets.only(bottom: TdSpacing.related),
-    child: TdPanel(
-      title: '$title (${alerts.length})',
-      child: alerts.isEmpty
-          ? Text('No ${title.toLowerCase()} alerts.', style: TdTypography.body)
-          : Column(
-              children: [
-                for (final alert in alerts) ...[
-                  Semantics(
-                    label: '${alert.level} alert: ${alert.message}',
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Flexible(
-                          child: TdStatusBadge(
-                            status: _status(status),
-                            label: alert.level,
-                          ),
-                        ),
-                        const SizedBox(width: TdSpacing.related),
-                        Expanded(
-                          child: Text(alert.message, style: TdTypography.body),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (alert != alerts.last)
-                    const Divider(height: TdSpacing.group),
-                ],
-              ],
-            ),
-    ),
-  );
-
-  Widget _manage(DashboardManage manage, WidgetRef ref, String key) => Column(
+  Widget _storage(
+    BuildContext context,
+    DashboardStorage storage,
+    WidgetRef ref,
+    String key,
+  ) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      _titleWithRefresh('Manage inventory', ref, key),
+      _titleWithRefresh('Storage', ref, key),
       const SizedBox(height: TdSpacing.inline),
-      const Text('Read-only inventory and service health.'),
+      const Text('Read-only pool and dataset inventory.'),
       const SizedBox(height: TdSpacing.sectionMobile),
       _inventoryPanel(
         'Pools',
-        manage.pools.map(_poolCapacity).toList(),
-        'No pools were provided.',
+        storage.pools.map((pool) => _storagePoolRow(context, pool)).toList(),
+        storage.poolsAvailable
+            ? 'No pools were provided.'
+            : 'Pool inventory is unavailable on this server.',
       ),
       const SizedBox(height: TdSpacing.related),
       _inventoryPanel(
         'Datasets',
-        manage.datasets.map((dataset) => _namedRow(dataset.name)).toList(),
-        'No datasets were provided.',
+        storage.datasets
+            .map((dataset) => _datasetRow(context, dataset))
+            .toList(),
+        storage.datasetsAvailable
+            ? 'No datasets were provided.'
+            : 'Dataset inventory is unavailable on this server.',
       ),
       const SizedBox(height: TdSpacing.related),
-      _inventoryPanel(
-        'Services',
-        manage.services.map(_serviceRow).toList(),
-        'No services were provided.',
+      const TdPanel(
+        title: 'VDEVs and disks unavailable',
+        child: Text(
+          'This read-only console has no approved VDEV or disk query.',
+        ),
+      ),
+      const SizedBox(height: TdSpacing.related),
+      const TdPanel(
+        title: 'Snapshots unavailable',
+        child: Text('This read-only console has no approved snapshot query.'),
+      ),
+    ],
+  );
+
+  Widget _workloads(
+    DashboardWorkloads workloads,
+    WidgetRef ref,
+    String key,
+  ) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _titleWithRefresh('Workloads', ref, key),
+      const SizedBox(height: TdSpacing.inline),
+      const Text('Read-only service inventory and normalized status.'),
+      const SizedBox(height: TdSpacing.sectionMobile),
+      _FilteredWorkloads(services: workloads.services),
+      const SizedBox(height: TdSpacing.related),
+      const TdPanel(
+        title: 'Apps and containers unavailable',
+        child: Text(
+          'This read-only console has no approved apps or containers query.',
+        ),
       ),
     ],
   );
@@ -333,24 +308,29 @@ class DashboardPage extends ConsumerWidget {
               ),
       );
 
-  Widget _namedRow(String name) => Semantics(
-    label: 'Dataset $name',
-    child: Text(name, style: TdTypography.body),
-  );
-
-  Widget _serviceRow(DashboardService service) => Semantics(
-    label: '${service.name}, ${service.status}',
-    child: Row(
-      children: [
-        Expanded(child: Text(service.name, style: TdTypography.body)),
-        const SizedBox(width: TdSpacing.inline),
-        Flexible(
-          child: TdStatusBadge(
-            status: _status(service.statusKind),
-            label: service.status,
-          ),
+  Widget _datasetRow(BuildContext context, DashboardDataset dataset) =>
+      Semantics(
+        button: true,
+        label: 'Dataset ${dataset.name}, pool ${dataset.poolName}',
+        child: InkWell(
+          onTap: () => _showDetail(context, 'Dataset details', [
+            ('Dataset', dataset.name),
+            ('Pool context', dataset.poolName),
+          ]),
+          child: Text(dataset.name, style: TdTypography.body),
         ),
-      ],
+      );
+
+  Widget _storagePoolRow(BuildContext context, DashboardPool pool) => Semantics(
+    button: true,
+    label: '${pool.name}, ${pool.status}',
+    child: InkWell(
+      onTap: () => _showDetail(context, 'Pool details', [
+        ('Pool', pool.name),
+        ('Status', pool.status),
+        ('Capacity', pool.capacity ?? 'Capacity unavailable'),
+      ]),
+      child: _poolCapacity(pool),
     ),
   );
 
@@ -361,47 +341,7 @@ class DashboardPage extends ConsumerWidget {
       const SizedBox(height: TdSpacing.inline),
       Text('${jobs.items.length} recent jobs reported by the server.'),
       const SizedBox(height: TdSpacing.sectionMobile),
-      TdPanel(
-        title: 'Recent jobs',
-        child: jobs.items.isEmpty
-            ? const Text('No jobs were provided.')
-            : Column(
-                children: [
-                  for (final job in jobs.items) ...[
-                    Semantics(
-                      label: '${job.name}, job ${job.id}, ${job.status}',
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(job.name, style: TdTypography.bodyLarge),
-                                const SizedBox(height: TdSpacing.inlineTight),
-                                Text(
-                                  'Job ID: ${job.id}',
-                                  style: TdTypography.metadata,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: TdSpacing.inline),
-                          Flexible(
-                            child: TdStatusBadge(
-                              status: _status(job.statusKind),
-                              label: job.status,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (job != jobs.items.last)
-                      const Divider(height: TdSpacing.group),
-                  ],
-                ],
-              ),
-      ),
+      _FilteredJobs(jobs: jobs.items),
     ],
   );
 
@@ -427,4 +367,300 @@ class DashboardPage extends ConsumerWidget {
     DashboardStatus.info => TdStatus.info,
     DashboardStatus.stale => TdStatus.stale,
   };
+}
+
+enum _StatusFilter { all, critical, warning, info, running, neutral }
+
+String _filterLabel(_StatusFilter filter) => switch (filter) {
+  _StatusFilter.all => 'All statuses',
+  _StatusFilter.critical => 'Critical',
+  _StatusFilter.warning => 'Warning',
+  _StatusFilter.info => 'Information',
+  _StatusFilter.running => 'Running',
+  _StatusFilter.neutral => 'Inactive',
+};
+
+bool _matchesFilter(DashboardStatus status, _StatusFilter filter) =>
+    switch (filter) {
+      _StatusFilter.all => true,
+      _StatusFilter.critical => status == DashboardStatus.critical,
+      _StatusFilter.warning => status == DashboardStatus.warning,
+      _StatusFilter.info => status == DashboardStatus.info,
+      _StatusFilter.running => status == DashboardStatus.success,
+      _StatusFilter.neutral => status == DashboardStatus.neutral,
+    };
+
+TdStatus _tdStatus(DashboardStatus status) => switch (status) {
+  DashboardStatus.neutral => TdStatus.neutral,
+  DashboardStatus.success => TdStatus.success,
+  DashboardStatus.warning => TdStatus.warning,
+  DashboardStatus.critical => TdStatus.critical,
+  DashboardStatus.info => TdStatus.info,
+  DashboardStatus.stale => TdStatus.stale,
+};
+
+class _StatusFilterField extends StatelessWidget {
+  const _StatusFilterField({
+    required this.fieldKey,
+    required this.value,
+    required this.onChanged,
+  });
+  final Key fieldKey;
+  final _StatusFilter value;
+  final ValueChanged<_StatusFilter> onChanged;
+
+  @override
+  Widget build(BuildContext context) => DropdownButtonFormField<_StatusFilter>(
+    key: fieldKey,
+    initialValue: value,
+    isExpanded: true,
+    decoration: const InputDecoration(labelText: 'Status filter'),
+    items: [
+      for (final filter in _StatusFilter.values)
+        DropdownMenuItem(value: filter, child: Text(_filterLabel(filter))),
+    ],
+    onChanged: (filter) {
+      if (filter != null) onChanged(filter);
+    },
+  );
+}
+
+class _FilteredAlerts extends StatefulWidget {
+  const _FilteredAlerts({required this.alerts, required this.title});
+  final List<DashboardAlert> alerts;
+  final Widget title;
+
+  @override
+  State<_FilteredAlerts> createState() => _FilteredAlertsState();
+}
+
+class _FilteredAlertsState extends State<_FilteredAlerts> {
+  var _filter = _StatusFilter.all;
+
+  @override
+  Widget build(BuildContext context) {
+    final alerts = widget.alerts
+        .where((alert) => _matchesFilter(alert.status, _filter))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        widget.title,
+        const SizedBox(height: TdSpacing.inline),
+        _StatusFilterField(
+          fieldKey: const Key('alerts-severity-filter'),
+          value: _filter,
+          onChanged: (value) => setState(() => _filter = value),
+        ),
+        const SizedBox(height: TdSpacing.related),
+        Text(
+          'Showing ${alerts.length} active alerts from the current server state.',
+        ),
+        const SizedBox(height: TdSpacing.related),
+        TdPanel(
+          title: 'Alerts (${alerts.length})',
+          child: alerts.isEmpty
+              ? const Text('No alerts match this filter.')
+              : Column(
+                  children: [
+                    for (final alert in alerts) ...[
+                      Semantics(
+                        button: true,
+                        label: '${alert.level} alert: ${alert.message}',
+                        child: InkWell(
+                          onTap: () => _showDetail(context, 'Alert details', [
+                            ('Severity', alert.level),
+                            ('Message', alert.message),
+                          ]),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Flexible(
+                                child: TdStatusBadge(
+                                  status: _tdStatus(alert.status),
+                                  label: alert.level,
+                                ),
+                              ),
+                              const SizedBox(width: TdSpacing.related),
+                              Expanded(child: Text(alert.message)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (alert != alerts.last)
+                        const Divider(height: TdSpacing.group),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilteredWorkloads extends StatefulWidget {
+  const _FilteredWorkloads({required this.services});
+  final List<DashboardService> services;
+
+  @override
+  State<_FilteredWorkloads> createState() => _FilteredWorkloadsState();
+}
+
+class _FilteredWorkloadsState extends State<_FilteredWorkloads> {
+  var _filter = _StatusFilter.all;
+
+  @override
+  Widget build(BuildContext context) {
+    final services = widget.services
+        .where((service) => _matchesFilter(service.statusKind, _filter))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _StatusFilterField(
+          fieldKey: const Key('workloads-status-filter'),
+          value: _filter,
+          onChanged: (value) => setState(() => _filter = value),
+        ),
+        const SizedBox(height: TdSpacing.related),
+        TdPanel(
+          title: 'Services (${services.length})',
+          child: services.isEmpty
+              ? const Text('No services match this filter.')
+              : Column(
+                  children: [
+                    for (final service in services) ...[
+                      Semantics(
+                        button: true,
+                        label: '${service.name}, ${service.status}',
+                        child: InkWell(
+                          onTap: () => _showDetail(context, 'Service details', [
+                            ('Service', service.name),
+                            ('Status', service.status),
+                          ]),
+                          child: Row(
+                            children: [
+                              Expanded(child: Text(service.name)),
+                              const SizedBox(width: TdSpacing.inline),
+                              Flexible(
+                                child: TdStatusBadge(
+                                  status: _tdStatus(service.statusKind),
+                                  label: service.status,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (service != services.last)
+                        const Divider(height: TdSpacing.group),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilteredJobs extends StatefulWidget {
+  const _FilteredJobs({required this.jobs});
+  final List<DashboardJob> jobs;
+
+  @override
+  State<_FilteredJobs> createState() => _FilteredJobsState();
+}
+
+class _FilteredJobsState extends State<_FilteredJobs> {
+  var _filter = _StatusFilter.all;
+
+  @override
+  Widget build(BuildContext context) {
+    final jobs = widget.jobs
+        .where((job) => _matchesFilter(job.statusKind, _filter))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _StatusFilterField(
+          fieldKey: const Key('jobs-status-filter'),
+          value: _filter,
+          onChanged: (value) => setState(() => _filter = value),
+        ),
+        const SizedBox(height: TdSpacing.related),
+        TdPanel(
+          title: 'Recent jobs (${jobs.length})',
+          child: jobs.isEmpty
+              ? const Text('No jobs match this filter.')
+              : Column(
+                  children: [
+                    for (final job in jobs) ...[
+                      Semantics(
+                        button: true,
+                        label: '${job.name}, job ${job.id}, ${job.status}',
+                        child: InkWell(
+                          onTap: () => _showDetail(context, 'Job details', [
+                            ('Job ID', job.id),
+                            ('Job', job.name),
+                            ('Status', job.status),
+                          ]),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  job.name,
+                                  style: TdTypography.bodyLarge,
+                                ),
+                              ),
+                              const SizedBox(width: TdSpacing.inline),
+                              Flexible(
+                                child: TdStatusBadge(
+                                  status: _tdStatus(job.statusKind),
+                                  label: job.status,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (job != jobs.last)
+                        const Divider(height: TdSpacing.group),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+void _showDetail(
+  BuildContext context,
+  String title,
+  List<(String, String)> fields,
+) {
+  showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final field in fields) ...[
+            Text(field.$1, style: TdTypography.metadata),
+            Text(field.$2),
+            const SizedBox(height: TdSpacing.related),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }
