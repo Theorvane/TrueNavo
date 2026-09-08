@@ -84,7 +84,7 @@ class _AdaptiveShellState extends ConsumerState<AdaptiveShell> {
                             minExtendedWidth: _extendedRailWidth,
                             labelType: desktop
                                 ? null
-                                : NavigationRailLabelType.all,
+                                : NavigationRailLabelType.none,
                             onDestinationSelected: _select,
                             destinations: [
                               for (final destination in AppDestination.values)
@@ -345,7 +345,8 @@ class _Content extends ConsumerWidget {
 
 String _scopeFor(AppDestination destination) => switch (destination) {
   AppDestination.home => 'Read-only server overview.',
+  AppDestination.storage => 'Read-only pools and dataset inventory.',
+  AppDestination.workloads => 'Read-only service inventory and status.',
   AppDestination.alerts => 'Read-only alerts from the connected server.',
-  AppDestination.manage => 'Read-only inventory and service status.',
   AppDestination.jobs => 'Read-only job history from the connected server.',
 };

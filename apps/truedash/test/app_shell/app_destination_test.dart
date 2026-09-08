@@ -5,14 +5,16 @@ void main() {
   test('has exactly the approved destinations in order', () {
     expect(AppDestination.values, [
       AppDestination.home,
+      AppDestination.storage,
+      AppDestination.workloads,
       AppDestination.alerts,
-      AppDestination.manage,
       AppDestination.jobs,
     ]);
     expect(AppDestination.values.map((destination) => destination.label), [
       'Home',
+      'Storage',
+      'Workloads',
       'Alerts',
-      'Manage',
       'Jobs',
     ]);
   });

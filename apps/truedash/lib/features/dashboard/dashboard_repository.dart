@@ -213,15 +213,34 @@ final class _DashboardHomePools {
   final int warningCount;
 }
 
-final class DashboardManage {
-  const DashboardManage({
+final class DashboardStorage {
+  const DashboardStorage({
     required this.pools,
     required this.datasets,
-    required this.services,
+    required this.poolsAvailable,
+    required this.datasetsAvailable,
   });
   final List<DashboardPool> pools;
   final List<DashboardDataset> datasets;
+  final bool poolsAvailable;
+  final bool datasetsAvailable;
+}
+
+/// The method may be unavailable, or it may be advertised but its response
+/// failed. Keep those states distinct for storage availability.
+final class _OptionalList<T> {
+  const _OptionalList({required this.supported, this.items});
+  final bool supported;
+  final List<T>? items;
+}
+
+final class DashboardWorkloads {
+  const DashboardWorkloads({
+    required this.services,
+    required this.servicesAvailable,
+  });
   final List<DashboardService> services;
+  final bool servicesAvailable;
 }
 
 final class DashboardJobs {
@@ -245,8 +264,9 @@ final class DashboardPool {
 }
 
 final class DashboardDataset {
-  const DashboardDataset({required this.name});
+  const DashboardDataset({required this.name, required this.poolName});
   final String name;
+  final String poolName;
 }
 
 final class DashboardService {
@@ -315,23 +335,39 @@ final class DashboardRepository {
     Set<String> methods,
   ) => _load('alert.list', methods, _alerts);
 
-  Future<DashboardResult<DashboardManage>> loadManage(
+  Future<DashboardResult<DashboardStorage>> loadStorage(
     Set<String> methods,
   ) async {
-    const required = {'pool.query', 'pool.dataset.query', 'service.query'};
-    if (!methods.containsAll(required)) return const DashboardUnavailable();
-    try {
-      return DashboardData(
-        DashboardManage(
-          pools: _pools(await _queries.query('pool.query')),
-          datasets: _datasets(await _queries.query('pool.dataset.query')),
-          services: _services(await _queries.query('service.query')),
-        ),
-      );
-    } on Object {
+    final pools = await _optionalList(methods, 'pool.query', _pools);
+    final datasets = await _optionalList(
+      methods,
+      'pool.dataset.query',
+      _datasets,
+    );
+    if (!pools.supported && !datasets.supported) {
+      return const DashboardUnavailable();
+    }
+    if (pools.items == null && datasets.items == null) {
       return const DashboardFailure();
     }
+    return DashboardData(
+      DashboardStorage(
+        pools: pools.items ?? const [],
+        datasets: datasets.items ?? const [],
+        poolsAvailable: pools.items != null,
+        datasetsAvailable: datasets.items != null,
+      ),
+    );
   }
+
+  Future<DashboardResult<DashboardWorkloads>> loadWorkloads(
+    Set<String> methods,
+  ) => _load(
+    'service.query',
+    methods,
+    (value) =>
+        DashboardWorkloads(services: _services(value), servicesAvailable: true),
+  );
 
   Future<DashboardResult<DashboardJobs>> loadJobs(Set<String> methods) => _load(
     'core.get_jobs',
@@ -363,6 +399,26 @@ final class DashboardRepository {
       return DashboardData(parse(await _queries.query(method)));
     } on Object {
       return const DashboardFailure();
+    }
+  }
+
+  /// A supported storage section can fail independently; do not hide useful
+  /// pool or dataset inventory merely because its companion is unavailable.
+  Future<_OptionalList<T>> _optionalList<T>(
+    Set<String> methods,
+    String method,
+    List<T> Function(Object? value) parse,
+  ) async {
+    if (!methods.contains(method)) {
+      return const _OptionalList(supported: false);
+    }
+    try {
+      return _OptionalList(
+        supported: true,
+        items: parse(await _queries.query(method)),
+      );
+    } on Object {
+      return const _OptionalList(supported: true);
     }
   }
 
@@ -450,7 +506,7 @@ final class DashboardRepository {
     final explicitStatus = map['status'];
     final healthy = map['healthy'];
     final status = explicitStatus is String && explicitStatus.trim().isNotEmpty
-        ? explicitStatus
+        ? _text(explicitStatus, fallback: 'Unknown')
         : healthy is bool
         ? (healthy ? 'Healthy' : 'Unhealthy')
         : _text(explicitStatus ?? healthy, fallback: 'Unknown');
@@ -471,9 +527,8 @@ final class DashboardRepository {
   List<DashboardDataset> _datasets(Object? value) =>
       _list(value).take(50).map((item) {
         final map = _map(item);
-        return DashboardDataset(
-          name: _text(map['name'] ?? map['id'], fallback: 'Unnamed'),
-        );
+        final name = _text(map['name'] ?? map['id'], fallback: 'Unnamed');
+        return DashboardDataset(name: name, poolName: name.split('/').first);
       }).toList();
 
   List<DashboardService> _services(Object? value) =>

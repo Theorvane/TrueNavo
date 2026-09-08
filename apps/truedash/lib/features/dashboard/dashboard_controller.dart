@@ -4,6 +4,7 @@ import 'package:truenas_api/truenas_api.dart';
 import '../connection/connection_controller.dart';
 import '../server_profiles/server_profiles_controller.dart';
 import 'dashboard_repository.dart';
+import 'dashboard_capabilities.dart';
 
 /// A live session is usable only for the durable profile that was selected
 /// when it authenticated. Profile switches are intentionally display-only and
@@ -25,9 +26,21 @@ final dashboardRepositoryProvider = Provider<DashboardRepository?>((ref) {
   return null;
 });
 
+/// Capability state is derived from, and discarded with, the active session.
+final dashboardCapabilityRegistryProvider = Provider<DashboardCapabilities?>((
+  ref,
+) {
+  final session = ref.watch(dashboardActiveSessionProvider);
+  if (session == null) return null;
+  return DashboardCapabilities.forSession(
+    version: session.version,
+    availableMethodNames: session.availableMethodNames,
+  );
+});
+
 final dashboardCapabilitiesProvider = Provider<Set<String>>(
   (ref) =>
-      ref.watch(dashboardActiveSessionProvider)?.availableMethodNames ??
+      ref.watch(dashboardCapabilityRegistryProvider)?.allowedMethods ??
       const {},
 );
 
@@ -56,7 +69,8 @@ final class DashboardController {
   Future<DashboardResult<Object?>> load(String view) => switch (view) {
     'home' => _repository.loadHome(_methods),
     'alerts' => _repository.loadAlerts(_methods),
-    'manage' => _repository.loadManage(_methods),
+    'storage' => _repository.loadStorage(_methods),
+    'workloads' => _repository.loadWorkloads(_methods),
     'jobs' => _repository.loadJobs(_methods),
     _ => Future.value(const DashboardUnavailable()),
   };

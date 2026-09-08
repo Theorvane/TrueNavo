@@ -38,7 +38,7 @@ void main() {
   for (final brightness in [Brightness.light, Brightness.dark]) {
     for (final width in [320.0, 390.0, 768.0, 1024.0, 1440.0]) {
       testWidgets(
-        '${brightness.name} reflows safely at $width with large text and reduced motion',
+        '${brightness.name} reflows five destinations safely at $width with large text and reduced motion',
         (tester) async {
           final handle = tester.ensureSemantics();
           try {
@@ -63,6 +63,15 @@ void main() {
                 ? find.byType(NavigationBar)
                 : find.byType(NavigationRail);
             _expectWithinViewport(tester.getRect(navigation), width, 800);
+            expect(AppDestination.values, hasLength(5));
+            for (final destination in AppDestination.values) {
+              _expectNativeDestinationSemantics(
+                tester,
+                _nativeDestinationAction(tester, destination),
+                destination,
+                selected: destination == AppDestination.home,
+              );
+            }
             expect(find.bySemanticsLabel('Choose server'), findsOneWidget);
             _expectWithinViewport(tester.getRect(_serverTrigger), width, 800);
           } finally {
@@ -133,7 +142,7 @@ void main() {
         await _pumpFocusRing(tester);
         _expectPrimaryFocusOverlaps(tester, _returnAction());
 
-        // Wrap through the ordered global action and Home to Alerts.
+        // Wrap through the ordered global action and then follow the catalog.
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await _pumpFocusRing(tester);
         _expectPrimaryFocusOverlaps(tester, _serverTrigger);
@@ -145,15 +154,16 @@ void main() {
         );
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await _pumpFocusRing(tester);
-        final alerts = _nativeDestinationAction(tester, AppDestination.alerts);
-        _expectPrimaryFocusOverlaps(tester, alerts);
+        final successor = AppDestination.values[AppDestination.home.index + 1];
+        final successorAction = _nativeDestinationAction(tester, successor);
+        _expectPrimaryFocusOverlaps(tester, successorAction);
         await tester.sendKeyEvent(LogicalKeyboardKey.space);
         await _pumpFocusRing(tester);
-        expect(find.text(_scopeFor(AppDestination.alerts)), findsOneWidget);
+        expect(find.text(_scopeFor(successor)), findsOneWidget);
         _expectNativeDestinationSemantics(
           tester,
-          alerts,
-          AppDestination.alerts,
+          successorAction,
+          successor,
           selected: true,
         );
       } finally {
@@ -410,7 +420,8 @@ void _expectServerFocusRing(WidgetTester tester) {
 
 String _scopeFor(AppDestination destination) => switch (destination) {
   AppDestination.home => 'Read-only server overview.',
+  AppDestination.storage => 'Read-only pools and dataset inventory.',
+  AppDestination.workloads => 'Read-only service inventory and status.',
   AppDestination.alerts => 'Read-only alerts from the connected server.',
-  AppDestination.manage => 'Read-only inventory and service status.',
   AppDestination.jobs => 'Read-only job history from the connected server.',
 };
