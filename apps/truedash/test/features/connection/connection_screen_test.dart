@@ -280,6 +280,71 @@ void main() {
   });
 
   testWidgets(
+    'a certificate that does not name the server warns before approval',
+    (tester) async {
+      final authority = NormalizedAuthority.parse('https://nas.example');
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            tlsTrustRouteProvider.overrideWithValue(TlsTrustRoute.native),
+            certificateTrustCoordinatorProvider.overrideWithValue(
+              _trustCoordinator(authority: authority, namesAuthority: false),
+            ),
+          ],
+          child: const TrueDashApp(),
+        ),
+      );
+      await tester.enterText(
+        find.byKey(const Key('server-url-field')),
+        'https://nas.example',
+      );
+      await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+      await tester.tap(find.byKey(const Key('connect-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('hostname-mismatch-warning')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('This certificate does not name this server address.'),
+        findsOneWidget,
+      );
+      // The mismatch is a warning, not a block: approval stays reachable and
+      // the fingerprint is still the identity the user is asked to confirm.
+      expect(find.byKey(const Key('approve-trust-button')), findsOneWidget);
+      expect(find.byKey(const Key('current-fingerprint')), findsOneWidget);
+    },
+  );
+
+  testWidgets('a matching certificate shows no mismatch warning', (
+    tester,
+  ) async {
+    final authority = NormalizedAuthority.parse('https://nas.example');
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tlsTrustRouteProvider.overrideWithValue(TlsTrustRoute.native),
+          certificateTrustCoordinatorProvider.overrideWithValue(
+            _trustCoordinator(authority: authority),
+          ),
+        ],
+        child: const TrueDashApp(),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('server-url-field')),
+      'https://nas.example',
+    );
+    await tester.enterText(find.byKey(const Key('api-key-field')), sentinel);
+    await tester.tap(find.byKey(const Key('connect-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('hostname-mismatch-warning')), findsNothing);
+    expect(find.byKey(const Key('approve-trust-button')), findsOneWidget);
+  });
+
+  testWidgets(
     'first trust review shows complete facts before approval and forwards checked intent',
     (tester) async {
       final authority = NormalizedAuthority.parse('https://nas.example');
@@ -488,6 +553,7 @@ void main() {
       token: nativeReview.token,
       authority: authority,
       certificate: TrustReviewCertificate(
+        namesAuthority: true,
         subjectSummary: 'CN: nas.example',
         issuerSummary: 'Example Test CA',
         leafDerSha256: 'NOT-HEX',
@@ -819,11 +885,13 @@ CertificateTrustCoordinator _trustCoordinator({
   required NormalizedAuthority authority,
   PinStore? store,
   PinnedRpcConnector? connector,
+  bool namesAuthority = true,
 }) => CertificateTrustCoordinator(
   pinStore: store ?? InMemoryPinStore(),
   probe: _TrustProbe(
     NativeProbeCertificate(
       PresentedCertificate(
+        namesAuthority: namesAuthority,
         authority: authority,
         platformTrust: PlatformTrust.didNotPass,
         facts: CertificateFacts(

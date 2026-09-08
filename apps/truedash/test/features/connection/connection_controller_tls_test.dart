@@ -86,6 +86,7 @@ void main() {
         probe: _Probe(
           NativeProbeCertificate(
             PresentedCertificate(
+              namesAuthority: true,
               authority: authority,
               platformTrust: PlatformTrust.didNotPass,
               facts: CertificateFacts(
@@ -136,6 +137,7 @@ void main() {
     'review state exposes only display-safe current and previous digests',
     () async {
       final certificate = TrustReviewCertificate(
+        namesAuthority: true,
         subjectSummary: 'nas.example',
         issuerSummary: 'issuer',
         leafDerSha256: _digest,
@@ -1858,6 +1860,7 @@ CertificateTrustCoordinator _coordinator({
   probe: _Probe(
     NativeProbeCertificate(
       PresentedCertificate(
+        namesAuthority: true,
         authority: authority,
         platformTrust: platformTrust,
         facts: CertificateFacts(
@@ -2183,6 +2186,7 @@ NativeProbeCertificate _certificate(
   PlatformTrust trust = PlatformTrust.didNotPass,
 ]) => NativeProbeCertificate(
   PresentedCertificate(
+    namesAuthority: true,
     authority: authority,
     platformTrust: trust,
     facts: CertificateFacts(

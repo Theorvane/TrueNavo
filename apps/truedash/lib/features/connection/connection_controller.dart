@@ -572,10 +572,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         state = ConnectionFirstTrustReview(
           token: review.token,
           authority: review.authority,
-          certificate: _display(
-            review.certificate.facts,
-            review.certificate.platformTrust,
-          ),
+          certificate: _display(review.certificate),
         );
       case ReplacementTrustReview review:
         state = ConnectionReplacementTrustReview(
@@ -585,10 +582,7 @@ class ConnectionController extends Notifier<ConnectionState> {
             leafDerSha256: review.previousPin.leafDerSha256,
             createdAt: review.previousPin.createdAt,
           ),
-          certificate: _display(
-            review.certificate.facts,
-            review.certificate.platformTrust,
-          ),
+          certificate: _display(review.certificate),
         );
       case BlockedTrust blocked:
         if (fallbackToken == null) {
@@ -619,10 +613,8 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
   }
 
-  TrustReviewCertificate _display(
-    CertificateFacts facts,
-    PlatformTrust trust,
-  ) => TrustReviewCertificate.fromFacts(facts, trust);
+  TrustReviewCertificate _display(PresentedCertificate certificate) =>
+      TrustReviewCertificate.fromCertificate(certificate);
 
   ConnectionFailed _safeFailure(Object error) => switch (error) {
     EndpointValidationException(:final message) => ConnectionFailed(message),

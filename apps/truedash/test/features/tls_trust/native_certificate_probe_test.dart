@@ -461,7 +461,8 @@ void main() {
           issuer: hostnameMismatchingLeafIssuer,
           notBefore: hostnameMismatchingLeafNotBefore,
           notAfter: hostnameMismatchingLeafNotAfter,
-          failure: CertificateTrustFailure.hostnameMismatch,
+          failure: null,
+          namesAuthority: false,
         ),
         _FixtureExpectation(
           authority: NormalizedAuthority.parse('https://$expiredLeafName'),
@@ -499,6 +500,10 @@ void main() {
         expect(metadata.notValidAfter, fixture.notAfter);
         if (fixture.failure == null) {
           expect(result.isApprovable, isTrue);
+          expect(
+            result.presentedCertificate!.namesAuthority,
+            fixture.namesAuthority,
+          );
           expect(
             result.presentedCertificate!.facts.subjectSummary,
             'SAN: ${fixture.leafName}',
@@ -831,6 +836,7 @@ final class _FixtureExpectation {
     required this.notBefore,
     required this.notAfter,
     required this.failure,
+    this.namesAuthority = true,
   });
 
   final NormalizedAuthority authority;
@@ -840,6 +846,7 @@ final class _FixtureExpectation {
   final DateTime notBefore;
   final DateTime notAfter;
   final CertificateTrustFailure? failure;
+  final bool namesAuthority;
 }
 
 final class _FakeAppleTlsMethodChannel implements PresentedLeafProbeChannel {

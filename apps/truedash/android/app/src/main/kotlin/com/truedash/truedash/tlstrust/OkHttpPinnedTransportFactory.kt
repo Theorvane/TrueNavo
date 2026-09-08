@@ -6,7 +6,6 @@ import java.security.cert.X509Certificate
 import java.util.Date
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
-import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLSession
@@ -50,7 +49,7 @@ internal class OkHttpPinnedTransportFactory(
         }
         val client = OkHttpClient.Builder()
             .sslSocketFactory(context.socketFactory, trustManager)
-            .hostnameVerifier(RecordingHostnameVerifier(failure))
+            .hostnameVerifier(PinnedAuthorityHostnameVerifier(request, failure))
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .pingInterval(pingIntervalSeconds, TimeUnit.SECONDS)
@@ -160,14 +159,20 @@ internal class PinnedTrustManager(
     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
 }
 
-/// Keeps the platform's certificate hostname policy and reports its refusal as
-/// the typed hostname failure instead of a generic transport error.
-internal class RecordingHostnameVerifier(
+/// A pinned connection's identity is the exact leaf the user approved for this
+/// authority, the way an SSH known-hosts entry works, so a certificate that does
+/// not name the address is not by itself a reason to refuse. The approval screen
+/// says so explicitly before any pin is written. This verifier therefore only
+/// asserts that the connection is still the pinned authority; the digest check
+/// in [PinnedTrustManager] has already run and rejected everything else.
+internal class PinnedAuthorityHostnameVerifier(
+    private val request: PinnedRpcRequest,
     private val failure: RecordedFailure,
-    private val delegate: HostnameVerifier = HttpsURLConnection.getDefaultHostnameVerifier(),
 ) : HostnameVerifier {
     override fun verify(hostname: String?, session: SSLSession?): Boolean {
-        val verified = hostname != null && session != null && delegate.verify(hostname, session)
+        val verified = hostname != null &&
+            session != null &&
+            hostname.removeSurrounding("[", "]").lowercase() == request.host
         if (!verified) failure.record("hostnameMismatch")
         return verified
     }

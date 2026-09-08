@@ -1034,6 +1034,7 @@ void _expectNoApplicationWork(ScriptedBackend backend) {
 
 PresentedCertificate _certificate(NormalizedAuthority authority) =>
     PresentedCertificate(
+      namesAuthority: true,
       authority: authority,
       facts: CertificateFacts(
         subjectSummary: 'DNS: nas.example.test',

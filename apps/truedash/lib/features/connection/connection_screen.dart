@@ -281,6 +281,19 @@ class _TrustReviewPanel extends StatelessWidget {
               fieldKey: const Key('new-fingerprint'),
             ),
           ],
+          if (!certificate.namesAuthority) ...[
+            const SizedBox(height: TdSpacing.related),
+            const TdStateView(
+              key: Key('hostname-mismatch-warning'),
+              kind: TdStateKind.error,
+              title: 'This certificate does not name this server address.',
+              description:
+                  'Only the fingerprint above identifies the server. Approve it '
+                  'only if you can confirm that fingerprint on the server '
+                  'itself.',
+              compact: true,
+            ),
+          ],
           const SizedBox(height: TdSpacing.related),
           if (!valid)
             const TdStateView(

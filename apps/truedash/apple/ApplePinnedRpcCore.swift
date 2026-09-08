@@ -191,7 +191,12 @@ final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessio
         leafDER: leafData,
         verifyDate: verifyDate
       ) {
-        let policy = SecPolicyCreateSSL(true, operation.request.host as CFString)
+        // A pinned connection's identity is the exact leaf the user approved
+        // for this authority, the way an SSH known-hosts entry works, so a
+        // certificate that does not name the address is not by itself a reason
+        // to refuse; the approval screen says so before any pin is written.
+        // Chain, protocol, and validity policy still apply.
+        let policy = SecPolicyCreateSSL(true, nil)
         SecTrustSetPolicies(trust, policy)
         SecTrustSetAnchorCertificates(trust, [leaf] as CFArray)
         SecTrustSetAnchorCertificatesOnly(trust, true)

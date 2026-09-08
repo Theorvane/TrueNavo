@@ -30,13 +30,21 @@ final pinnedRpcConnectorProvider = Provider<PinnedRpcConnector>(
   (ref) => createPinnedRpcConnector(),
 );
 
+/// `PinRecord` accepts only canonical UTC millisecond timestamps, while
+/// `DateTime.now()` is local and carries microseconds on the Dart VM. Truncate
+/// here so the production clock cannot construct a record the model rejects.
+DateTime trustClockNow() => DateTime.fromMillisecondsSinceEpoch(
+  DateTime.now().millisecondsSinceEpoch,
+  isUtc: true,
+);
+
 final certificateTrustCoordinatorProvider =
     Provider<CertificateTrustCoordinator>(
       (ref) => CertificateTrustCoordinator(
         pinStore: ref.watch(pinStoreProvider),
         probe: ref.watch(nativeCertificateProbeProvider),
         connector: ref.watch(pinnedRpcConnectorProvider),
-        now: DateTime.now,
+        now: trustClockNow,
         probeTimeout: const Duration(seconds: 15),
         reconnectTimeout: const Duration(seconds: 15),
       ),

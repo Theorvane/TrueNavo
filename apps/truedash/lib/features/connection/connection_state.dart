@@ -37,18 +37,19 @@ final class TrustReviewCertificate {
     required this.notValidBefore,
     required this.notValidAfter,
     required this.platformTrust,
+    required this.namesAuthority,
   });
 
-  factory TrustReviewCertificate.fromFacts(
-    CertificateFacts facts,
-    PlatformTrust platformTrust,
+  factory TrustReviewCertificate.fromCertificate(
+    PresentedCertificate certificate,
   ) => TrustReviewCertificate(
-    subjectSummary: facts.subjectSummary,
-    issuerSummary: facts.issuerSummary,
-    leafDerSha256: facts.leafDerSha256,
-    notValidBefore: facts.notValidBefore,
-    notValidAfter: facts.notValidAfter,
-    platformTrust: platformTrust,
+    subjectSummary: certificate.facts.subjectSummary,
+    issuerSummary: certificate.facts.issuerSummary,
+    leafDerSha256: certificate.facts.leafDerSha256,
+    notValidBefore: certificate.facts.notValidBefore,
+    notValidAfter: certificate.facts.notValidAfter,
+    platformTrust: certificate.platformTrust,
+    namesAuthority: certificate.namesAuthority,
   );
 
   final String subjectSummary;
@@ -57,6 +58,11 @@ final class TrustReviewCertificate {
   final DateTime notValidBefore;
   final DateTime notValidAfter;
   final PlatformTrust platformTrust;
+
+  /// False when the leaf does not name this server address. The review shows an
+  /// explicit warning instead of hiding an approval the user cannot otherwise
+  /// reach for a certificate that only identifies itself.
+  final bool namesAuthority;
 }
 
 sealed class ConnectionTrustReview extends ConnectionState {
