@@ -23,7 +23,9 @@ M0 now contains a Flutter connection screen and a pure-Dart JSON-RPC/session fou
 
 ## Status
 
-M0 is intentionally limited to one secure connection vertical slice. SCRAM, credential persistence, certificate trust exceptions, reconnection, subscriptions/jobs, billing, ads, and telemetry are not implemented.
+M0 is intentionally limited to one secure connection vertical slice. SCRAM, reconnection, subscriptions/jobs, billing, ads, and telemetry are not implemented.
+
+Since M0, explicit trust-on-first-use certificate pinning and opt-in credential storage have been added for the native platforms. Only the Android bridge has been exercised against a real TrueNAS appliance; the iOS, macOS, Windows, and Linux runners remain unverified.
 
 ## Trademark notice
 
