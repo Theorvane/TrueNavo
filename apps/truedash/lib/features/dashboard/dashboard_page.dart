@@ -269,9 +269,11 @@ class DashboardPage extends ConsumerWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        TdStatusBadge(
-                          status: _status(status),
-                          label: alert.level,
+                        Flexible(
+                          child: TdStatusBadge(
+                            status: _status(status),
+                            label: alert.level,
+                          ),
                         ),
                         const SizedBox(width: TdSpacing.related),
                         Expanded(
@@ -385,9 +387,11 @@ class DashboardPage extends ConsumerWidget {
                             ),
                           ),
                           const SizedBox(width: TdSpacing.inline),
-                          TdStatusBadge(
-                            status: _status(job.statusKind),
-                            label: job.status,
+                          Flexible(
+                            child: TdStatusBadge(
+                              status: _status(job.statusKind),
+                              label: job.status,
+                            ),
                           ),
                         ],
                       ),

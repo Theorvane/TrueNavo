@@ -46,6 +46,22 @@ void main() {
     );
   });
 
+  testWidgets('alerts constrain a long unknown status on a narrow viewport', (
+    tester,
+  ) async {
+    final status = 'Unknown-${List.filled(25, 'status').join()}--';
+    await _pumpDashboard(tester, AppDestination.alerts, [
+      DashboardAlert(
+        level: status,
+        message: 'The server provided an unknown alert level.',
+        status: DashboardStatus.info,
+      ),
+    ]);
+
+    expect(find.text(status), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('manage refreshes its own load state', (tester) async {
     await _expectSecondaryRefresh(
       tester,
@@ -61,6 +77,54 @@ void main() {
       const DashboardJobs([]),
     );
   });
+
+  testWidgets('jobs constrain a long unknown status on a narrow viewport', (
+    tester,
+  ) async {
+    final status = 'Unknown-${List.filled(25, 'status').join()}--';
+    await _pumpDashboard(
+      tester,
+      AppDestination.jobs,
+      DashboardJobs([
+        DashboardJob(
+          id: '42',
+          name: 'storage.scrub',
+          status: status,
+          statusKind: DashboardStatus.info,
+        ),
+      ]),
+    );
+
+    expect(find.text(status), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Future<void> _pumpDashboard(
+  WidgetTester tester,
+  AppDestination destination,
+  Object? value,
+) async {
+  await tester.binding.setSurfaceSize(const Size(320, 900));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        dashboardLoadProvider(destination.name)
+            .overrideWith((ref) async => DashboardData<Object?>(value)),
+      ],
+      child: MaterialApp(
+        theme: TrueDashTheme.light(),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: DashboardPage(destination: destination),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 Future<void> _expectSecondaryRefresh(
