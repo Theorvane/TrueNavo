@@ -163,44 +163,68 @@ void main() {
     },
   );
 
-  test('secret-shaped arbitrary capability names are rejected without blocking documented names', () async {
-    final database = AppDatabase.forTesting(NativeDatabase.memory());
-    final store = DriftServerProfileStore(database);
-    addTearDown(store.close);
-    await store.registerAndSelect(safeProfile());
-    final observedAt = DateTime.utc(2026);
-    final expiresAt = DateTime.utc(2026, 1, 2);
+  test(
+    'RPC method names are validated by shape, not by credential words',
+    () async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      final store = DriftServerProfileStore(database);
+      addTearDown(store.close);
+      await store.registerAndSelect(safeProfile());
+      final observedAt = DateTime.utc(2026);
+      final expiresAt = DateTime.utc(2026, 1, 2);
 
-    await store.replaceCapabilities(
-      profileId: 'safe-id',
-      methodNames: const {'auth.login_with_api_key'},
-      observedAt: observedAt,
-      expiresAt: expiresAt,
-    );
-    for (final methodName in const [
-      'api_key_DURABLE_SENTINEL',
-      'secret_token_value',
-    ]) {
-      await expectLater(
-        store.replaceCapabilities(
-          profileId: 'safe-id',
-          methodNames: {methodName},
-          observedAt: observedAt,
-          expiresAt: expiresAt,
-        ),
-        throwsA(
-          isA<PersistenceFailure>().having(
-            (failure) => failure.kind,
-            'kind',
-            PersistenceFailureKind.validation,
-          ),
-        ),
+      // These are real TrueNAS 25.10 method names. Refusing them because they
+      // read like credential words rejected every genuine server, so the shape
+      // of an identifier is the safety property here.
+      const published = {
+        'auth.login_with_api_key',
+        'auth.login_with_token',
+        'auth.generate_onetime_password',
+        'user.set_password',
+        'user.renew_2fa_secret',
+        'system.advanced.sed_global_password',
+        'tn_connect.generate_claim_token',
+      };
+      await store.replaceCapabilities(
+        profileId: 'safe-id',
+        methodNames: published,
+        observedAt: observedAt,
+        expiresAt: expiresAt,
       );
-    }
-    expect(await store.readCapabilities('safe-id', observedAt), {
-      'auth.login_with_api_key',
-    });
-  });
+      expect(await store.readCapabilities('safe-id', observedAt), published);
+
+      // A name that is not a dot-separated identifier still fails closed, so no
+      // JSON, whitespace, control character, or credential value can be stored.
+      for (final methodName in <String>[
+        'api_key=AIzaSyDURABLE_SENTINEL',
+        '{"api_key":"value"}',
+        'method name',
+        'method\u0000name',
+        'method-name',
+        '.leading',
+        '',
+        'a' * 256,
+      ]) {
+        await expectLater(
+          store.replaceCapabilities(
+            profileId: 'safe-id',
+            methodNames: {methodName},
+            observedAt: observedAt,
+            expiresAt: expiresAt,
+          ),
+          throwsA(
+            isA<PersistenceFailure>().having(
+              (failure) => failure.kind,
+              'kind',
+              PersistenceFailureKind.validation,
+            ),
+          ),
+          reason: methodName,
+        );
+      }
+      expect(await store.readCapabilities('safe-id', observedAt), published);
+    },
+  );
 
   test('corrupt capability timestamps fail closed on read', () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());

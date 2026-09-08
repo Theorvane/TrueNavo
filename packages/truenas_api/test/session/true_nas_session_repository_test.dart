@@ -9,6 +9,111 @@ import '../support/in_memory_transport.dart';
 const sentinel = 'test-api-key';
 
 void main() {
+  const account = 'test-account';
+  test('either login state field is understood and nothing else is', () async {
+    for (final field in const ['response_type', 'state']) {
+      final transport = InMemoryTransport();
+      final repository = TrueNasSessionRepository(
+        connector: FakeConnector(transport),
+      );
+      final future = repository.connect(
+        serverInput: 'https://nas.example',
+        apiKey: sentinel,
+        username: account,
+      );
+      await _respondHandshake(transport, loginStateField: field);
+      await future;
+      await repository.close();
+    }
+
+    final transport = InMemoryTransport();
+    final repository = TrueNasSessionRepository(
+      connector: FakeConnector(transport),
+    );
+    final future = repository.connect(
+      serverInput: 'https://nas.example',
+      apiKey: sentinel,
+      username: account,
+    );
+    await _respondWith(transport, {'result_type': 'SUCCESS'});
+    await expectLater(
+      future,
+      throwsA(
+        isA<AuthenticationStateException>().having(
+          (error) => error.state,
+          'state',
+          AuthenticationState.unknown,
+        ),
+      ),
+    );
+  });
+
+  test('a missing or malformed account name never reaches the wire', () async {
+    // The account name travels beside the API key, so a rejection must happen
+    // before any frame is written and must not quote the value it refused.
+    for (final invalid in <String?>[
+      null,
+      '',
+      ' truenas_admin',
+      'truenas admin',
+      'admin\n',
+      'ad"min',
+      'a' * 129,
+    ]) {
+      final transport = InMemoryTransport();
+      final repository = TrueNasSessionRepository(
+        connector: FakeConnector(transport),
+      );
+      await expectLater(
+        repository.connect(
+          serverInput: 'https://nas.example',
+          apiKey: sentinel,
+          username: invalid,
+        ),
+        throwsA(isA<AccountNameValidationException>()),
+      );
+      expect(transport.sentFrames, isEmpty);
+      if (invalid != null && invalid.isNotEmpty) {
+        expect(
+          () => repository.connect(
+            serverInput: 'https://nas.example',
+            apiKey: sentinel,
+            username: invalid,
+          ),
+          throwsA(
+            isA<AccountNameValidationException>().having(
+              (error) => error.message,
+              'message',
+              isNot(contains(invalid.trim())),
+            ),
+          ),
+        );
+      }
+    }
+  });
+
+  test('a directory-style account name is accepted', () async {
+    final transport = InMemoryTransport();
+    final repository = TrueNasSessionRepository(
+      connector: FakeConnector(transport),
+    );
+    final future = repository.connect(
+      serverInput: 'https://nas.example',
+      apiKey: sentinel,
+      username: 'nas.user@EXAMPLE.TEST',
+    );
+    await _respondHandshake(transport);
+    await future;
+    expect(jsonDecode(transport.sentFrames.first)['params'], [
+      {
+        'mechanism': 'API_KEY_PLAIN',
+        'username': 'nas.user@EXAMPLE.TEST',
+        'api_key': sentinel,
+      },
+    ]);
+    await repository.close();
+  });
+
   test('handshakes with API_KEY_PLAIN and safely maps a summary', () async {
     final transport = InMemoryTransport();
     final repository = TrueNasSessionRepository(
@@ -17,6 +122,7 @@ void main() {
     final future = repository.connect(
       serverInput: ' https://nas.example ',
       apiKey: sentinel,
+      username: account,
     );
     await _respondHandshake(transport);
     final summary = await future;
@@ -27,7 +133,7 @@ void main() {
     expect(summary.availableMethodNames, {'a', 'b'});
     expect(transport.sentFrames.first, contains('API_KEY_PLAIN'));
     expect(jsonDecode(transport.sentFrames.first)['params'], [
-      {'mechanism': 'API_KEY_PLAIN', 'api_key': sentinel},
+      {'mechanism': 'API_KEY_PLAIN', 'username': account, 'api_key': sentinel},
     ]);
     expect(summary.toString(), isNot(contains(sentinel)));
     await repository.close();
@@ -43,6 +149,7 @@ void main() {
       final future = repository.connect(
         serverInput: 'wss://nas.example',
         apiKey: sentinel,
+        username: account,
       );
       await _waitForSend(transport, 1);
       final id = jsonDecode(transport.sentFrames.single)['id'];
@@ -66,7 +173,11 @@ void main() {
       ),
     );
     await expectLater(
-      repository.connect(serverInput: 'wss://nas.example', apiKey: sentinel),
+      repository.connect(
+        serverInput: 'wss://nas.example',
+        apiKey: sentinel,
+        username: account,
+      ),
       throwsA(isA<TlsCertificateException>()),
     );
   });
@@ -81,6 +192,7 @@ void main() {
       final future = repository.connect(
         serverInput: 'wss://nas.example',
         apiKey: sentinel,
+        username: account,
       );
       await _respondWith(transport, {'state': 'AUTH_ERR'});
       await expectLater(future, throwsA(isA<AuthenticationStateException>()));
@@ -100,6 +212,7 @@ void main() {
       final future = repository.connect(
         serverInput: 'wss://nas.example',
         apiKey: sentinel,
+        username: account,
       );
       await _waitForSend(transport, 1);
       transport.add('{"jsonrpc":"2.0","id":null,"result":true}');
@@ -120,6 +233,7 @@ void main() {
       final future = repository.connect(
         serverInput: 'wss://nas.example',
         apiKey: sentinel,
+        username: account,
       );
       await _waitForSend(transport, 1);
       await transport.fail(const TlsHandshakeException());
@@ -138,6 +252,7 @@ void main() {
     final future = repository.connect(
       serverInput: 'wss://nas.example',
       apiKey: sentinel,
+      username: account,
     );
     await _respondWith(transport, {'state': 'SUCCESS'});
     await _respondWith(transport, {});
@@ -166,6 +281,7 @@ void main() {
       final future = repository.connect(
         serverInput: ' https://NAS.example/ ',
         apiKey: null,
+        username: account,
         rememberApiKey: false,
       );
       await _respondHandshake(transport);
@@ -194,6 +310,7 @@ void main() {
       final future = repository.connect(
         serverInput: 'https://nas.example',
         apiKey: 'explicit-test-key',
+        username: account,
         rememberApiKey: true,
       );
       await _respondHandshake(transport);
@@ -219,6 +336,7 @@ void main() {
         missing.connect(
           serverInput: 'https://nas.example',
           apiKey: '',
+          username: account,
           rememberApiKey: false,
         ),
         throwsA(isA<CredentialUnavailableException>()),
@@ -235,6 +353,7 @@ void main() {
         unreadable.connect(
           serverInput: 'https://nas.example',
           apiKey: null,
+          username: account,
           rememberApiKey: false,
         ),
         throwsA(isA<CredentialUnavailableException>()),
@@ -261,6 +380,7 @@ void main() {
       repository.connect(
         serverInput: 'https://nas.example',
         apiKey: null,
+        username: account,
         rememberApiKey: true,
       ),
       throwsA(isA<TlsCertificateException>()),
@@ -288,6 +408,7 @@ void main() {
         repository.connect(
           serverInput: 'https://nas.example',
           apiKey: null,
+          username: account,
           rememberApiKey: true,
         ),
         throwsA(isA<StateError>()),
@@ -312,6 +433,7 @@ void main() {
         final future = repository.connect(
           serverInput: 'https://nas.example',
           apiKey: 'explicit-test-key',
+          username: account,
           rememberApiKey: true,
           isConnectionCurrent: () => current,
         );
@@ -353,6 +475,7 @@ void main() {
       final future = repository.connect(
         serverInput: 'https://nas.example',
         apiKey: 'explicit-test-key',
+        username: account,
         rememberApiKey: true,
       );
       await _respondHandshake(transport);
@@ -382,6 +505,7 @@ void main() {
     final connecting = repository.connect(
       serverInput: 'https://nas.example',
       apiKey: 'stale-explicit-key',
+      username: account,
       rememberApiKey: true,
       isConnectionCurrent: () => current,
     );
@@ -447,6 +571,7 @@ void main() {
       final connecting = repository.connect(
         serverInput: 'https://nas.example',
         apiKey: scenario.apiKey,
+        username: account,
         rememberApiKey: scenario.apiKey != null,
         isConnectionCurrent: () {
           if (scenario.shouldThrow(vault, transport)) {
@@ -506,6 +631,7 @@ void main() {
       final connecting = repository.connect(
         serverInput: 'https://nas.example',
         apiKey: 'explicit-test-key',
+        username: account,
         rememberApiKey: true,
         isConnectionCurrent: () {
           if (++calls == 8) {
@@ -703,9 +829,12 @@ final class _CancelledWriteVault implements CredentialVault {
   }) async => throw const CredentialWriteCancelledException();
 }
 
-Future<void> _respondHandshake(InMemoryTransport transport) async {
+Future<void> _respondHandshake(
+  InMemoryTransport transport, {
+  String loginStateField = 'state',
+}) async {
   for (final result in [
-    {'state': 'SUCCESS'},
+    {loginStateField: 'SUCCESS'},
     {'username': 'admin'},
     {'version': '25.10'},
     {'a': {}, 'b': {}},

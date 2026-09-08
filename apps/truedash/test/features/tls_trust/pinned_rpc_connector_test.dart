@@ -450,8 +450,10 @@ void main() {
         authority,
         pin,
       )).transport;
-      final tooLarge = List<String>.filled(262145, '😀').join();
-      expect(tooLarge.length, lessThan(1024 * 1024));
+      // Each emoji is four UTF-8 bytes but two UTF-16 code units, so this
+      // exceeds the 16 MiB byte cap while staying under it by `String.length`.
+      final tooLarge = List<String>.filled(4194305, '😀').join();
+      expect(tooLarge.length, lessThan(16 * 1024 * 1024));
       await expectLater(
         transport.send(tooLarge),
         throwsA(isA<RpcTransportClosedException>()),
@@ -497,8 +499,8 @@ void main() {
           authority,
           pin,
         )).transport;
-        final tooLarge = List<String>.filled(262145, '😀').join();
-        expect(tooLarge.length, lessThan(1024 * 1024));
+        final tooLarge = List<String>.filled(4194305, '😀').join();
+        expect(tooLarge.length, lessThan(16 * 1024 * 1024));
         final received = expectLater(
           transport.inboundFrames,
           emitsInOrder(<Object>[

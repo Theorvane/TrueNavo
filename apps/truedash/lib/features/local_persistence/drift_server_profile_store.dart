@@ -521,16 +521,16 @@ final class DriftServerProfileStore implements ServerProfileStore {
       value.isNotEmpty &&
       value.length <= max &&
       !_containsUnsafePersistentContent(value);
-  static bool _isValidMethodName(String value) =>
-      value.length <= 255 &&
-      _methodName.hasMatch(value) &&
-      (_isDocumentedSensitiveMethodName(value) ||
-          !_containsUnsafePersistentContent(value));
 
-  static bool _isDocumentedSensitiveMethodName(String value) => switch (value) {
-    'auth.generate_token' || 'auth.login_with_api_key' => true,
-    _ => false,
-  };
+  /// An RPC method name is a server-defined identifier, not free text, so its
+  /// shape is the safety property: `_methodName` admits only dot-separated
+  /// `[A-Za-z0-9_]` labels, which cannot carry JSON, control characters, or a
+  /// credential value. The credential-shaped-content heuristic deliberately
+  /// does not apply here — TrueNAS really does publish `user.set_password`,
+  /// `auth.login_with_token`, and `user.renew_2fa_secret`, and rejecting them
+  /// refused every real server rather than protecting anything.
+  static bool _isValidMethodName(String value) =>
+      value.length <= 255 && _methodName.hasMatch(value);
 
   static bool _isValidCapabilityRow(ProfileCapability row) =>
       _isBounded(row.profileId, 128) &&

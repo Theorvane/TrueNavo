@@ -21,7 +21,9 @@ struct ApplePinnedRpcDebugFixture {
 /// transport and a transport is created fresh for each connect request.
 final class ApplePinnedRpcCore: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate {
   static let protocolVersion = 1
-  static let maximumFrameBytes = 1024 * 1024
+  // A real TrueNAS `core.get_methods` reply is several megabytes. This stays a
+  // hard bound; an oversized frame closes the session rather than buffering.
+  static let maximumFrameBytes = 16 * 1024 * 1024
   private let queue = DispatchQueue(label: "com.truedash.pinned-rpc")
   private let now: () -> Date
   private var operations: [String: Operation] = [:]

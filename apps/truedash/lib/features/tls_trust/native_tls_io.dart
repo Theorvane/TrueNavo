@@ -15,6 +15,10 @@ export 'der_x509_parser.dart' show parsePresentedLeafDer;
 
 const _protocolVersion = 1;
 const _maximumDerBytes = 64 * 1024;
+// A real TrueNAS `core.get_methods` reply is several megabytes, so a 1 MiB cap
+// closed every working session. This is still a hard bound, not an absence of
+// one: an oversized frame fails the transport closed rather than buffering.
+const _maximumFrameBytes = 16 * 1024 * 1024;
 const _captureMethod = 'truedash.capturePresentedLeaf';
 const _cancelMethod = 'truedash.cancelPresentedLeaf';
 const _pinnedConnectMethod = 'truedash.connectPinnedRpc';
@@ -430,7 +434,7 @@ final class _PinnedRpcTransport implements RpcTransport {
     if (_closed) {
       throw const RpcTransportClosedException();
     }
-    if (utf8.encode(frame).length > 1024 * 1024) {
+    if (utf8.encode(frame).length > _maximumFrameBytes) {
       await _failClosed();
       throw const RpcTransportClosedException();
     }
@@ -468,7 +472,7 @@ final class _PinnedRpcTransport implements RpcTransport {
         }
         if (map.length == 3 && map['frame'] is String) {
           final frame = map['frame']! as String;
-          if (utf8.encode(frame).length > 1024 * 1024) {
+          if (utf8.encode(frame).length > _maximumFrameBytes) {
             await _failClosed();
             return;
           }

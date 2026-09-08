@@ -24,7 +24,11 @@ void main() {
       addTearDown(container.dispose);
       final connect = container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: 'key');
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: 'key',
+            username: 'test-account',
+          );
       await Future<void>.delayed(Duration.zero);
       expect(
         container.read(connectionControllerProvider),
@@ -57,7 +61,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: 'key');
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: 'key',
+            username: 'test-account',
+          );
       final state = container.read(connectionControllerProvider);
       expect(state, isA<ConnectionFailed>());
       expect('$state', isNot(contains('/raw/sqlite/path')));
@@ -87,7 +95,11 @@ void main() {
 
     await container
         .read(connectionControllerProvider.notifier)
-        .connect(serverInput: 'https://nas.example', apiKey: 'key');
+        .connect(
+          serverInput: 'https://nas.example',
+          apiKey: 'key',
+          username: 'test-account',
+        );
     await Future<void>.delayed(Duration.zero);
 
     expect(
@@ -111,7 +123,11 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(connectionControllerProvider.notifier)
-          .connect(serverInput: 'https://nas.example', apiKey: 'key');
+          .connect(
+            serverInput: 'https://nas.example',
+            apiKey: 'key',
+            username: 'test-account',
+          );
       expect(store.registered!.id, 'profile-2');
     },
   );
@@ -210,6 +226,7 @@ final class _Repository implements SessionRepository {
   Future<ServerSummary> connect({
     required String serverInput,
     required String? apiKey,
+    required String? username,
     bool rememberApiKey = false,
     bool Function()? isConnectionCurrent,
   }) async => ServerSummary(

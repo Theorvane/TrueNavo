@@ -6,7 +6,9 @@ package com.truedash.truedash.tlstrust
 internal object BridgeProtocol {
     const val PROTOCOL_VERSION = 1
     const val MAXIMUM_DER_BYTES = 64 * 1024
-    const val MAXIMUM_FRAME_BYTES = 1024 * 1024
+    // A real TrueNAS `core.get_methods` reply is several megabytes. This stays a
+    // hard bound; an oversized frame closes the session rather than buffering.
+    const val MAXIMUM_FRAME_BYTES = 16 * 1024 * 1024
     const val ABSENT_ID = "00000000000000000000000000000000"
 
     private val ID_PATTERN = Regex("^[0-9a-f]{32}$")
