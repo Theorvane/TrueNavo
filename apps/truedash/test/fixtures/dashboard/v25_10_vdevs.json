@@ -1,0 +1,14 @@
+{
+  "observations": [
+    {
+      "label": "tank / mirror-0",
+      "state": "ONLINE",
+      "summary": "Two-way mirror is online"
+    },
+    {
+      "label": "tank / cache",
+      "state": "DEGRADED",
+      "summary": "Example cache device needs review"
+    }
+  ]
+}

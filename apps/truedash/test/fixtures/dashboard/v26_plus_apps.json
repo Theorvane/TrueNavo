@@ -1,0 +1,9 @@
+{
+  "observations": [
+    {
+      "label": "Example application",
+      "state": "RUNNING",
+      "summary": "Documented display-schema example"
+    }
+  ]
+}

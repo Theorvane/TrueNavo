@@ -1,0 +1,9 @@
+{
+  "observations": [
+    {
+      "label": "Example pool / data",
+      "state": "ONLINE",
+      "summary": "Documented display-schema example"
+    }
+  ]
+}
