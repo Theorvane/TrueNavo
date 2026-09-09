@@ -117,8 +117,8 @@ final class DeferredAdmissionRecord {
     required DeferredAdmissionGates gates,
     required DeferredAdmissionApproval approval,
   }) {
-    final approved = tuple.versionFamily !=
-            DashboardVersionFamily.unknownUnsupported &&
+    final approved =
+        tuple.versionFamily != DashboardVersionFamily.unknownUnsupported &&
         tuple.hasValidDigests &&
         gates.allPassed &&
         approval.explicitlyApproved;
@@ -135,8 +135,9 @@ final class DeferredAdmissionRecord {
               responseDigest: tuple.responseDigest,
             )
           : null,
-      rejectionReason:
-          approved ? null : DeferredAdmissionRejectionReason.admissionRejected,
+      rejectionReason: approved
+          ? null
+          : DeferredAdmissionRejectionReason.admissionRejected,
     );
   }
 
