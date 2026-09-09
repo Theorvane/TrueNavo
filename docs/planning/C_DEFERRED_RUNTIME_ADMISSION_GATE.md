@@ -30,6 +30,23 @@ shape, response-schema fingerprint, RBAC behavior on a real appliance, or
 permission to call the method. Do not guess, infer, or recommend a concrete
 method beyond the exact source-backed candidate tuple.
 
+## Local admission-record boundary
+
+[`DeferredAdmissionRecord`](../../apps/truedash/lib/features/dashboard/deferred_admission_record.dart)
+is a pure local decision record, not a runtime admission. Only after valid typed
+source/request/response SHA-256 identifiers, every pass/fail gate, and explicit
+approval are present can it retain bounded metadata: version family, domain, and
+those three typed digests. Any failed or incomplete input retains no metadata and
+uses one fixed non-sensitive rejection reason; its
+[`apiCapabilityEnabled`](../../apps/truedash/test/features/dashboard/deferred_admission_record_test.dart)
+value is always `false`, including for an approved local record.
+
+The exact source-backed method is intentionally not represented in this local
+record. It remains in the immutable source/evidence/approval package described
+below, where it is bound to the source artifact and exact tuple. The record does
+not persist data, call transport, alter the six-method allowlist, or activate UI.
+It is only a bounded review input for a later, separately approved code MR.
+
 ## Unit of admission
 
 An admission is scoped to one immutable tuple:
