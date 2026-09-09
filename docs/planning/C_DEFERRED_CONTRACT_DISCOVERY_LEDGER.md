@@ -40,13 +40,13 @@ There are **no `admitted` rows** in this document.
 
 | Version family | Domain | Candidate method or existing surface | Status | Source | Mandatory next evidence |
 | --- | --- | --- | --- | --- | --- |
-| 25.04 | VDEV | None recorded | `blocked-source` | No stable versioned method/schema page captured in this discovery pass. | Immutable 25.04 source/docs for the exact safe nested topology schema. |
+| 25.04 | VDEV | Existing `pool.query` topology field | `candidate-documentation` | The version-specific `pool.query` schema documents a physical topology including VDEVs and the `POOL_READ` role.[11] | Exact selected fields, topology bounds, redaction review, and appliance A/E/X evidence. |
 | 25.10 | VDEV | Existing `pool.query` topology field | `candidate-documentation` | `pool.query` documents pool topology as physical structure including VDEVs.[1] | Exact selected fields, topology bounds, redaction review, and appliance A/E/X evidence. |
 | 26+ | VDEV | Existing `pool.query` topology field | `candidate-documentation` | The 26.0 `pool.query` page documents a topology object containing VDEV structure.[2] | Exact selected fields, topology bounds, redaction review, and appliance A/E/X evidence. |
-| 25.04 | Disk | None recorded | `blocked-source` | Only JSON-RPC/query capability evidence was captured; no stable 25.04 method page was captured in this pass.[10] | Immutable 25.04 disk method/schema documentation. |
+| 25.04 | Disk | `disk.query` | `candidate-documentation` | The version-specific `disk.query` schema documents the method and the `READONLY_ADMIN` role.[12] | Exact safe projection, exclusion of optional/sensitive expansion, bounds, RBAC proof, and A/E/X evidence. |
 | 25.10 | Disk | `disk.query` | `candidate-documentation` | The method page documents `disk.query` and the `DISK_READ` role.[3] | Exact safe projection, explicit exclusion of sensitive extra options, bounds, RBAC proof, and A/E/X evidence. |
 | 26+ | Disk | `disk.query` | `candidate-documentation` | The method page documents `disk.query` and the `DISK_READ` role.[4] | Exact safe projection, explicit exclusion of sensitive extra options, bounds, RBAC proof, and A/E/X evidence. |
-| 25.04 | Snapshot | None recorded | `blocked-source` | No stable versioned snapshot query method/schema page was captured in this pass. | Immutable 25.04 snapshot method/schema documentation. |
+| 25.04 | Snapshot | `pool.snapshot.query` | `candidate-documentation` | The version-specific snapshot-query schema documents the method and the `SNAPSHOT_READ` role.[13] | Exact projection, exclusion of optional expanded data, bounds, RBAC proof, and A/E/X evidence. |
 | 25.10 | Snapshot | `pool.snapshot.query` | `candidate-documentation` | The method page documents snapshot querying and the `SNAPSHOT_READ` role.[5] | Exact projection, exclusion of optional expanded data, bounds, RBAC proof, and A/E/X evidence. |
 | 26+ | Snapshot | `pool.snapshot.query` | `candidate-documentation` | The method page documents snapshot querying and the `SNAPSHOT_READ` role.[6] | Exact projection, exclusion of optional expanded data, bounds, RBAC proof, and A/E/X evidence. |
 | 25.04 | Apps | `app.query` | `candidate-documentation` | A version-specific `app.query` method page was located.[7] | Exact safe projection, config/schema exclusion, bounds, RBAC proof, and A/E/X evidence. |
@@ -110,7 +110,8 @@ runtime-disabled.
 ## Source retrieval record
 
 The following record binds this discovery pass to the exact HTTP bodies retrieved
-at `2026-09-09T03:33:23Z`. These public documentation URLs are mutable hosts;
+at `2026-09-09T03:33:23Z` and the 25.04 correction bodies retrieved at
+`2026-09-09T05:55:30Z`. These public documentation URLs are mutable hosts;
 the SHA-256 digest is the immutable review artifact. A future admission review
 must re-fetch, compare the digest, and archive the matching body or fail closed.
 A matching digest does not constitute runtime approval.
@@ -127,6 +128,9 @@ A matching digest does not constitute runtime approval.
 | [8] | 200 | 316367 | `f26309e0a7b21cda1aca7347e63eb390c6f47f2db82cd4abdb19a29e6dd13bb0` |
 | [9] | 200 | 341370 | `cc70fe5bac431e12e7939a55cb0150aa178ec4ee76f2c46c6c7fa0e4778ccd2b` |
 | [10] | 200 | 109384 | `781f1b3042328dc5972dae7adbe4f9c51ae176c242f1fc81ad763b7b7a73850b` |
+| [11] | 200 | 234234 | `ddc8103e3bbe78a0f63a103dcc842fef185b058cdff0d16df4d25b93c0663ec0` |
+| [12] | 200 | 172094 | `f81cd72ef4d5cf90c63d6443f2f1d96665aef6c6f4577968be6a4055c49ae8bb` |
+| [13] | 200 | 147199 | `5b24593e2bca321160c4acb75ca1a26ba4abb87697625bddd22b6cbdfccfcb72` |
 
 ## Sources
 
@@ -140,3 +144,6 @@ A matching digest does not constitute runtime approval.
 [8] https://api.truenas.com/v25.10/api_methods_app.query.html
 [9] https://api.truenas.com/v26.0/api_methods_app.query.html
 [10] https://api.truenas.com/v25.04/jsonrpc.html
+[11] https://api.truenas.com/v25.04/api_events_pool.query.html
+[12] https://api.truenas.com/v25.04/api_events_disk.query.html
+[13] https://api.truenas.com/v25.04/api_events_pool.snapshot.query.html
