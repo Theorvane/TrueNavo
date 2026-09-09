@@ -23,9 +23,12 @@ VDEV, disk, snapshot, and apps observations are fixture-only and runtime-disable
 today, for every version family. Fixture parsing and evidence eligibility do not
 enable an API capability; see [live observation evidence](../../apps/truedash/lib/features/dashboard/live_observation_evidence.dart).
 
-Candidate method names for these domains are intentionally absent and unknown
-until source-backed contract discovery completes. Do not guess, infer, or
-recommend a concrete unapproved API method.
+Source-backed candidate method facts are recorded in the
+[deferred contract discovery ledger](C_DEFERRED_CONTRACT_DISCOVERY_LEDGER.md).
+A documented candidate is not an admission: it does not establish a safe request
+shape, response-schema fingerprint, RBAC behavior on a real appliance, or
+permission to call the method. Do not guess, infer, or recommend a concrete
+method beyond the exact source-backed candidate tuple.
 
 ## Unit of admission
 
