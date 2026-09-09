@@ -1,0 +1,9 @@
+{
+  "observations": [
+    {
+      "label": "Example snapshot schedule",
+      "state": "ACTIVE",
+      "summary": "Documented display-schema example"
+    }
+  ]
+}
