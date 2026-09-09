@@ -4,6 +4,58 @@ import 'package:truedash/features/dashboard/deferred_admission_record.dart';
 import 'package:truedash/features/dashboard/deferred_observation_contracts.dart';
 
 void main() {
+  test('admits every supported version family and observation domain', () {
+    const versionFamilies = [
+      DashboardVersionFamily.v25_04,
+      DashboardVersionFamily.v25_10,
+      DashboardVersionFamily.v26Plus,
+    ];
+    const domains = [
+      DeferredObservationDomain.vdevs,
+      DeferredObservationDomain.disks,
+      DeferredObservationDomain.snapshots,
+      DeferredObservationDomain.apps,
+    ];
+    var executedCases = 0;
+
+    for (final versionFamily in versionFamilies) {
+      for (final domain in domains) {
+        final record = DeferredAdmissionRecord.admit(
+          tuple: DeferredAdmissionTuple(
+            versionFamily: versionFamily,
+            domain: domain,
+            sourceDigest: const DeferredAdmissionSourceDigest(
+              'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            ),
+            requestDigest: const DeferredAdmissionRequestDigest(
+              'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            ),
+            responseDigest: const DeferredAdmissionResponseDigest(
+              'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+            ),
+          ),
+          gates: const DeferredAdmissionGates(
+            rbacPassed: true,
+            fixturePassed: true,
+            evidencePassed: true,
+            aexPassed: true,
+          ),
+          approval: const DeferredAdmissionApproval(explicitlyApproved: true),
+        );
+        executedCases++;
+
+        expect(record.status, DeferredAdmissionStatus.approved);
+        expect(record.metadata, isNotNull);
+        expect(record.metadata!.versionFamily, versionFamily);
+        expect(record.metadata!.domain, domain);
+        expect(record.rejectionReason, isNull);
+        expect(record.apiCapabilityEnabled, isFalse);
+      }
+    }
+
+    expect(executedCases, 12);
+  });
+
   test('admits an explicitly approved complete 25.04 VDEV tuple as typed metadata only', () {
     final record = DeferredAdmissionRecord.admit(
       tuple: const DeferredAdmissionTuple(
