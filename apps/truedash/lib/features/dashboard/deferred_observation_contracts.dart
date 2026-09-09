@@ -98,7 +98,7 @@ final class DeferredObservationContract {
     if (state != DeferredObservationContractState.fixtureOnly) {
       throw StateError('Only fixture-only contracts can parse a fixture.');
     }
-    final root = _stringObjectMap(value, 'top-level fixture');
+    final root = _stringObjectMap(value, 'top-level fixture', maxEntries: 1);
     _rejectSecretShapedKeys(root);
     if (root.length != 1 || !root.containsKey('observations')) {
       throw const FormatException('Fixture must contain only observations.');
@@ -107,10 +107,17 @@ final class DeferredObservationContract {
     if (rawItems is! List<Object?>) {
       throw const FormatException('Fixture observations must be a list.');
     }
+    if (rawItems.length > maxObservations) {
+      throw const FormatException('Fixture has too many observations.');
+    }
 
     final observations = <DeferredObservation>[];
-    for (final rawItem in rawItems.take(maxObservations)) {
-      final item = _stringObjectMap(rawItem, 'fixture observation');
+    for (final rawItem in rawItems) {
+      final item = _stringObjectMap(
+        rawItem,
+        'fixture observation',
+        maxEntries: 3,
+      );
       _rejectSecretShapedKeys(item);
       if (item.length != 3 ||
           !item.containsKey('label') ||
@@ -137,9 +144,16 @@ final class DeferredObservationContract {
   }
 }
 
-Map<String, Object?> _stringObjectMap(Object? value, String description) {
+Map<String, Object?> _stringObjectMap(
+  Object? value,
+  String description, {
+  required int maxEntries,
+}) {
   if (value is! Map<Object?, Object?>) {
     throw FormatException('$description must be an object.');
+  }
+  if (value.length > maxEntries) {
+    throw FormatException('$description has too many entries.');
   }
   final result = <String, Object?>{};
   for (final entry in value.entries) {

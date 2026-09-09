@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -87,7 +88,7 @@ void main() {
     expect(observations.first.summary, 'Two-way mirror is online');
   });
 
-  test('bounds observation lists and static display fields', () {
+  test('accepts an observation list at the maximum length', () {
     final contract = DeferredObservationContract.select(
       versionFamily: DashboardVersionFamily.v25_04,
       domain: DeferredObservationDomain.disks,
@@ -98,7 +99,10 @@ void main() {
       'summary': 'Documented display-schema example',
     };
     final fixture = <String, Object>{
-      'observations': List<Object>.filled(51, item),
+      'observations': List<Object>.filled(
+        DeferredObservationContract.maxObservations,
+        item,
+      ),
     };
 
     final parsed = contract.parseFixture(fixture);
@@ -112,6 +116,48 @@ void main() {
       parsed.observations.first.summary.length,
       lessThanOrEqualTo(DeferredObservationContract.maxDisplayCharacters),
     );
+  });
+
+  test('rejects an observation list over the maximum length', () {
+    final contract = DeferredObservationContract.select(
+      versionFamily: DashboardVersionFamily.v25_04,
+      domain: DeferredObservationDomain.disks,
+    );
+    final fixture = <String, Object>{
+      'observations': List<Object>.filled(
+        DeferredObservationContract.maxObservations + 1,
+        <String, String>{
+          'label': 'Example disk bay 1',
+          'state': 'ONLINE',
+          'summary': 'Documented display-schema example',
+        },
+      ),
+    };
+
+    expect(() => contract.parseFixture(fixture), throwsFormatException);
+  });
+
+  test('rejects an oversized root fixture object', () {
+    final contract = DeferredObservationContract.select(
+      versionFamily: DashboardVersionFamily.v25_04,
+      domain: DeferredObservationDomain.disks,
+    );
+    expect(
+      () => contract.parseFixture(_OversizedMap(2)),
+      throwsFormatException,
+    );
+  });
+
+  test('rejects an oversized fixture observation object', () {
+    final contract = DeferredObservationContract.select(
+      versionFamily: DashboardVersionFamily.v25_04,
+      domain: DeferredObservationDomain.disks,
+    );
+    final fixture = <String, Object>{
+      'observations': <Object>[_OversizedMap(4)],
+    };
+
+    expect(() => contract.parseFixture(fixture), throwsFormatException);
   });
 
   test('rejects secret-shaped display values', () {
@@ -217,3 +263,30 @@ void main() {
 
 Object _readFixture(String name) =>
     jsonDecode(File('test/fixtures/dashboard/$name').readAsStringSync());
+
+final class _OversizedMap extends MapBase<Object?, Object?> {
+  _OversizedMap(this._length);
+
+  final int _length;
+
+  @override
+  int get length => _length;
+
+  @override
+  Iterable<Object?> get keys => throw StateError('Entries must not be read.');
+
+  @override
+  Object? operator [](Object? key) =>
+      throw StateError('Entries must not be read.');
+
+  @override
+  void operator []=(Object? key, Object? value) =>
+      throw StateError('Entries must not be written.');
+
+  @override
+  void clear() => throw StateError('Entries must not be cleared.');
+
+  @override
+  Object? remove(Object? key) =>
+      throw StateError('Entries must not be removed.');
+}
