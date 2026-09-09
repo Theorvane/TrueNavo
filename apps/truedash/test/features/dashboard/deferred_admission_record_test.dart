@@ -118,4 +118,72 @@ void main() {
       expect(record.apiCapabilityEnabled, isFalse);
     },
   );
+
+  void expectDefaultDenyInputToBeRejected({
+    DashboardVersionFamily versionFamily = DashboardVersionFamily.v25_04,
+    bool rbacPassed = true,
+    bool fixturePassed = true,
+    bool evidencePassed = true,
+    bool aexPassed = true,
+    bool explicitlyApproved = true,
+  }) {
+    final record = DeferredAdmissionRecord.admit(
+      tuple: DeferredAdmissionTuple(
+        versionFamily: versionFamily,
+        domain: DeferredObservationDomain.vdevs,
+        sourceDigest: const DeferredAdmissionSourceDigest(
+          'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ),
+        requestDigest: const DeferredAdmissionRequestDigest(
+          'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        ),
+        responseDigest: const DeferredAdmissionResponseDigest(
+          'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        ),
+      ),
+      gates: DeferredAdmissionGates(
+        rbacPassed: rbacPassed,
+        fixturePassed: fixturePassed,
+        evidencePassed: evidencePassed,
+        aexPassed: aexPassed,
+      ),
+      approval: DeferredAdmissionApproval(
+        explicitlyApproved: explicitlyApproved,
+      ),
+    );
+
+    expect(record.status, DeferredAdmissionStatus.rejected);
+    expect(
+      record.rejectionReason,
+      DeferredAdmissionRejectionReason.admissionRejected,
+    );
+    expect(record.metadata, isNull);
+    expect(record.apiCapabilityEnabled, isFalse);
+  }
+
+  test('rejects an unknown unsupported version family', () {
+    expectDefaultDenyInputToBeRejected(
+      versionFamily: DashboardVersionFamily.unknownUnsupported,
+    );
+  });
+
+  test('rejects when RBAC does not pass', () {
+    expectDefaultDenyInputToBeRejected(rbacPassed: false);
+  });
+
+  test('rejects when the fixture gate does not pass', () {
+    expectDefaultDenyInputToBeRejected(fixturePassed: false);
+  });
+
+  test('rejects when the evidence gate does not pass', () {
+    expectDefaultDenyInputToBeRejected(evidencePassed: false);
+  });
+
+  test('rejects when the AEX gate does not pass', () {
+    expectDefaultDenyInputToBeRejected(aexPassed: false);
+  });
+
+  test('rejects when approval is not explicit', () {
+    expectDefaultDenyInputToBeRejected(explicitlyApproved: false);
+  });
 }
