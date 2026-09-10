@@ -113,6 +113,11 @@ final class VdevFixtureContract {
     }
 
     try {
+      if (fixture is! Map || fixture['contract'] != _expectedContract) {
+        return VdevFixtureResult._rejected(
+          VdevFixtureRejectionReason.malformedEnvelope,
+        );
+      }
       final preflight = _PreflightContext();
       _preflightFixture(fixture, preflight);
       final snapshot = switch (versionFamily) {
@@ -135,6 +140,13 @@ final class VdevFixtureContract {
       );
     }
   }
+
+  String get _expectedContract => switch (versionFamily) {
+    DashboardVersionFamily.v25_04 => 'v25_04_pool_topology_v1',
+    DashboardVersionFamily.v25_10 => 'v25_10_pool_topology_v1',
+    DashboardVersionFamily.v26Plus => 'v26_plus_pool_topology_v1',
+    DashboardVersionFamily.unknownUnsupported => '',
+  };
 
   VdevTopologySnapshot? _decodeV25_04(
     Object? fixture,
@@ -302,6 +314,10 @@ final class VdevFixtureContract {
       return null;
     }
     if (rawChildren.length > maxChildren) context.partial = true;
+    if (depth >= maxDepth) {
+      context.partial = true;
+      return null;
+    }
 
     context.nodeCount++;
     final children = <VdevTopologyNode>[];

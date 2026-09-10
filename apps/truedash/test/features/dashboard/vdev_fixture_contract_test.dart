@@ -87,6 +87,19 @@ void main() {
     }
   });
 
+  test('rejects a cross-family marker before touching topology', () {
+    final result = _contract.parse({
+      'contract': 'v25_04_pool_topology_v1',
+      'topology': _UntouchableMap(),
+    });
+
+    expect(result.status, VdevFixtureStatus.rejected);
+    expect(
+      result.rejectionReason,
+      VdevFixtureRejectionReason.malformedEnvelope,
+    );
+  });
+
   test('normalizes deterministic VDEV groups and states', () {
     final result = _contract.parse({
       'contract': 'v25_10_pool_topology_v1',
@@ -313,6 +326,15 @@ void main() {
     });
     expect(hostileTailResult.status, VdevFixtureStatus.partial);
     expect(hostileTailResult.snapshot!.nodeCount, 32);
+
+    final depthResult = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {
+        'data': [_leaf('ONLINE'), _depthBoundaryRoot()],
+      },
+    });
+    expect(depthResult.status, VdevFixtureStatus.partial);
+    expect(depthResult.snapshot!.nodeCount, 1);
   });
 
   test('treats unsafe node strings locally at the 64-unit boundary', () {
@@ -367,11 +389,23 @@ void main() {
 
   test('rejects hostile and shared fixture containers', () {
     expect(
-      _contract.parse(_OversizedMap(1025)).rejectionReason,
+      _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [_leaf('ONLINE')],
+        },
+        'padding': _OversizedMap(1025),
+      }).rejectionReason,
       VdevFixtureRejectionReason.traversalLimitExceeded,
     );
     expect(
-      _contract.parse(_DeceptiveEntriesMap(1025)).rejectionReason,
+      _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [_leaf('ONLINE')],
+        },
+        'padding': _DeceptiveEntriesMap(1025),
+      }).rejectionReason,
       VdevFixtureRejectionReason.traversalLimitExceeded,
     );
     expect(
@@ -386,9 +420,15 @@ void main() {
     );
 
     final selfMap = <String, Object?>{};
-    selfMap['topology'] = selfMap;
+    selfMap['self'] = selfMap;
     expect(
-      _contract.parse(selfMap).rejectionReason,
+      _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [_leaf('ONLINE')],
+        },
+        'padding': selfMap,
+      }).rejectionReason,
       VdevFixtureRejectionReason.sharedContainer,
     );
 
@@ -666,6 +706,18 @@ Map<String, Object?> _branch(List<Object?> children) => {
 Map<String, Object?> _chain(int depth) =>
     depth == 1 ? _leaf('ONLINE') : _branch(<Object?>[_chain(depth - 1)]);
 
+Map<String, Object?> _depthBoundaryRoot() {
+  Map<String, Object?> current = {
+    'type': 'MIRROR',
+    'status': 'ONLINE',
+    'children': _UntouchableList(),
+  };
+  for (var depth = 7; depth > 0; depth--) {
+    current = _branch(<Object?>[current]);
+  }
+  return current;
+}
+
 Object? _fixture(String name) =>
     jsonDecode(File('test/fixtures/dashboard/vdev/$name').readAsStringSync());
 
@@ -749,6 +801,45 @@ final class _HugeRootList extends ListBase<Object?> {
     if (index < VdevFixtureContract.maxChildren) return _leaf('ONLINE');
     throw StateError('tail must not be traversed');
   }
+
+  @override
+  void operator []=(int index, Object? value) =>
+      throw StateError('list must not be mutated');
+}
+
+final class _UntouchableMap extends MapBase<Object?, Object?> {
+  @override
+  int get length => throw StateError('topology must not be touched');
+
+  @override
+  Iterable<Object?> get keys =>
+      throw StateError('topology must not be touched');
+
+  @override
+  Object? operator [](Object? key) =>
+      throw StateError('topology must not be touched');
+
+  @override
+  void operator []=(Object? key, Object? value) =>
+      throw StateError('map must not be mutated');
+
+  @override
+  void clear() => throw StateError('map must not be mutated');
+
+  @override
+  Object? remove(Object? key) => throw StateError('map must not be mutated');
+}
+
+final class _UntouchableList extends ListBase<Object?> {
+  @override
+  int get length => 1;
+
+  @override
+  set length(int value) => throw StateError('list must not be mutated');
+
+  @override
+  Object? operator [](int index) =>
+      throw StateError('depth-9 child must not be touched');
 
   @override
   void operator []=(int index, Object? value) =>

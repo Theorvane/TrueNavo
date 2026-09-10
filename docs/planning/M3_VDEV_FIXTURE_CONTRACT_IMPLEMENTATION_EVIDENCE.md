@@ -132,6 +132,15 @@ list length as local partial state, and applies global bounds only to attempted
 positions. UUID detection accepts every canonical version nibble rather than
 only legacy UUID versions.
 
+The next exact-SHA specification review of
+`433d793ad10bab64811b81b58168ecdfcf10d37c` found two final ordering gaps:
+depth-9 children could still be fetched by decoding, and a mismatched family
+marker was checked only after topology preflight. Dedicated hostile collection
+tests now prove a depth-9 child accessor is never invoked and a mismatched
+marker rejects before any topology property is touched. Decoding stops before
+iterating children at `maxDepth`, and `parse` checks its family marker before
+creating the preflight context.
+
 Focused GREEN:
 
 ```sh
@@ -141,7 +150,7 @@ fvm flutter test \
   test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
 ```
 
-Result: 25 tests passed (20 contract tests and 5 runtime-boundary tests).
+Result: 26 tests passed (21 contract tests and 5 runtime-boundary tests).
 
 The hostile-map guard was added after the first full pass. Its focused suite and
 app analyzer passed before the remediation commit.
@@ -167,7 +176,7 @@ Observed results before the final evidence commit:
 
 - formatting: 145 files checked, 0 changed;
 - app analyzer: no issues;
-- full app suite: 538 passed, 1 existing skip;
+- full app suite: 539 passed, 1 existing skip;
 - Web release build: succeeded; `sqlite3.wasm` and `drift_worker.js` present;
 - `truenas_api`: 64 passed, with two pre-existing informational analyzer
   notices in unchanged files;
