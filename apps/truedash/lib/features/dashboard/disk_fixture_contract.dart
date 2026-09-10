@@ -1,4 +1,4 @@
-import 'dart:collection';
+import 'dart:convert';
 
 import 'dashboard_capabilities.dart';
 
@@ -8,7 +8,6 @@ enum DiskFixtureRejectionReason {
   unsupportedVersion,
   malformedEnvelope,
   traversalLimitExceeded,
-  sharedContainer,
   noSafeObservation,
 }
 
@@ -69,10 +68,10 @@ final class DiskFixtureContract {
   const DiskFixtureContract._(this.versionFamily);
 
   static const maxRecords = 128;
-  static const maxVisitedMaps = 256;
-  static const maxVisitedLists = 16;
   static const maxVisitedValues = 512;
   static const maxStringUnits = 32;
+  static const maxEncodedUnits = 32768;
+  static const maxJsonDepth = 16;
 
   final DashboardVersionFamily versionFamily;
 
@@ -102,20 +101,32 @@ final class DiskFixtureContract {
     DashboardVersionFamily.unknownUnsupported => const {},
   };
 
-  DiskFixtureResult parse(Object? fixture) {
+  DiskFixtureResult parse(Object? encodedFixture) {
     if (versionFamily == DashboardVersionFamily.unknownUnsupported) {
       return DiskFixtureResult._rejected(
         DiskFixtureRejectionReason.unsupportedVersion,
       );
     }
     try {
+      if (encodedFixture is! String ||
+          encodedFixture.length > maxEncodedUnits) {
+        return DiskFixtureResult._rejected(
+          DiskFixtureRejectionReason.malformedEnvelope,
+        );
+      }
+      final scanner = _JsonDuplicateKeyScanner(encodedFixture);
+      if (scanner.hasDuplicateKey) {
+        return DiskFixtureResult._rejected(
+          DiskFixtureRejectionReason.malformedEnvelope,
+        );
+      }
+      final fixture = jsonDecode(encodedFixture);
       if (fixture is! Map || fixture['contract'] != _marker) {
         return DiskFixtureResult._rejected(
           DiskFixtureRejectionReason.malformedEnvelope,
         );
       }
       final context = _TraversalContext();
-      _registerMap(fixture, context);
       if (!_hasExactKeys(fixture, const {'contract', 'disks'}, context)) {
         return DiskFixtureResult._rejected(
           DiskFixtureRejectionReason.malformedEnvelope,
@@ -127,7 +138,7 @@ final class DiskFixtureContract {
           DiskFixtureRejectionReason.malformedEnvelope,
         );
       }
-      _registerList(disks, context);
+
       var partial = disks.length > maxRecords;
       var total = 0;
       var rotational = 0;
@@ -195,7 +206,6 @@ final class DiskFixtureContract {
     _TraversalContext context,
   ) {
     if (raw is! Map) return null;
-    _registerMap(raw, context);
     if (!_hasExactKeys(raw, const {'media', 'membership'}, context)) {
       return null;
     }
@@ -228,40 +238,13 @@ final class DiskFixtureContract {
       if (key is! String || !_isSafeToken(key)) return false;
       keys.add(key);
     }
-    return keys.length == expected.length && keys.containsAll(expected);
-  }
-
-  void _registerMap(Map value, _TraversalContext context) {
-    if (!context.containers.add(value)) {
-      throw const _DiskFixtureFailure(
-        DiskFixtureRejectionReason.sharedContainer,
-      );
-    }
-    if (++context.maps > maxVisitedMaps) {
-      throw const _DiskFixtureFailure(
-        DiskFixtureRejectionReason.traversalLimitExceeded,
-      );
-    }
-  }
-
-  void _registerList(List value, _TraversalContext context) {
-    if (!context.containers.add(value)) {
-      throw const _DiskFixtureFailure(
-        DiskFixtureRejectionReason.sharedContainer,
-      );
-    }
-    if (++context.lists > maxVisitedLists) {
-      throw const _DiskFixtureFailure(
-        DiskFixtureRejectionReason.traversalLimitExceeded,
-      );
-    }
+    return entries == expected.length &&
+        keys.length == expected.length &&
+        keys.containsAll(expected);
   }
 }
 
 final class _TraversalContext {
-  final Set<Object> containers = HashSet.identity();
-  int maps = 0;
-  int lists = 0;
   int values = 0;
 }
 
@@ -342,3 +325,135 @@ bool _isDefaultIgnorable(int rune) =>
     (rune >= 0x1BCA0 && rune <= 0x1BCA3) ||
     (rune >= 0x1D173 && rune <= 0x1D17A) ||
     (rune >= 0xE0000 && rune <= 0xE0FFF);
+
+final class _JsonDuplicateKeyScanner {
+  _JsonDuplicateKeyScanner(this.source);
+
+  final String source;
+  var _index = 0;
+  var _duplicate = false;
+
+  bool get hasDuplicateKey {
+    _skipWhitespace();
+    _value(0);
+    _skipWhitespace();
+    if (_index != source.length) throw const FormatException();
+    return _duplicate;
+  }
+
+  void _value(int depth) {
+    if (depth > DiskFixtureContract.maxJsonDepth) {
+      throw const FormatException();
+    }
+    _skipWhitespace();
+    if (_index >= source.length) throw const FormatException();
+    switch (source.codeUnitAt(_index)) {
+      case 0x7B:
+        _object(depth);
+      case 0x5B:
+        _array(depth);
+      case 0x22:
+        _string();
+      default:
+        _scalar();
+    }
+  }
+
+  void _object(int depth) {
+    _expect(0x7B);
+    _skipWhitespace();
+    final keys = <String>{};
+    if (_take(0x7D)) return;
+    while (true) {
+      final key = _string();
+      if (!keys.add(key)) _duplicate = true;
+      _skipWhitespace();
+      _expect(0x3A);
+      _value(depth + 1);
+      _skipWhitespace();
+      if (_take(0x7D)) return;
+      _expect(0x2C);
+      _skipWhitespace();
+    }
+  }
+
+  void _array(int depth) {
+    _expect(0x5B);
+    _skipWhitespace();
+    if (_take(0x5D)) return;
+    while (true) {
+      _value(depth + 1);
+      _skipWhitespace();
+      if (_take(0x5D)) return;
+      _expect(0x2C);
+    }
+  }
+
+  String _string() {
+    final start = _index;
+    _expect(0x22);
+    var escaped = false;
+    while (_index < source.length) {
+      final unit = source.codeUnitAt(_index++);
+      if (escaped) {
+        if (unit == 0x75) {
+          for (var count = 0; count < 4; count++) {
+            if (_index >= source.length ||
+                !_isHex(source.codeUnitAt(_index++))) {
+              throw const FormatException();
+            }
+          }
+        }
+        escaped = false;
+      } else if (unit == 0x5C) {
+        escaped = true;
+      } else if (unit == 0x22) {
+        return jsonDecode(source.substring(start, _index)) as String;
+      } else if (unit < 0x20) {
+        throw const FormatException();
+      }
+    }
+    throw const FormatException();
+  }
+
+  void _scalar() {
+    final start = _index;
+    while (_index < source.length &&
+        !const {
+          0x20,
+          0x09,
+          0x0A,
+          0x0D,
+          0x2C,
+          0x5D,
+          0x7D,
+        }.contains(source.codeUnitAt(_index))) {
+      _index++;
+    }
+    if (_index == start) throw const FormatException();
+  }
+
+  void _skipWhitespace() {
+    while (_index < source.length &&
+        const {0x20, 0x09, 0x0A, 0x0D}.contains(source.codeUnitAt(_index))) {
+      _index++;
+    }
+  }
+
+  bool _take(int unit) {
+    if (_index < source.length && source.codeUnitAt(_index) == unit) {
+      _index++;
+      return true;
+    }
+    return false;
+  }
+
+  void _expect(int unit) {
+    if (!_take(unit)) throw const FormatException();
+  }
+
+  bool _isHex(int unit) =>
+      (unit >= 0x30 && unit <= 0x39) ||
+      (unit >= 0x41 && unit <= 0x46) ||
+      (unit >= 0x61 && unit <= 0x66);
+}

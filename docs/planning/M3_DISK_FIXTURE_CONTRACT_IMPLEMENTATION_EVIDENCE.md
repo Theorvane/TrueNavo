@@ -23,16 +23,17 @@
 
 | Boundary | Limit | Verified behavior |
 |---|---:|---|
-| Attempted/retained records | 128 | 128 complete; 129 and billion-length tail partial without indexing tail |
-| Maps | 256 | fixed global counter |
-| Lists | 16 | fixed global counter |
+| Attempted/retained records | 128 | 128 complete; encoded record 129 makes the result partial |
 | Values/entries | 512 | deceptive record map rejects at limit |
 | String | 32 UTF-16 units | 33 invalidates only containing record |
+| Encoded fixture | 32768 UTF-16 units | 32769 rejects before JSON decode |
+| JSON nesting | 16 | depth 17 rejects before JSON decode |
 
-- Repeated record map identity rejects with `sharedContainer`.
-- A deceptive `MapBase` reporting two entries but yielding 513 terminates and
-  rejects with `traversalLimitExceeded`.
-- Source maps/lists can be mutated after parse without changing aggregate output.
+- Non-String custom `Map`/`List` inputs reject without member access.
+- Duplicate JSON keys at the root or record level reject before `jsonDecode`.
+- JSON with 513 record entries rejects with `traversalLimitExceeded`.
+- Mutating the caller's pre-encoding maps/lists after parse cannot change the
+  scalar aggregate output.
 - Aggregate output is independent of fixture order.
 
 ## Positive-schema safety
@@ -48,15 +49,16 @@ blank strings, and the complete 4,174-code-point Unicode 17
 
 ## Runtime exclusion
 
-Dedicated tests prove:
+Dedicated behavioral tests prove:
 
 - `DiskFixtureContract.isRuntimeEnabled` is always false;
 - disks remain disabled in `DashboardCapabilities`;
-- the authenticated session retains the exact six-method allowlist and excludes
-  `disk.query`;
-- dashboard repository/controller/page/capabilities do not import the contract;
-- the Storage page retains `VDEVs and disks unavailable`; and
-- deferred admission/evidence still expose `apiCapabilityEnabled == false`.
+- the capability intersection retains the exact six methods and excludes
+  advertised `disk.query`.
+
+Repository-level diff/search gates—not source-reading unit tests—prove the
+session allowlist, dashboard imports/UI, and admission/evidence files are
+unchanged from the reviewed base.
 
 No dashboard runtime, API package, persistence, generated schema, platform, CI,
 or app-bootstrap file changed.
@@ -81,13 +83,32 @@ fvm flutter test \
   test/features/dashboard/disk_fixture_runtime_boundary_test.dart
 ```
 
-Result: 18 passed (14 contract, 4 runtime-boundary).
+Result: 20 passed (19 contract, 1 runtime-boundary).
+
+## Exact-SHA review remediation
+
+The initial exact-SHA reviews of
+`1114ccf70545cbb965a7d91ee1011a886ffd409f` rejected the candidate. The parser
+accepted duplicate entries from deceptive maps, did not traverse nested custom
+containers for claimed alias/map/list limits, and could block forever inside
+caller-defined `Map`/`List` getters or equality. The runtime-boundary tests also
+violated repository policy by reading production source files.
+
+The public boundary now accepts only a JSON `String` capped at 32,768 UTF-16
+units. Non-String custom collections reject before member access. A bounded
+depth-16 scanner rejects duplicate decoded keys—including escaped spellings—
+before `jsonDecode`. Since JSON cannot encode object aliasing or cycles, the
+unreachable map/list identity claims were removed; actual 128-record,
+512-value/entry, string, encoded-size, and JSON-depth limits remain executable.
+Runtime unit coverage now uses public capability behavior only, while exact
+unchanged-path/import/UI/session/admission claims are checked by repository
+diff/search commands.
 
 ## Full verification
 
 - formatting: 148 files checked, 0 changed;
 - app analyzer: no issues;
-- full app suite: 557 passed, 1 existing skip;
+- full app suite: 558 passed, 1 existing skip;
 - Web release build: success; `sqlite3.wasm` and `drift_worker.js` present;
 - `truenas_api`: 64 passed, with two pre-existing informational analyzer notices
   in unchanged files;

@@ -20,10 +20,9 @@ void main() {
       expect(contract.isRuntimeEnabled, isFalse);
     }
     expect(DiskFixtureContract.maxRecords, 128);
-    expect(DiskFixtureContract.maxVisitedMaps, 256);
-    expect(DiskFixtureContract.maxVisitedLists, 16);
     expect(DiskFixtureContract.maxVisitedValues, 512);
     expect(DiskFixtureContract.maxStringUnits, 32);
+    expect(DiskFixtureContract.maxJsonDepth, 16);
     final rejected = DiskFixtureContract.select(
       DashboardVersionFamily.unknownUnsupported,
     ).parse(const {});
@@ -59,11 +58,10 @@ void main() {
     }
   });
 
-  test('rejects cross-family marker before touching disks', () {
-    final result = _contract.parse({
-      'contract': 'v25_04_disk_projection_v1',
-      'disks': _UntouchableList(),
-    });
+  test('rejects cross-family marker before accepting a fixture', () {
+    final result = _contract.parse(
+      '{"contract":"v25_04_disk_projection_v1","disks":[]}',
+    );
     expect(result.status, DiskFixtureStatus.rejected);
     expect(
       result.rejectionReason,
@@ -72,7 +70,7 @@ void main() {
   });
 
   test('aggregates every fixed media and membership token', () {
-    final result = _contract.parse(
+    final result = _parse(
       _root([
         _disk('ROTATIONAL', 'ASSIGNED'),
         _disk('UNCLASSIFIED', 'UNASSIGNED'),
@@ -97,9 +95,7 @@ void main() {
       {'media': 'ROTATIONAL', 'membership': 'ASSIGNED', 'serial': 'secret'},
       {'media': 'ROTATIONAL'},
     ]) {
-      final result = _contract.parse(
-        _root([_disk('ROTATIONAL', 'ASSIGNED'), invalid]),
-      );
+      final result = _parse(_root([_disk('ROTATIONAL', 'ASSIGNED'), invalid]));
       expect(result.status, DiskFixtureStatus.partial);
       expect(result.snapshot!.totalCount, 1);
     }
@@ -120,24 +116,35 @@ void main() {
         'extra': true,
       },
     ]) {
-      expect(_contract.parse(fixture).status, DiskFixtureStatus.rejected);
+      expect(_parse(fixture).status, DiskFixtureStatus.rejected);
     }
   });
 
-  test('stops at record 128 and never touches a hostile tail', () {
-    final result = _contract.parse({
-      'contract': 'v25_10_disk_projection_v1',
-      'disks': _HugeDiskList(1000000000),
-    });
+  test('stops at record 128 and marks encoded tail partial', () {
+    final result = _parse(
+      _root(List.generate(129, (_) => _disk('ROTATIONAL', 'ASSIGNED'))),
+    );
     expect(result.status, DiskFixtureStatus.partial);
     expect(result.snapshot!.totalCount, 128);
   });
 
-  test('accepts 128 records and marks record 129 partial', () {
-    final exact = _contract.parse(
+  test('bounds encoded input before JSON decoding', () {
+    expect(DiskFixtureContract.maxEncodedUnits, 32768);
+    final exact = jsonEncode(
       _root(List.generate(128, (_) => _disk('ROTATIONAL', 'ASSIGNED'))),
     );
-    final over = _contract.parse(
+    expect(
+      exact.length,
+      lessThanOrEqualTo(DiskFixtureContract.maxEncodedUnits),
+    );
+    expect(_contract.parse(exact).status, DiskFixtureStatus.complete);
+  });
+
+  test('accepts 128 records and marks record 129 partial', () {
+    final exact = _parse(
+      _root(List.generate(128, (_) => _disk('ROTATIONAL', 'ASSIGNED'))),
+    );
+    final over = _parse(
       _root(List.generate(129, (_) => _disk('ROTATIONAL', 'ASSIGNED'))),
     );
     expect(exact.status, DiskFixtureStatus.complete);
@@ -146,16 +153,54 @@ void main() {
     expect(over.snapshot!.totalCount, 128);
   });
 
-  test('rejects shared records and deceptive map enumeration', () {
-    final shared = _disk('ROTATIONAL', 'ASSIGNED');
+  test('rejects custom collections without touching their members', () {
+    for (final input in <Object?>[
+      _UntouchableMap(),
+      _UntouchableList(),
+      _HugeDiskList(1000000000),
+      _DeceptiveRecordMap(513),
+    ]) {
+      final result = _contract.parse(input);
+      expect(result.status, DiskFixtureStatus.rejected);
+      expect(
+        result.rejectionReason,
+        DiskFixtureRejectionReason.malformedEnvelope,
+      );
+    }
+  });
+
+  test('rejects duplicate JSON object keys and oversized input', () {
+    const duplicateRoot =
+        '{"contract":"v25_10_disk_projection_v1","disks":[{"media":"ROTATIONAL","membership":"ASSIGNED"}],"contract":"v25_10_disk_projection_v1"}';
+    const duplicateRecord =
+        '{"contract":"v25_10_disk_projection_v1","disks":[{"media":"ROTATIONAL","membership":"ASSIGNED","media":"ROTATIONAL"}]}';
+    const escapedDuplicateRecord =
+        '{"contract":"v25_10_disk_projection_v1","disks":[{"media":"ROTATIONAL","membership":"ASSIGNED","m\\u0065dia":"ROTATIONAL"}]}';
+    expect(_contract.parse(duplicateRoot).status, DiskFixtureStatus.rejected);
+    expect(_contract.parse(duplicateRecord).status, DiskFixtureStatus.rejected);
     expect(
-      _contract.parse(_root([shared, shared])).rejectionReason,
-      DiskFixtureRejectionReason.sharedContainer,
+      _contract.parse(escapedDuplicateRecord).status,
+      DiskFixtureStatus.rejected,
     );
-    final result = _contract.parse({
-      'contract': 'v25_10_disk_projection_v1',
-      'disks': [_DeceptiveRecordMap(513)],
-    });
+    expect(
+      _contract.parse(' ' * (DiskFixtureContract.maxEncodedUnits + 1)).status,
+      DiskFixtureStatus.rejected,
+    );
+  });
+
+  test('rejects excessive JSON nesting before decoding', () {
+    final nested = '${'[' * 17}null${']' * 17}';
+    expect(_contract.parse(nested).status, DiskFixtureStatus.rejected);
+  });
+
+  test('rejects deceptive JSON object enumeration at the value limit', () {
+    final fields = List.generate(
+      513,
+      (index) => '"field-$index":null',
+    ).join(',');
+    final result = _contract.parse(
+      '{"contract":"v25_10_disk_projection_v1","disks":[{$fields}]}',
+    );
     expect(
       result.rejectionReason,
       DiskFixtureRejectionReason.traversalLimitExceeded,
@@ -163,13 +208,13 @@ void main() {
   });
 
   test('treats 32 units as safe and 33 as a local invalid record', () {
-    final safe = _contract.parse(
+    final safe = _parse(
       _root([
         _disk('ROTATIONAL', 'ASSIGNED'),
         {'media': 'ROTATIONAL', 'membership': 'A' * 32},
       ]),
     );
-    final partial = _contract.parse(
+    final partial = _parse(
       _root([
         _disk('ROTATIONAL', 'ASSIGNED'),
         {'media': 'ROTATIONAL', 'membership': 'A' * 33},
@@ -206,7 +251,7 @@ void main() {
       'sed',
       'smartoptions',
     ]) {
-      final result = _contract.parse(
+      final result = _parse(
         _root([
           _disk('ROTATIONAL', 'ASSIGNED'),
           {'media': 'ROTATIONAL', 'membership': 'ASSIGNED', key: 'value'},
@@ -226,7 +271,7 @@ void main() {
       String.fromCharCodes([0xD800]),
     ];
     for (final value in unsafe) {
-      final result = _contract.parse(
+      final result = _parse(
         _root([
           _disk('ROTATIONAL', 'ASSIGNED'),
           {'media': 'ROTATIONAL', 'membership': value},
@@ -241,7 +286,7 @@ void main() {
     var checked = 0;
     for (final (start, end) in _defaultIgnorableRanges) {
       for (var rune = start; rune <= end; rune++) {
-        final result = _contract.parse(
+        final result = _parse(
           _root([
             _disk('ROTATIONAL', 'ASSIGNED'),
             {'media': 'ROTATIONAL', 'membership': String.fromCharCode(rune)},
@@ -260,7 +305,7 @@ void main() {
     final second = _disk('UNCLASSIFIED', 'UNKNOWN');
     final disks = <Object?>[first, second];
     final fixture = _root(disks);
-    final snapshot = _contract.parse(fixture).snapshot!;
+    final snapshot = _parse(fixture).snapshot!;
     first.clear();
     second.clear();
     disks.clear();
@@ -269,14 +314,12 @@ void main() {
     expect(snapshot.rotationalCount, 1);
     expect(snapshot.unclassifiedCount, 1);
 
-    final reversed = _contract
-        .parse(
-          _root([
-            _disk('UNCLASSIFIED', 'UNKNOWN'),
-            _disk('ROTATIONAL', 'ASSIGNED'),
-          ]),
-        )
-        .snapshot!;
+    final reversed = _parse(
+      _root([
+        _disk('UNCLASSIFIED', 'UNKNOWN'),
+        _disk('ROTATIONAL', 'ASSIGNED'),
+      ]),
+    ).snapshot!;
     expect(reversed.totalCount, snapshot.totalCount);
     expect(reversed.rotationalCount, snapshot.rotationalCount);
     expect(reversed.unknownMembershipCount, snapshot.unknownMembershipCount);
@@ -294,8 +337,10 @@ Map<String, Object?> _disk(String media, String membership) => {
   'media': media,
   'membership': membership,
 };
+DiskFixtureResult _parse(Object? fixture) =>
+    _contract.parse(jsonEncode(fixture));
 Object? _fixture(String name) =>
-    jsonDecode(File('test/fixtures/dashboard/disk/$name').readAsStringSync());
+    File('test/fixtures/dashboard/disk/$name').readAsStringSync();
 
 const _defaultIgnorableRanges = <(int, int)>[
   (0x00AD, 0x00AD),
@@ -316,6 +361,22 @@ const _defaultIgnorableRanges = <(int, int)>[
   (0x1D173, 0x1D17A),
   (0xE0000, 0xE0FFF),
 ];
+
+final class _UntouchableMap extends MapBase<Object?, Object?> {
+  @override
+  int get length => throw StateError('must not touch map');
+  @override
+  Iterable<Object?> get keys => throw StateError('must not touch map');
+  @override
+  Object? operator [](Object? key) => throw StateError('must not touch map');
+  @override
+  void operator []=(Object? key, Object? value) =>
+      throw StateError('no mutation');
+  @override
+  void clear() => throw StateError('no mutation');
+  @override
+  Object? remove(Object? key) => throw StateError('no mutation');
+}
 
 final class _UntouchableList extends ListBase<Object?> {
   @override

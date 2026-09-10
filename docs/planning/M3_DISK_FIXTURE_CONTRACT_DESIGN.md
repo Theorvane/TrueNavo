@@ -61,7 +61,7 @@ RBAC, live evidence, or runtime approval.
 4. Fixed typed enums and derived aggregate counts.
 5. Deterministic complete, partial, and rejected outcomes.
 6. Strict local and global input bounds.
-7. Hostile collection, secret/identifier, Unicode, aliasing, and mutation
+7. Hostile non-String input, duplicate/malformed JSON, secret/identifier, Unicode, and mutation
    regression tests.
 8. Runtime-exclusion tests proving all current production boundaries remain
    unchanged.
@@ -82,7 +82,9 @@ RBAC, live evidence, or runtime approval.
 ## Architecture
 
 ```text
-static redacted fixture Object?
+bounded redacted fixture JSON string
+  -> reject non-String input and input over 32,768 UTF-16 units
+  -> reject duplicate JSON object keys
   -> family marker validation before collection traversal
   -> bounded exact-shape decoder
   -> DiskFixtureResult
@@ -91,7 +93,11 @@ static redacted fixture Object?
        `-- rejected(fixed local reason)
 ```
 
-The production module has no transport import and exposes
+The public decoder accepts only a bounded JSON `String`; arbitrary caller-owned
+`Map`/`List` implementations are rejected without reading their members. JSON
+decoding therefore produces ordinary acyclic, unaliased collections rather
+than executing custom collection getters or equality. The production module
+has no transport import and exposes
 `isRuntimeEnabled == false`. It is referenced only by dedicated tests. It must
 not be imported by dashboard repository/controller/page/providers,
 `truenas_api`, persistence, platform adapters, or app bootstrap.
@@ -167,15 +173,15 @@ by the other two before its `disks` collection is touched.
 | Disk records attempted | 128 | tail is not traversed; snapshot is partial |
 | Disk record entries | 2 | malformed record is discarded locally |
 | Retained anonymous disks | 128 | additional records are not traversed |
-| Maps visited | 256 | global excess rejects |
-| Lists visited | 16 | global excess rejects |
 | Values/entries visited | 512 | global excess rejects |
 | String length | 32 UTF-16 units | containing record is discarded locally |
+| Encoded fixture length | 32768 UTF-16 units | reject before JSON parsing |
+| JSON nesting depth | 16 | reject in the duplicate-key scanner before `jsonDecode` |
 
-Limits apply to attempted positions, not valid records. A billion-length custom
-list may expose only positions 0–127; position 128 and its tail must never be
-indexed. A deceptive custom map may not yield entries beyond the global counter.
-Shared/cyclic map or list identity rejects the whole fixture.
+Limits apply to attempted positions, not valid records. The bounded JSON string
+prevents custom collection code, cycles, and aliases from entering the decoder.
+Duplicate object keys reject before `jsonDecode`; the decoded disk list retains
+only positions 0–127 and position 128 marks the aggregate partial.
 
 ## Outcome rules
 
@@ -209,8 +215,8 @@ Return a fixed rejection when:
 - root or `disks` envelope is malformed;
 - no safe record remains;
 - root contains an unknown field;
-- global map/list/value bounds are exceeded; or
-- cycle/shared-container identity is detected.
+- encoded-size or global value/entry bounds are exceeded; or
+- duplicate JSON object keys are observed.
 
 ## Sensitive and identifier boundary
 
@@ -276,8 +282,8 @@ Tests must prove:
 - unknown family or cross-family marker;
 - non-map root, non-list disks, unknown root key;
 - empty/no-safe records;
-- shared/cyclic/deceptive containers;
-- 257th map, 17th list, or 513th value;
+- non-String custom collections, duplicate JSON keys, or malformed JSON;
+- encoded unit 32769 or visited value/entry 513;
 - every sensitive/identifier/Unicode case above.
 
 ## Verification
@@ -299,9 +305,9 @@ fresh reviews at the new SHA.
 - [ ] Exact-shape positive schema prevents arbitrary strings and identifiers
       from crossing the boundary.
 - [ ] Complete, partial, and rejected states are deterministic and non-sensitive.
-- [ ] Local 128-record and global 256/16/512 traversal bounds hold against
-      hostile custom collections.
-- [ ] Source mutation, aliasing, and cycles cannot affect output.
+- [ ] Local 128-record, 512-value/entry, and 32768-encoded-unit bounds hold.
+- [ ] Non-String custom collections are rejected without member access;
+      duplicate keys, cycles, and aliases cannot enter through JSON.
 - [ ] Runtime allowlist/capabilities/UI remain unchanged and disks stay disabled.
 - [ ] No live TrueNAS request, credential use, NAS mutation, merge, or deployment
       occurs in this work unit.

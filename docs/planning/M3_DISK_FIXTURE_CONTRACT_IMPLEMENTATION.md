@@ -4,9 +4,9 @@
 
 **Goal:** Build a version-bound, fixture-only Disk projection decoder that returns only immutable anonymous aggregate counts and cannot activate `disk.query`.
 
-**Architecture:** Add `disk_fixture_contract.dart` as an isolated synchronous decoder beside the VDEV fixture contract. Validate the family marker before touching the disk collection, apply exact-shape positive-schema decoding to the first 128 attempted records, and return complete/partial/rejected typed outcomes containing scalar counts only. Dedicated boundary tests prove production runtime files remain unchanged.
+**Architecture:** Add `disk_fixture_contract.dart` as an isolated synchronous decoder beside the VDEV fixture contract. Accept only a bounded JSON string, reject duplicate object keys, validate the family marker, apply exact-shape positive-schema decoding to the first 128 attempted records, and return complete/partial/rejected typed outcomes containing scalar counts only. Dedicated behavioral tests and repository-level diff commands prove runtime files remain unchanged.
 
-**Tech Stack:** Dart 3.13, Flutter test, FVM, `MapBase`/`ListBase` hostile collection fixtures.
+**Tech Stack:** Dart 3.13, `dart:convert`, Flutter test, FVM, bounded JSON and hostile non-String collection probes.
 
 ---
 
@@ -27,14 +27,14 @@
 |---|---|
 | A: matching family marker, exact root/record shape, 1–128 safe records | complete immutable aggregate |
 | E: valid envelope with safe record plus malformed/unknown/over-bound record | partial aggregate retaining only safe records |
-| X: unknown family, mismatched marker, malformed envelope, no safe records, global limit, alias/cycle | fixed rejected result, no snapshot |
+| X: unknown family, mismatched marker, malformed/duplicate-key JSON, no safe records, or encoded/value limit | fixed rejected result, no snapshot |
 | X: advertised `disk.query` or fixture contract import from production runtime | disks remain disabled and no request is possible |
 
 ## Task 1 — Define typed aggregate API
 
 **Files:** create contract and focused test.
 
-1. Write compile-failing tests for `DiskFixtureContract`, status/rejection enums, media/membership enums, scalar-only snapshot fields, constants `128/256/16/512/32`, and `isRuntimeEnabled == false`.
+1. Write compile-failing tests for `DiskFixtureContract`, status/rejection enums, media/membership enums, scalar-only snapshot fields, constants `128/512/32/32768/16-depth`, and `isRuntimeEnabled == false`.
 2. Run `fvm flutter test test/features/dashboard/disk_fixture_contract_test.dart`; expect missing-type RED.
 3. Implement immutable result and scalar snapshot types. Result must expose snapshot XOR rejection.
 4. Run focused test and analyzer.
@@ -59,10 +59,10 @@
 
 ## Task 4 — Enforce local and global traversal bounds
 
-1. RED tests at 128/129 records; billion-length `ListBase` must expose indices 0–127 only and return partial.
-2. RED tests at maps 256/257, lists 16/17, values 512/513, and deceptive Map entries whose reported length is smaller.
-3. Add shared map/list and cycle tests; use a hard subprocess timeout for non-termination regressions.
-4. Implement explicit counters and identity sets. Never call `addAll` on untrusted collections. Stop list indexing at 128.
+1. RED tests at 128/129 records and encoded input units 32768/32769.
+2. Reject arbitrary custom `Map`/`List` inputs without member access.
+3. Reject duplicate JSON root/record keys and malformed JSON before typed decoding.
+4. Enforce values/entries 512/513 after decoding. JSON removes alias/cycle and custom collection execution from the parser boundary.
 5. Run focused suite/analyzer and commit `fix(storage): bound Disk fixture traversal`.
 
 ## Task 5 — Enforce positive-schema and Unicode safety
@@ -76,7 +76,7 @@
 ## Task 6 — Prove immutability and runtime exclusion
 
 1. Test source mutation cannot affect scalar snapshot and input order cannot affect aggregates.
-2. Add `disk_fixture_runtime_boundary_test.dart` proving disks remain disabled, six-method allowlist exact, no production imports, static VDEV/disk unavailable UI, admission/evidence capability false, and no runtime `disk.query` literal.
+2. Add behavioral `disk_fixture_runtime_boundary_test.dart` proving disks remain disabled and allowed methods remain the six-method intersection. Prove import/path/UI/session/admission exclusions through repository-level diff and search commands rather than reading source text from a unit test.
 3. Run focused tests and commit `test(storage): keep Disk contract fixture-only`.
 
 ## Task 7 — Evidence and full verification
