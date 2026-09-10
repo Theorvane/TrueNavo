@@ -290,6 +290,29 @@ void main() {
       expect(result.status, VdevFixtureStatus.partial);
       expect(result.snapshot, isNotNull);
     }
+
+    final nodeBudgetRoots =
+        List<Object?>.generate(
+          16,
+          (_) => _branch(List.generate(31, (_) => _leaf('ONLINE'))),
+        )..add({
+          'type': 'DISK',
+          'status': 'ONLINE',
+          'metadata': _HugeList(1000000000),
+        });
+    final nodeBudgetResult = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {'data': nodeBudgetRoots},
+    });
+    expect(nodeBudgetResult.status, VdevFixtureStatus.partial);
+    expect(nodeBudgetResult.snapshot!.nodeCount, 512);
+
+    final hostileTailResult = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {'data': _HugeRootList(1000000000)},
+    });
+    expect(hostileTailResult.status, VdevFixtureStatus.partial);
+    expect(hostileTailResult.snapshot!.nodeCount, 32);
   });
 
   test('treats unsafe node strings locally at the 64-unit boundary', () {
@@ -443,6 +466,12 @@ void main() {
       '550e8400-e29b-41d4-a716-446655440000',
       '5000c500deadbeef',
       '192.168.0.123',
+      '2001:db8::1',
+      'nas01',
+      '00000000-0000-0000-0000-000000000000',
+      '01941f29-7c00-7cc3-98e1-2c3d4e5f6789',
+      'wwn-0x5000c500deadbeef',
+      'prefixAKIA1234567890ABCDEFsuffix',
       'x' * 65,
       'line\nbreak',
       '\u202Ehidden',
@@ -703,6 +732,23 @@ final class _HugeList extends ListBase<Object?> {
 
   @override
   Object? operator [](int index) => null;
+
+  @override
+  void operator []=(int index, Object? value) =>
+      throw StateError('list must not be mutated');
+}
+
+final class _HugeRootList extends ListBase<Object?> {
+  _HugeRootList(this.length);
+
+  @override
+  int length;
+
+  @override
+  Object? operator [](int index) {
+    if (index < VdevFixtureContract.maxChildren) return _leaf('ONLINE');
+    throw StateError('tail must not be traversed');
+  }
 
   @override
   void operator []=(int index, Object? value) =>

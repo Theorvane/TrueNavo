@@ -336,6 +336,13 @@ final class VdevFixtureContract {
       _visitEntry(entry, context, ++entries);
       if (entry.key == 'topology') {
         _preflightTopology(entry.value, context);
+      } else if (entry.key == 'contract') {
+        final value = entry.value;
+        if (value is! String || !_isSafeFixtureString(value)) {
+          throw const _FixtureRejection(
+            VdevFixtureRejectionReason.malformedEnvelope,
+          );
+        }
       } else {
         _preflightUnknown(entry.value, context);
       }
@@ -350,7 +357,7 @@ final class VdevFixtureContract {
       _visitEntry(entry, context, ++entries);
       final roots = entry.value;
       if (roots is! List) continue;
-      _registerList(roots, context);
+      _registerList(roots, context, positionLimit: maxChildren);
       for (
         var index = 0;
         index < roots.length && index < maxChildren;
@@ -363,6 +370,11 @@ final class VdevFixtureContract {
 
   void _preflightNode(Object? raw, _PreflightContext context, int depth) {
     if (depth > maxDepth || raw is! Map) return;
+    if (context.nodes >= maxNodes) {
+      context.invalidNodes.add(raw);
+      return;
+    }
+    context.nodes++;
     try {
       _registerMap(raw, context);
       var entries = 0;
@@ -372,7 +384,7 @@ final class VdevFixtureContract {
           if (depth >= maxDepth) continue;
           final children = entry.value;
           if (children is! List) continue;
-          _registerList(children, context);
+          _registerList(children, context, positionLimit: maxChildren);
           for (
             var index = 0;
             index < children.length && index < maxChildren;
@@ -412,9 +424,16 @@ final class VdevFixtureContract {
     }
   }
 
-  void _registerList(List value, _PreflightContext context) {
-    if (value.length > maxVisitedMaps ||
-        context.values + value.length > maxVisitedValues) {
+  void _registerList(
+    List value,
+    _PreflightContext context, {
+    int? positionLimit,
+  }) {
+    final positions = positionLimit == null
+        ? value.length
+        : value.length.clamp(0, positionLimit);
+    if ((positionLimit == null && value.length > maxVisitedMaps) ||
+        context.values + positions > maxVisitedValues) {
       throw const _FixtureRejection(
         VdevFixtureRejectionReason.traversalLimitExceeded,
       );
@@ -427,7 +446,7 @@ final class VdevFixtureContract {
         VdevFixtureRejectionReason.traversalLimitExceeded,
       );
     }
-    context.values += value.length.clamp(0, maxChildren);
+    context.values += positions;
   }
 
   void _visitEntry(
@@ -550,6 +569,7 @@ final class _PreflightContext {
   int maps = 0;
   int lists = 0;
   int values = 0;
+  int nodes = 0;
 }
 
 final class _FixtureRejection implements Exception {
@@ -703,13 +723,13 @@ bool _looksSensitiveOrIdentifying(String value) {
     return true;
   }
   if (RegExp(
-    r'\b(akia|asia)[a-z0-9]{16}\b',
+    r'(akia|asia)[a-z0-9]{16}',
     caseSensitive: false,
   ).hasMatch(value)) {
     return true;
   }
   if (RegExp(
-    r'(https?://|wss?://|/dev/|(?:[a-z0-9-]+\.)+[a-z]{2,}|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b|\b[0-9a-f]{16}\b|\b(serial|guid|wwn|device|enclosure|slot|request[_-]?id|account|host)\s*[=:])',
+    r'(https?://|wss?://|/dev/|(?:[a-z0-9-]+\.)+[a-z]{2,}|^(?:nas)[a-z0-9-]*$|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-f]{0,4}:){2,}[0-9a-f]{0,4}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b(?:wwn-0x)?[0-9a-f]{16}\b|\b(serial|guid|wwn|device|enclosure|slot|request[_-]?id|account|host)\s*[=:])',
   ).hasMatch(lower)) {
     return true;
   }

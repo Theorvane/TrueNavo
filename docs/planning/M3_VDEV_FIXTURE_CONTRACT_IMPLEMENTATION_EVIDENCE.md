@@ -120,6 +120,18 @@ can produce partial output. Each version selector requires its own local
 contract marker and owns independent node/status tables. `unknown` now means
 only an absent optional status.
 
+The exact-SHA rereview of `5d7ad139b1004e1d52f342c8544e82ed65f4027b`
+found three remaining boundary classes: preflight inspected node 513, hostile
+list lengths overrode the local 32-position rule, and raw/modern identifiers
+such as UUIDv7, nil UUID, IPv6, compact hostnames, prefixed WWNs, and embedded
+AWS-style values remained admissible. The final regression matrix places a
+billion-length payload at node 513 and beyond list position 32, covers those
+identifier forms, and verifies that neither unattempted tail is traversed.
+Preflight now records node-budget exclusions for the decoder, treats topology
+list length as local partial state, and applies global bounds only to attempted
+positions. UUID detection accepts every canonical version nibble rather than
+only legacy UUID versions.
+
 Focused GREEN:
 
 ```sh
