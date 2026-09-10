@@ -236,8 +236,16 @@ rejected, and every dataset path segment must contain visible content.
 The exact-SHA review of `65f61430379f4f185ac16b4ca81d6f1b670e9043`
 demonstrated both remaining cases with public-path probes: boundary newlines
 were trimmed into accepted names and U+200B-only identities crossed the typed
-boundary. Focused RED tests reproduced both; the final grammar makes them GREEN
+boundary. Focused RED tests reproduced both; the grammar makes them GREEN
 without rejecting a valid emoji identity.
+
+The subsequent exact-SHA review of
+`ab0abb3a53330faaedb02d88e4996aece9a31601` found that the visibility check
+still omitted other Unicode `Default_Ignorable_Code_Point` values. The public
+path RED fixture reproduced invisible pools, roots, and path segments using
+U+115F, U+1160, U+17B4, U+3164, U+FFA0, and supplementary U+E0001. The final
+predicate covers the complete derived-property ranges, including supplementary
+tag and variation-selector ranges, and the same focused fixture is GREEN.
 
 ## Tooling note
 

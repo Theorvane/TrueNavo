@@ -588,17 +588,29 @@ void main() {
   );
 
   test('rejects visually blank and invisible-only identity segments', () async {
+    final supplementaryTag = String.fromCharCode(0xE0001);
     final queries = _Queries(
       results: {
         'system.info': {'hostname': 'atlas', 'version': '24.10'},
         'pool.query': [
           {'name': '\u200B', 'status': 'HEALTHY'},
+          {'name': '\u115F', 'status': 'HEALTHY'},
+          {'name': '\u1160', 'status': 'HEALTHY'},
+          {'name': '\u17B4', 'status': 'HEALTHY'},
+          {'name': '\u3164', 'status': 'HEALTHY'},
+          {'name': '\uFFA0', 'status': 'HEALTHY'},
+          {'name': supplementaryTag, 'status': 'HEALTHY'},
           {'name': 'tank', 'status': 'HEALTHY'},
         ],
         'pool.dataset.query': [
           {'name': '\u200B'},
+          {'name': '\u115F/media'},
+          {'name': '\u3164/media'},
+          {'name': '$supplementaryTag/media'},
           {'name': 'tank/\u200B'},
-          {'name': '\u200B/media'},
+          {'name': 'tank/\u17B4'},
+          {'name': 'tank/\uFFA0'},
+          {'name': 'tank/$supplementaryTag'},
           {'name': 'tank/media'},
         ],
       },

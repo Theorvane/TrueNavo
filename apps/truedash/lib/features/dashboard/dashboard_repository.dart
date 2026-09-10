@@ -651,11 +651,13 @@ final class DashboardRepository {
 
   bool _isSafeIdentifier(String value) {
     if (value.length > 160) return false;
-    for (var index = 0; index < value.length; index++) {
-      final unit = value.codeUnitAt(index);
-      if (_isIdentifierControl(unit) || _isUnsafeIdentifierFormat(unit)) {
+    for (final rune in value.runes) {
+      if (_isIdentifierControl(rune) || _isDefaultIgnorableCodePoint(rune)) {
         return false;
       }
+    }
+    for (var index = 0; index < value.length; index++) {
+      final unit = value.codeUnitAt(index);
       if (unit >= 0xD800 && unit <= 0xDBFF) {
         if (++index >= value.length) return false;
         final next = value.codeUnitAt(index);
@@ -679,19 +681,31 @@ final class DashboardRepository {
       (unit >= 0x202A && unit <= 0x202E) ||
       (unit >= 0x2066 && unit <= 0x2069);
 
-  bool _isUnsafeIdentifierFormat(int unit) =>
-      unit == 0x00AD ||
-      unit == 0x034F ||
-      unit == 0x061C ||
-      (unit >= 0x180B && unit <= 0x180F) ||
-      (unit >= 0x200B && unit <= 0x200F) ||
-      (unit >= 0x202A && unit <= 0x202E) ||
-      (unit >= 0x2060 && unit <= 0x206F) ||
-      unit == 0xFEFF;
+  /// Unicode DerivedCoreProperties `Default_Ignorable_Code_Point` ranges.
+  /// Identity text rejects the property rather than maintaining a shorter
+  /// visual denylist that can miss invisible fillers or supplementary tags.
+  bool _isDefaultIgnorableCodePoint(int rune) =>
+      rune == 0x00AD ||
+      rune == 0x034F ||
+      rune == 0x061C ||
+      (rune >= 0x115F && rune <= 0x1160) ||
+      (rune >= 0x17B4 && rune <= 0x17B5) ||
+      (rune >= 0x180B && rune <= 0x180F) ||
+      (rune >= 0x200B && rune <= 0x200F) ||
+      (rune >= 0x202A && rune <= 0x202E) ||
+      (rune >= 0x2060 && rune <= 0x206F) ||
+      rune == 0x3164 ||
+      (rune >= 0xFE00 && rune <= 0xFE0F) ||
+      rune == 0xFEFF ||
+      rune == 0xFFA0 ||
+      (rune >= 0xFFF0 && rune <= 0xFFF8) ||
+      (rune >= 0x1BCA0 && rune <= 0x1BCA3) ||
+      (rune >= 0x1D173 && rune <= 0x1D17A) ||
+      (rune >= 0xE0000 && rune <= 0xE0FFF);
 
   bool _hasVisibleIdentifierContent(String value) {
     for (final rune in value.runes) {
-      if (_isUnicodeWhitespace(rune) || _isDefaultIgnorableModifier(rune)) {
+      if (_isUnicodeWhitespace(rune) || _isDefaultIgnorableCodePoint(rune)) {
         continue;
       }
       return true;
@@ -709,10 +723,6 @@ final class DashboardRepository {
       rune == 0x202F ||
       rune == 0x205F ||
       rune == 0x3000;
-
-  bool _isDefaultIgnorableModifier(int rune) =>
-      (rune >= 0xFE00 && rune <= 0xFE0F) ||
-      (rune >= 0xE0100 && rune <= 0xE01EF);
 
   Map _map(Object? value) => value is Map ? value : const {};
   List _list(Object? value) => value is List ? value : const [];
