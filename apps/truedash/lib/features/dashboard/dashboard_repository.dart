@@ -60,6 +60,7 @@ DashboardStatus dashboardOperationalStatus(String value) {
     case 'faulted':
     case 'offline':
     case 'unavail':
+    case 'unavailable':
     case 'removed':
     case 'failed':
     case 'failure':
@@ -351,18 +352,24 @@ final class DashboardRepository {
       return const DashboardFailure();
     }
     final poolItems = pools.items ?? const <DashboardPool>[];
-    final knownPoolNames = poolItems
-        .map((pool) => pool.name)
-        .where((name) => !name.endsWith('…'))
+    final poolIdentityCounts = <String, int>{};
+    for (final pool in poolItems) {
+      poolIdentityCounts.update(
+        pool.name,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final knownPoolNames = poolIdentityCounts.entries
+        .where((entry) => entry.value == 1)
+        .map((entry) => entry.key)
         .toSet();
     final datasetItems =
         (datasets.items ?? const <DashboardDataset>[])
             .map(
               (dataset) => DashboardDataset(
                 name: dataset.name,
-                poolName:
-                    !dataset.poolName.endsWith('…') &&
-                        knownPoolNames.contains(dataset.poolName)
+                poolName: knownPoolNames.contains(dataset.poolName)
                     ? dataset.poolName
                     : '',
               ),
@@ -496,7 +503,9 @@ final class DashboardRepository {
       if (item is! Map) continue;
       final name = item['name'];
       if (name is! String || name.trim().isEmpty) continue;
-      pools.add(_pool({...item, 'name': name.trim()}));
+      final normalizedName = name.trim();
+      if (!_isSafeIdentifier(normalizedName)) continue;
+      pools.add(_pool({...item, 'name': normalizedName}));
     }
     pools.sort((left, right) => _compareText(left.name, right.name));
     return pools;
@@ -529,21 +538,18 @@ final class DashboardRepository {
       rawCapacity,
       isRatio: isRatioSource,
     );
-    final capacity = isRatioSource && capacityPercent != null
-        ? _percentText(capacityPercent)
-        : rawCapacity == null
+    final capacity = capacityPercent == null
         ? null
-        : _text(rawCapacity, fallback: 'Unknown');
+        : _percentText(capacityPercent);
     final explicitStatus = map['status'];
     final healthy = map['healthy'];
-    final status = explicitStatus is String && explicitStatus.trim().isNotEmpty
-        ? _text(explicitStatus, fallback: 'Unknown')
-        : healthy is bool
-        ? (healthy ? 'Healthy' : 'Unhealthy')
-        : _text(explicitStatus ?? healthy, fallback: 'Unknown');
-    final statusKind =
-        healthy is bool &&
-            !(explicitStatus is String && explicitStatus.trim().isNotEmpty)
+    final normalizedStatus = explicitStatus is String
+        ? _normalizedPoolStatus(explicitStatus)
+        : null;
+    final status =
+        normalizedStatus ??
+        (healthy is bool ? (healthy ? 'Healthy' : 'Unhealthy') : 'Unknown');
+    final statusKind = healthy is bool && normalizedStatus == null
         ? (healthy ? DashboardStatus.success : DashboardStatus.critical)
         : dashboardOperationalStatus(status);
     return DashboardPool(
@@ -565,14 +571,9 @@ final class DashboardRepository {
       final rawName = item['name'] ?? item['id'];
       if (rawName is! String || rawName.trim().isEmpty) continue;
       final normalizedName = rawName.trim();
-      final name = _text(normalizedName, fallback: 'Unnamed');
+      if (!_isSafeIdentifier(normalizedName)) continue;
       final rootName = normalizedName.split('/').first;
-      datasets.add(
-        DashboardDataset(
-          name: name,
-          poolName: rootName.length <= 160 ? rootName : '',
-        ),
-      );
+      datasets.add(DashboardDataset(name: normalizedName, poolName: rootName));
     }
     return datasets;
   }
@@ -607,13 +608,20 @@ final class DashboardRepository {
       }).toList();
 
   double? _capacityPercent(Object? value, {required bool isRatio}) {
+    final hasExplicitPercent = value is String && value.trim().endsWith('%');
     final number = switch (value) {
       num value => value.toDouble(),
-      String value => double.tryParse(value.replaceAll('%', '').trim()),
+      String value
+          when RegExp(r'^(?:\d+(?:\.\d+)?|\.\d+)%?$').hasMatch(value.trim()) =>
+        double.tryParse(
+          value.trim().endsWith('%')
+              ? value.trim().substring(0, value.trim().length - 1)
+              : value.trim(),
+        ),
       _ => null,
     };
     if (number == null || !number.isFinite) return null;
-    final percent = isRatio && number >= 0 && number <= 1
+    final percent = isRatio && !hasExplicitPercent && number >= 0 && number <= 1
         ? number * 100
         : number;
     return percent.clamp(0, 100).toDouble();
@@ -621,6 +629,37 @@ final class DashboardRepository {
 
   String _percentText(double percent) =>
       '${percent == percent.roundToDouble() ? percent.round() : percent}%';
+
+  String? _normalizedPoolStatus(String value) {
+    return switch (value.trim().toLowerCase()) {
+      'healthy' => 'Healthy',
+      'online' => 'Online',
+      'degraded' => 'Degraded',
+      'warning' => 'Warning',
+      'critical' => 'Critical',
+      'faulted' => 'Faulted',
+      'offline' => 'Offline',
+      'unavail' => 'Unavailable',
+      'removed' => 'Removed',
+      'unknown' => 'Unknown',
+      _ => null,
+    };
+  }
+
+  bool _isSafeIdentifier(String value) {
+    if (value.length > 160) return false;
+    for (var index = 0; index < value.length; index++) {
+      final unit = value.codeUnitAt(index);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        if (++index >= value.length) return false;
+        final next = value.codeUnitAt(index);
+        if (next < 0xDC00 || next > 0xDFFF) return false;
+      } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   Map _map(Object? value) => value is Map ? value : const {};
   List _list(Object? value) => value is List ? value : const [];

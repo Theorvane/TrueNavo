@@ -133,7 +133,7 @@ void main() {
   });
 
   test(
-    'does not attribute a dataset through a truncated pool-name collision',
+    'rejects overlong identities instead of creating a truncated collision',
     () async {
       final sharedPrefix = 'p' * 160;
       final queries = _Queries(
@@ -151,11 +151,12 @@ void main() {
           .loadStorage(const {'pool.query', 'pool.dataset.query'});
 
       final storage = (result as DashboardData<DashboardStorage>).value;
-      expect(storage.datasets.single.poolName, isEmpty);
+      expect(storage.pools, isEmpty);
+      expect(storage.datasets, isEmpty);
     },
   );
 
-  test('does not group through a literal ellipsis display collision', () async {
+  test('rejects an overlong pool in a literal ellipsis collision', () async {
     final prefix = 'p' * 159;
     final queries = _Queries(
       results: {
@@ -172,7 +173,8 @@ void main() {
         .loadStorage(const {'pool.query', 'pool.dataset.query'});
 
     final storage = (result as DashboardData<DashboardStorage>).value;
-    expect(storage.datasets.single.poolName, isEmpty);
+    expect(storage.pools, isEmpty);
+    expect(storage.datasets, isEmpty);
   });
 
   test('trims pool identity before deterministic dataset grouping', () async {
@@ -227,6 +229,109 @@ void main() {
     expect(storage.datasetsAvailable, isFalse);
     expect(storage.pools.single.name, 'tank');
   });
+
+  test('rejects arbitrary capacity text at the repository boundary', () async {
+    const marker = 'Authorization: Bearer REVIEW_SECRET_MARKER';
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          {'name': 'tank', 'status': marker, 'capacity': marker},
+          {'name': 'backup', 'status': 'HEALTHY', 'capacity': '72.5%'},
+          {'name': 'archive', 'status': 'HEALTHY', 'used_pct': '0.5%'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query'});
+
+    final pools = (result as DashboardData<DashboardStorage>).value.pools;
+    expect(pools.singleWhere((pool) => pool.name == 'tank').capacity, isNull);
+    expect(
+      pools.singleWhere((pool) => pool.name == 'tank').capacityPercent,
+      isNull,
+    );
+    expect(pools.singleWhere((pool) => pool.name == 'tank').status, 'Unknown');
+    expect(
+      pools.singleWhere((pool) => pool.name == 'backup').capacity,
+      '72.5%',
+    );
+    expect(
+      pools.singleWhere((pool) => pool.name == 'backup').capacityPercent,
+      72.5,
+    );
+    expect(
+      pools.singleWhere((pool) => pool.name == 'archive').capacity,
+      '0.5%',
+    );
+    expect(
+      pools.singleWhere((pool) => pool.name == 'archive').capacityPercent,
+      0.5,
+    );
+    expect(pools.map((pool) => pool.capacity).join(), isNot(contains(marker)));
+  });
+
+  test(
+    'rejects overlong dataset identities without lossy truncation',
+    () async {
+      final prefix = 'tank/${'x' * 155}';
+      final validUnicodeName = 'tank/${'x' * 153}😀';
+      final queries = _Queries(
+        results: {
+          'pool.query': [
+            {'name': 'tank', 'status': 'HEALTHY'},
+          ],
+          'pool.dataset.query': [
+            {'name': '${prefix}a'},
+            {'name': '${prefix}b'},
+            {
+              'name': String.fromCharCodes([
+                0x74,
+                0x61,
+                0x6e,
+                0x6b,
+                0x2f,
+                0xD800,
+              ]),
+            },
+            {'name': validUnicodeName},
+          ],
+        },
+      );
+
+      final result = await DashboardRepository(queries)
+          .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+      final datasets =
+          (result as DashboardData<DashboardStorage>).value.datasets;
+      expect(datasets.map((dataset) => dataset.name), [validUnicodeName]);
+      expect(datasets.single.name, isNot(contains('�')));
+    },
+  );
+
+  test(
+    'keeps datasets ungrouped when normalized pool identity is duplicate',
+    () async {
+      final queries = _Queries(
+        results: {
+          'pool.query': [
+            {'name': 'tank', 'status': 'HEALTHY'},
+            {'name': ' tank ', 'status': 'DEGRADED'},
+          ],
+          'pool.dataset.query': [
+            {'name': 'tank/media'},
+          ],
+        },
+      );
+
+      final result = await DashboardRepository(queries)
+          .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+      final storage = (result as DashboardData<DashboardStorage>).value;
+      expect(storage.pools, hasLength(2));
+      expect(storage.datasets.single.poolName, isEmpty);
+    },
+  );
 
   test('bounds storage parsing to the first 50 response records', () async {
     final malformedPrefix = List<Object?>.filled(50, 'malformed');
@@ -448,34 +553,36 @@ void main() {
     expect(queries.calledMethods, ['system.info', 'pool.query', 'alert.list']);
   });
 
-  test('bounds explicit pool status for home and storage', () async {
-    final longStatus = 'x' * 200;
-    final queries = _Queries(
-      results: {
-        'system.info': {'hostname': 'atlas', 'version': '24.10'},
-        'pool.query': [
-          {'name': 'tank', 'status': longStatus},
-        ],
-      },
-    );
-    final repository = DashboardRepository(queries);
+  test(
+    'normalizes unknown pool status without retaining remote text',
+    () async {
+      final longStatus = 'x' * 200;
+      final queries = _Queries(
+        results: {
+          'system.info': {'hostname': 'atlas', 'version': '24.10'},
+          'pool.query': [
+            {'name': 'tank', 'status': longStatus},
+          ],
+        },
+      );
+      final repository = DashboardRepository(queries);
 
-    final homeResult = await repository.loadHome(const {
-      'system.info',
-      'pool.query',
-    });
-    final storageResult = await repository.loadStorage(const {'pool.query'});
+      final homeResult = await repository.loadHome(const {
+        'system.info',
+        'pool.query',
+      });
+      final storageResult = await repository.loadStorage(const {'pool.query'});
 
-    final homePool =
-        (homeResult as DashboardData<DashboardHome>).value.pools.single;
-    final storagePool =
-        (storageResult as DashboardData<DashboardStorage>).value.pools.single;
-    for (final pool in [homePool, storagePool]) {
-      expect(pool.status, '${'x' * 159}…');
-      expect(pool.status.length, 160);
-      expect(pool.statusKind, DashboardStatus.info);
-    }
-  });
+      final homePool =
+          (homeResult as DashboardData<DashboardHome>).value.pools.single;
+      final storagePool =
+          (storageResult as DashboardData<DashboardStorage>).value.pools.single;
+      for (final pool in [homePool, storagePool]) {
+        expect(pool.status, 'Unknown');
+        expect(pool.statusKind, DashboardStatus.neutral);
+      }
+    },
+  );
 
   test('normalizes pool capacity according to its source field', () async {
     final queries = _Queries(
@@ -493,11 +600,11 @@ void main() {
         .loadHome(const {'system.info', 'pool.query'});
 
     final pools = (result as DashboardData<DashboardHome>).value.pools;
-    expect(pools[0].capacity, '1');
+    expect(pools[0].capacity, '1%');
     expect(pools[0].capacityPercent, 1);
     expect(pools[1].capacity, '1%');
     expect(pools[1].capacityPercent, 1);
-    expect(pools[2].capacity, '120');
+    expect(pools[2].capacity, '100%');
     expect(pools[2].capacityPercent, 100);
   });
 

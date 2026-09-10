@@ -308,6 +308,13 @@ class DashboardPage extends ConsumerWidget {
         title: 'Snapshots unavailable',
         child: Text('This read-only console has no approved snapshot query.'),
       ),
+      const SizedBox(height: TdSpacing.related),
+      const TdPanel(
+        title: 'ACL management unavailable',
+        child: Text(
+          'This read-only console has no approved ACL query or mutation.',
+        ),
+      ),
     ],
   );
 

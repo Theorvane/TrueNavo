@@ -13,8 +13,14 @@
 - Pool health/capacity presentation remains bounded to existing admitted fields.
 - Dataset rows expose a minimum 44 px target and safe semantics when pool context is unavailable.
 - Strings remain display-bounded and malformed records are ignored.
+- Pool capacity accepts only finite numeric or strict numeric-percent input;
+  arbitrary remote text is discarded.
+- Dataset and pool identities over 160 UTF-16 units or containing malformed
+  surrogate pairs are rejected instead of lossy truncation.
+- Duplicate normalized pool identities are treated as ambiguous, so associated
+  datasets remain visible under `Other datasets` rather than being duplicated.
 - A malformed top-level response is rejected as a failed section rather than misrepresented as an empty successful inventory.
-- VDEV, disk, snapshot, ACL, and mutation surfaces remain unavailable.
+- VDEV, disk, snapshot, ACL, and mutation surfaces remain explicitly unavailable.
 
 ## RPC and data boundary
 
@@ -101,13 +107,15 @@ A second read-only review after those fixes found no blocker, confirmed that the
 ```bash
 cd apps/truedash
 fvm flutter test test/features/dashboard/dashboard_controller_test.dart
-# 30 tests passed
+# 33 tests passed
 
 fvm flutter test test/features/dashboard/dashboard_page_test.dart
-# 13 tests passed
+# 15 tests passed
 ```
 
-The widget suite includes a real 320 x 900 surface check with long content, supported-empty and partial-state checks, semantics verification, and the 44 px dataset target assertion.
+The widget suite includes real 320 x 900 and 1440 x 1200 surface checks,
+long-content, supported-empty and partial-state checks, semantics verification,
+the static ACL-unavailable notice, and the 44 px dataset target assertion.
 
 ## Final repository verification
 
@@ -135,7 +143,7 @@ test -f build/web/drift_worker.js
 Results:
 
 - analyze: no issues;
-- full app suite: 505 tests passed, 1 existing skip;
+- full app suite: 510 tests passed, 1 existing skip;
 - Web release build: succeeded;
 - `sqlite3.wasm` and `drift_worker.js`: present.
 
@@ -189,9 +197,27 @@ git diff -- apps/truedash/lib/features/dashboard/dashboard_capabilities.dart
 
 Result: clean whitespace; capability diff empty.
 
+## Exact-SHA review remediation
+
+The first exact-SHA review of `73e7cdcbadc15bde7696d29f15a041eb7030866e`
+was rejected. Focused RED tests reproduced arbitrary capacity text retention,
+lossy dataset identity truncation, duplicate pool attribution, the missing ACL
+notice, and missing committed 1440 px coverage. Production changes then made
+those tests GREEN by enforcing a positive capacity grammar, rejecting unsafe
+identities, treating duplicate pool identities as ambiguous, adding the static
+ACL notice, and adding a desktop-width render test. Unknown pool status text is
+also normalized to a fixed `Unknown` label rather than retained.
+
 ## Live verification limitation
 
-The production Web artifact was built, and the changed Storage surface was exercised through Flutter rendering tests at a 320 px viewport. A browser inspection of the authenticated Storage route was not possible because the previously supplied TrueNAS credential returns `AUTH_ERR`; the unauthenticated production app cannot enter that route. No NAS mutation or additional credential attempt was performed. Live TrueNAS interoperability therefore remains explicitly unproven and deferred.
+The production Web artifact was built, and the changed Storage surface was
+exercised through committed Flutter rendering tests at 320 px and 1440 px. A
+browser inspection of the authenticated Storage route was not possible because
+the previously supplied TrueNAS credential returns `AUTH_ERR`; the
+unauthenticated production app cannot enter that route. Per the clarified design
+boundary, authenticated production-browser QA is a separate live-interoperability
+gate and remains deferred. No NAS mutation or additional credential attempt was
+performed. Live TrueNAS interoperability remains explicitly unproven.
 
 ## Tooling note
 

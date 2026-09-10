@@ -95,7 +95,12 @@ fvm dart format --output=none --set-exit-if-changed apps/truedash/lib apps/trued
 git diff --check
 ```
 
-A browser QA matrix is performed only after the final candidate SHA and must inspect the production build at 320px and 1440px. Browser/tool failure must be reported as unavailable verification, not as a passing UI result.
+Deterministic Flutter rendering must cover the Storage surface at 320px and
+1440px on the final candidate SHA. Authenticated production-browser inspection
+is a separate live-interoperability gate: it is performed only when a valid,
+authorized test session exists. Missing credentials or browser/tool failure must
+be reported as deferred verification, never as a passing live UI result, and do
+not block the deterministic M3-1 code acceptance criteria below.
 
 ## Acceptance criteria
 

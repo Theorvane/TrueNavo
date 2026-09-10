@@ -76,8 +76,8 @@ Add widget tests for:
 - orphan datasets remain visible in an `Other datasets` group;
 - pool-only and dataset-only partial responses display a concise partial-inventory notice;
 - supported empty lists display an empty state, not an unsupported state;
-- unsupported VDEV/disk/snapshot sections remain visible and clearly read-only/unavailable;
-- a 320 px viewport does not overflow with long bounded names/statuses;
+- unsupported VDEV/disk/snapshot/ACL sections remain visible and clearly read-only/unavailable;
+- 320 px and 1440 px viewports do not overflow with long bounded names/statuses;
 - section labels and the Refresh action are discoverable through Flutter semantics.
 
 Run:
@@ -86,6 +86,11 @@ Run:
 cd apps/truedash
 fvm flutter test test/features/dashboard/dashboard_page_test.dart
 ```
+
+The committed widget suite is the deterministic responsive gate. An
+authenticated production-browser pass is recorded separately when a valid,
+authorized TrueNAS session is available; it is not inferred from an
+unauthenticated shell or from a failed credential attempt.
 
 Confirm failures describe the missing UI behavior.
 

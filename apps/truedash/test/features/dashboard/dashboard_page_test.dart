@@ -78,6 +78,7 @@ void main() {
 
     expect(find.text('VDEVs and disks unavailable'), findsOneWidget);
     expect(find.text('Snapshots unavailable'), findsOneWidget);
+    expect(find.text('ACL management unavailable'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -162,6 +163,7 @@ void main() {
     );
     expect(find.text('VDEVs and disks unavailable'), findsOneWidget);
     expect(find.text('Snapshots unavailable'), findsOneWidget);
+    expect(find.text('ACL management unavailable'), findsOneWidget);
     expect(tester.takeException(), isNull);
     semantics.dispose();
   });
@@ -216,6 +218,57 @@ void main() {
 
     expect(find.text(longName), findsWidgets);
     expect(find.text('$longName/media'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('storage renders safely at desktop width', (tester) async {
+    await _pumpDashboard(
+      tester,
+      AppDestination.storage,
+      const DashboardStorage(
+        pools: [
+          DashboardPool(
+            name: 'tank',
+            status: 'Healthy',
+            statusKind: DashboardStatus.success,
+            capacity: '72%',
+            capacityPercent: 72,
+          ),
+        ],
+        datasets: [DashboardDataset(name: 'tank/media', poolName: 'tank')],
+        poolsAvailable: true,
+        datasetsAvailable: true,
+      ),
+      size: const Size(1440, 1200),
+    );
+
+    expect(find.text('Storage'), findsOneWidget);
+    expect(find.text('tank/media'), findsOneWidget);
+    expect(find.text('ACL management unavailable'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('storage renders unavailable capacity without remote text', (
+    tester,
+  ) async {
+    await _pumpDashboard(
+      tester,
+      AppDestination.storage,
+      const DashboardStorage(
+        pools: [
+          DashboardPool(
+            name: 'tank',
+            status: 'Healthy',
+            statusKind: DashboardStatus.success,
+          ),
+        ],
+        datasets: [],
+        poolsAvailable: true,
+        datasetsAvailable: true,
+      ),
+    );
+
+    expect(find.text('Capacity unavailable'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -283,9 +336,10 @@ void main() {
 Future<void> _pumpDashboard(
   WidgetTester tester,
   AppDestination destination,
-  Object? value,
-) async {
-  await tester.binding.setSurfaceSize(const Size(320, 900));
+  Object? value, {
+  Size size = const Size(320, 900),
+}) async {
+  await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     ProviderScope(
