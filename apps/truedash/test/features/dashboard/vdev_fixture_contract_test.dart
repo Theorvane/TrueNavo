@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -219,6 +220,11 @@ void main() {
   });
 
   test('rejects hostile and shared fixture containers', () {
+    expect(
+      _contract.parse(_OversizedMap(1025)).rejectionReason,
+      VdevFixtureRejectionReason.traversalLimitExceeded,
+    );
+
     final selfMap = <String, Object?>{};
     selfMap['topology'] = selfMap;
     expect(
@@ -458,3 +464,29 @@ Map<String, Object?> _chain(int depth) =>
 
 Object? _fixture(String name) =>
     jsonDecode(File('test/fixtures/dashboard/vdev/$name').readAsStringSync());
+
+final class _OversizedMap extends MapBase<Object?, Object?> {
+  _OversizedMap(this._length);
+
+  final int _length;
+
+  @override
+  int get length => _length;
+
+  @override
+  Iterable<Object?> get keys => throw StateError('entries must not be read');
+
+  @override
+  Object? operator [](Object? key) =>
+      throw StateError('values must not be read');
+
+  @override
+  void operator []=(Object? key, Object? value) =>
+      throw StateError('map must not be mutated');
+
+  @override
+  void clear() => throw StateError('map must not be mutated');
+
+  @override
+  Object? remove(Object? key) => throw StateError('map must not be mutated');
+}

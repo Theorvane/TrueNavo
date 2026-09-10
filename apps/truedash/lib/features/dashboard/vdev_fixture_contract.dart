@@ -287,6 +287,11 @@ final class VdevFixtureContract {
     while (pending.isNotEmpty) {
       final value = pending.removeLast();
       if (value is Map) {
+        if (value.length > maxVisitedMaps) {
+          throw const _FixtureRejection(
+            VdevFixtureRejectionReason.traversalLimitExceeded,
+          );
+        }
         if (!context.containers.add(value)) {
           throw const _FixtureRejection(
             VdevFixtureRejectionReason.sharedContainer,
