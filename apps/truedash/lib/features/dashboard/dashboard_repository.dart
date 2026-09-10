@@ -500,12 +500,8 @@ final class DashboardRepository {
     }
     final pools = <DashboardPool>[];
     for (final item in value.take(50)) {
-      if (item is! Map) continue;
-      final name = item['name'];
-      if (name is! String || name.trim().isEmpty) continue;
-      final normalizedName = name.trim();
-      if (!_isSafeIdentifier(normalizedName)) continue;
-      pools.add(_pool({...item, 'name': normalizedName}));
+      final pool = _strictPool(item);
+      if (pool != null) pools.add(pool);
     }
     pools.sort((left, right) => _compareText(left.name, right.name));
     return pools;
@@ -516,7 +512,8 @@ final class DashboardRepository {
     var warningCount = 0;
     final items = <DashboardPool>[];
     for (final item in _list(value)) {
-      final pool = _pool(item);
+      final pool = _strictPool(item);
+      if (pool == null) continue;
       if (pool.statusKind == DashboardStatus.critical) criticalCount++;
       if (pool.statusKind == DashboardStatus.warning) warningCount++;
       if (items.length < 50) items.add(pool);
@@ -528,8 +525,13 @@ final class DashboardRepository {
     );
   }
 
-  DashboardPool _pool(Object? item) {
-    final map = _map(item);
+  DashboardPool? _strictPool(Object? item) {
+    if (item is! Map) return null;
+    final rawName = item['name'];
+    if (rawName is! String) return null;
+    final name = rawName.trim();
+    if (name.isEmpty || !_isSafeIdentifier(name)) return null;
+    final map = item;
     final capacityValue = map['capacity'];
     final usedPercent = map['used_pct'];
     final rawCapacity = capacityValue ?? usedPercent;
@@ -553,7 +555,7 @@ final class DashboardRepository {
         ? (healthy ? DashboardStatus.success : DashboardStatus.critical)
         : dashboardOperationalStatus(status);
     return DashboardPool(
-      name: _text(map['name'], fallback: 'Pool'),
+      name: name,
       status: status,
       statusKind: statusKind,
       capacity: capacity,
@@ -650,6 +652,7 @@ final class DashboardRepository {
     if (value.length > 160) return false;
     for (var index = 0; index < value.length; index++) {
       final unit = value.codeUnitAt(index);
+      if (_isIdentifierControl(unit)) return false;
       if (unit >= 0xD800 && unit <= 0xDBFF) {
         if (++index >= value.length) return false;
         final next = value.codeUnitAt(index);
@@ -660,6 +663,15 @@ final class DashboardRepository {
     }
     return true;
   }
+
+  bool _isIdentifierControl(int unit) =>
+      unit <= 0x1F ||
+      (unit >= 0x7F && unit <= 0x9F) ||
+      unit == 0x061C ||
+      unit == 0x200E ||
+      unit == 0x200F ||
+      (unit >= 0x202A && unit <= 0x202E) ||
+      (unit >= 0x2066 && unit <= 0x2069);
 
   Map _map(Object? value) => value is Map ? value : const {};
   List _list(Object? value) => value is List ? value : const [];

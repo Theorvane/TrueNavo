@@ -143,7 +143,7 @@ test -f build/web/drift_worker.js
 Results:
 
 - analyze: no issues;
-- full app suite: 510 tests passed, 1 existing skip;
+- full app suite: 512 tests passed, 1 existing skip;
 - Web release build: succeeded;
 - `sqlite3.wasm` and `drift_worker.js`: present.
 
@@ -218,6 +218,18 @@ unauthenticated production app cannot enter that route. Per the clarified design
 boundary, authenticated production-browser QA is a separate live-interoperability
 gate and remains deferred. No NAS mutation or additional credential attempt was
 performed. Live TrueNAS interoperability remains explicitly unproven.
+
+## Second exact-SHA security remediation
+
+The specification review approved `f672ca195e38c026c72b56b3218da45b926bae1f`,
+but its security review found that Home still used the older permissive pool
+decoder and that identifier validation allowed control and bidirectional-format
+characters. Public-path RED tests demonstrated scalar, overlong, malformed
+surrogate, newline, and bidi-controlled pool/dataset identities crossing the
+boundary. Home and Storage now share one nullable strict pool decoder, and the
+identifier grammar rejects C0/C1 controls plus Unicode bidi formatting controls
+while retaining well-formed paired Unicode. The focused repository suite now
+contains 35 tests.
 
 ## Tooling note
 
