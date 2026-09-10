@@ -32,6 +32,7 @@ The implementation enforces and tests:
 | Retained nodes | 512 | 512 complete; 513th discarded and result partial |
 | Maps visited | 1024 | 1024 complete; 1025 rejected |
 | Lists visited | 256 | 256 complete; 257 rejected |
+| Values/entries visited | 2048 | traversal rejects before enqueueing entry 2049 |
 | String length | 64 UTF-16 units | 65 rejected |
 
 Preflight traversal is iterative. Shared or cyclic map/list identity rejects with
@@ -99,6 +100,26 @@ Result: compilation failed because
 fixture type were absent. This confirmed the test exercised missing production
 behavior rather than a pre-existing failure.
 
+Initial candidate review:
+
+Exact-SHA specification and security review of
+`59e4e9204564987dd015692787c895381fd95fce` rejected the candidate. The five
+blocking themes were: unbounded preflight enumeration, preflight defeating
+local partial semantics, missing 64/65 boundary scope, literal remote
+`UNKNOWN`, effectively shared version schemas, and incomplete raw identifier
+recognition. Public-path RED tests reproduced deceptive Map entries, a
+billion-length custom List, embedded AWS-style values, plain host/IP/UUID/WWN
+values, non-finite numbers, whitespace-normalized unsafe keys, data beyond the
+32-position local boundary, 64/65-unit node strings, literal `UNKNOWN`, and
+cross-family fixture reuse.
+
+Remediation validates only attempted topology positions, bounds every
+container plus 2,048 total visited values, and never bulk-copies an untrusted
+collection. Unsafe content invalidates its containing node so a safe companion
+can produce partial output. Each version selector requires its own local
+contract marker and owns independent node/status tables. `unknown` now means
+only an absent optional status.
+
 Focused GREEN:
 
 ```sh
@@ -108,7 +129,7 @@ fvm flutter test \
   test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
 ```
 
-Result: 20 tests passed (15 contract tests and 5 runtime-boundary tests).
+Result: 25 tests passed (20 contract tests and 5 runtime-boundary tests).
 
 The hostile-map guard was added after the first full pass. Its focused suite and
 app analyzer passed before the remediation commit.
@@ -134,7 +155,7 @@ Observed results before the final evidence commit:
 
 - formatting: 145 files checked, 0 changed;
 - app analyzer: no issues;
-- full app suite: 533 passed, 1 existing skip;
+- full app suite: 538 passed, 1 existing skip;
 - Web release build: succeeded; `sqlite3.wasm` and `drift_worker.js` present;
 - `truenas_api`: 64 passed, with two pre-existing informational analyzer
   notices in unchanged files;
@@ -152,6 +173,19 @@ Codex CLI was attempted first in the approved isolated worktree with
 `401 Unauthorized: Missing bearer or basic authentication in header` before any
 file change. Codex output was not treated as implementation or verification
 evidence. The bounded plan was then implemented directly with RED/GREEN tests.
+
+## Versioned source recheck
+
+The official version pages were re-fetched at `2026-09-10T06:07:34Z`. All three
+document `PoolTopology` with the same required `data`, `log`, `cache`, `spare`,
+`special`, and `dedup` arrays. That supports shared semantic group names, but
+not transferable version admission; local contract markers enforce isolation.
+
+| Version | URL | HTTP bytes | SHA-256 |
+|---|---|---:|---|
+| 25.04 | https://api.truenas.com/v25.04/api_events_pool.query.html | 234716 | `c1c985acc777566c3fe647d475acefe78c55c5c0c0b795a2ff129c3f0c64093f` |
+| 25.10 | https://api.truenas.com/v25.10/api_methods_pool.query.html | 377778 | `d3305afa728b6ff4d060822a0c5efdc5c3c54efd60fd85dc33b024b980ff83c7` |
+| 26.0 | https://api.truenas.com/v26.0/api_methods_pool.query.html | 425889 | `dec1b4837fbf1dc0f0a88a24c4298bc1f32573457b0f5783e93301fd1d9cca64` |
 
 ## Live and delivery boundary
 

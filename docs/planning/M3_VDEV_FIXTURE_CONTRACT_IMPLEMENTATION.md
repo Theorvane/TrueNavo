@@ -60,7 +60,8 @@ Assert:
 - known families select a fixture-only contract;
 - unknown family immediately returns a rejected parse result;
 - `isRuntimeEnabled` is always false;
-- bounds equal depth 8, children 32, nodes 512, maps 1024, lists 256, string units 64;
+- bounds equal depth 8, children 32, nodes 512, maps 1024, lists 256,
+  visited values 2048, and string units 64;
 - result types expose either a snapshot or a fixed rejection, never both.
 
 **Step 2: Run RED**
@@ -138,6 +139,8 @@ Fixtures must use synthetic, identifier-free data and contain a single data grou
 - status is normalized from a version-specific documented token;
 - `deviceCount == 2` and derived `nodeCount` is deterministic;
 - no string from an unknown field enters the result.
+- each fixture carries its family-specific local contract marker and is rejected
+  by the other two family selectors.
 
 **Step 2: Run RED**
 

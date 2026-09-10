@@ -24,6 +24,7 @@ void main() {
     expect(VdevFixtureContract.maxNodes, 512);
     expect(VdevFixtureContract.maxVisitedMaps, 1024);
     expect(VdevFixtureContract.maxVisitedLists, 256);
+    expect(VdevFixtureContract.maxVisitedValues, 2048);
     expect(VdevFixtureContract.maxStringUnits, 64);
 
     final rejected = VdevFixtureContract.select(
@@ -61,8 +62,34 @@ void main() {
     }
   });
 
+  test('rejects fixtures bound to a different version family', () {
+    final fixtures = <DashboardVersionFamily, Object?>{
+      for (final family in families)
+        family: _fixture(
+          {
+            DashboardVersionFamily.v25_04: 'v25_04_minimal.json',
+            DashboardVersionFamily.v25_10: 'v25_10_minimal.json',
+            DashboardVersionFamily.v26Plus: 'v26_plus_minimal.json',
+          }[family]!,
+        ),
+    };
+
+    for (final family in families) {
+      for (final other in families.where((candidate) => candidate != family)) {
+        final result = VdevFixtureContract.select(family)
+            .parse(fixtures[other]);
+        expect(
+          result.rejectionReason,
+          VdevFixtureRejectionReason.malformedEnvelope,
+          reason: '$family must reject a fixture bound to $other',
+        );
+      }
+    }
+  });
+
   test('normalizes deterministic VDEV groups and states', () {
     final result = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {
         'dedup': [_leaf('FAULTED')],
         'special': [_leaf('OFFLINE')],
@@ -93,8 +120,31 @@ void main() {
     );
   });
 
+  test('reserves unknown status for an absent fixture value', () {
+    final absent = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {
+        'data': [_leaf()],
+      },
+    });
+    final literal = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {
+        'data': [_leaf('ONLINE'), _leaf('UNKNOWN')],
+      },
+    });
+
+    expect(
+      absent.snapshot!.groups.single.roots.single.status,
+      VdevOperationalStatus.unknown,
+    );
+    expect(literal.status, VdevFixtureStatus.partial);
+    expect(literal.snapshot!.nodeCount, 1);
+  });
+
   test('returns partial for a local malformed node when safe data remains', () {
     final result = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {
         'data': [
           _leaf('ONLINE'),
@@ -120,7 +170,10 @@ void main() {
         'DATA': [_leaf('ONLINE')],
       },
     ]) {
-      final result = _contract.parse({'topology': topology});
+      final result = _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': topology,
+      });
       expect(result.status, VdevFixtureStatus.rejected);
       expect(
         result.rejectionReason,
@@ -135,11 +188,17 @@ void main() {
       VdevFixtureRejectionReason.malformedEnvelope,
     );
     expect(
-      _contract.parse(const {'topology': 'bad'}).rejectionReason,
+      _contract.parse(const {
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': 'bad',
+      }).rejectionReason,
       VdevFixtureRejectionReason.malformedEnvelope,
     );
     expect(
-      _contract.parse(const {'topology': <String, Object?>{}}).rejectionReason,
+      _contract.parse(const {
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': <String, Object?>{},
+      }).rejectionReason,
       VdevFixtureRejectionReason.noSafeObservation,
     );
   });
@@ -149,11 +208,13 @@ void main() {
     final roots33 = List.generate(33, (_) => _leaf('ONLINE'));
     expect(
       _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {'data': roots32},
       }).status,
       VdevFixtureStatus.complete,
     );
     final widthPartial = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {'data': roots33},
     });
     expect(widthPartial.status, VdevFixtureStatus.partial);
@@ -163,6 +224,7 @@ void main() {
     final children33 = List.generate(33, (_) => _leaf('ONLINE'));
     expect(
       _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {
           'data': [_branch(children32)],
         },
@@ -171,6 +233,7 @@ void main() {
     );
     expect(
       _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {
           'data': [_branch(children33)],
         },
@@ -180,6 +243,7 @@ void main() {
 
     expect(
       _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {
           'data': [_chain(8)],
         },
@@ -187,12 +251,69 @@ void main() {
       VdevFixtureStatus.complete,
     );
     final depthPartial = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {
         'data': [_leaf('ONLINE'), _chain(9)],
       },
     });
     expect(depthPartial.status, VdevFixtureStatus.partial);
     expect(depthPartial.snapshot!.nodeCount, 1);
+  });
+
+  test('does not traverse fixture entries beyond local partial bounds', () {
+    final roots = List<Object?>.generate(32, (_) => _leaf('ONLINE'))
+      ..add({
+        'type': 'DISK',
+        'status': 'ONLINE',
+        'metadata': _HugeList(1000000000),
+      });
+    final children = List<Object?>.generate(32, (_) => _leaf('ONLINE'))
+      ..add({
+        'type': 'DISK',
+        'status': 'ONLINE',
+        'metadata': _HugeList(1000000000),
+      });
+
+    for (final fixture in [
+      {
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {'data': roots},
+      },
+      {
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [_branch(children)],
+        },
+      },
+    ]) {
+      final result = _contract.parse(fixture);
+      expect(result.status, VdevFixtureStatus.partial);
+      expect(result.snapshot, isNotNull);
+    }
+  });
+
+  test('treats unsafe node strings locally at the 64-unit boundary', () {
+    final accepted = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {
+        'data': [
+          {..._leaf('ONLINE'), 'note': 'x' * 64},
+        ],
+      },
+    });
+    final partial = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': {
+        'data': [
+          _leaf('ONLINE'),
+          {..._leaf('ONLINE'), 'note': 'x' * 65},
+        ],
+      },
+    });
+
+    expect(accepted.status, VdevFixtureStatus.complete);
+    expect(partial.status, VdevFixtureStatus.partial);
+    expect(partial.snapshot!.nodeCount, 1);
   });
 
   test('caps retained nodes at 512 and marks the 513th partial', () {
@@ -208,9 +329,11 @@ void main() {
       _branch(List.generate(32, (_) => _leaf('ONLINE'))),
     ];
     final exactResult = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {'data': exact},
     });
     final overResult = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {'data': over},
     });
     expect(exactResult.status, VdevFixtureStatus.complete);
@@ -224,6 +347,20 @@ void main() {
       _contract.parse(_OversizedMap(1025)).rejectionReason,
       VdevFixtureRejectionReason.traversalLimitExceeded,
     );
+    expect(
+      _contract.parse(_DeceptiveEntriesMap(1025)).rejectionReason,
+      VdevFixtureRejectionReason.traversalLimitExceeded,
+    );
+    expect(
+      _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [_leaf('ONLINE')],
+        },
+        'padding': _HugeList(1000000000),
+      }).rejectionReason,
+      VdevFixtureRejectionReason.traversalLimitExceeded,
+    );
 
     final selfMap = <String, Object?>{};
     selfMap['topology'] = selfMap;
@@ -235,6 +372,7 @@ void main() {
     final sharedLeaf = _leaf('ONLINE');
     expect(
       _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {
           'data': [sharedLeaf, sharedLeaf],
         },
@@ -245,6 +383,7 @@ void main() {
     final sharedList = <Object?>[_leaf('ONLINE')];
     expect(
       _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {'data': sharedList, 'cache': sharedList},
       }).rejectionReason,
       VdevFixtureRejectionReason.sharedContainer,
@@ -253,6 +392,7 @@ void main() {
 
   test('enforces global map and list traversal limits', () {
     Map<String, Object?> fixtureWithPadding(List<Object?> padding) => {
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {
         'data': [_leaf('ONLINE')],
       },
@@ -293,11 +433,16 @@ void main() {
       'cookie=session',
       'eyJhbGciOiJIUzI1NiJ9.payload.signature',
       'AKIAIOSFODNN7EXAMPLE',
+      'prefix AKIAIOSFODNN7EXAMPLE suffix',
       'https://nas.example',
+      'nas.example.test',
       '/dev/sda',
       'serial=ABC123',
       'wwn=5000c500',
       'guid=1234',
+      '550e8400-e29b-41d4-a716-446655440000',
+      '5000c500deadbeef',
+      '192.168.0.123',
       'x' * 65,
       'line\nbreak',
       '\u202Ehidden',
@@ -307,6 +452,7 @@ void main() {
     ];
     for (final value in unsafe) {
       final result = _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {
           'data': [
             {'type': 'DISK', 'status': 'ONLINE', 'metadata': value},
@@ -322,12 +468,36 @@ void main() {
     }
   });
 
+  test('rejects non-finite numbers and normalized unsafe keys', () {
+    for (final fixture in [
+      {
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [
+            {..._leaf('ONLINE'), 'metadata': double.infinity},
+          ],
+        },
+      },
+      {
+        'contract': 'v25_10_pool_topology_v1',
+        'topology': {
+          'data': [
+            {..._leaf('ONLINE'), 'serial ': 'example'},
+          ],
+        },
+      },
+    ]) {
+      expect(_contract.parse(fixture).status, VdevFixtureStatus.rejected);
+    }
+  });
+
   test('rejects every Unicode default-ignorable code point', () {
     var checked = 0;
     for (final (start, end) in _defaultIgnorableRanges) {
       for (var rune = start; rune <= end; rune++) {
         final value = String.fromCharCode(rune);
         final result = _contract.parse({
+          'contract': 'v25_10_pool_topology_v1',
           'topology': {
             'data': [
               {'type': 'DISK', 'status': 'ONLINE', 'metadata': value},
@@ -362,6 +532,7 @@ void main() {
       'request_id',
     ]) {
       final result = _contract.parse({
+        'contract': 'v25_10_pool_topology_v1',
         'topology': {
           'data': [
             {'type': 'DISK', 'status': 'ONLINE', key: 'example'},
@@ -378,6 +549,7 @@ void main() {
 
   test('allows safe ignored Unicode without retaining it', () {
     final result = _contract.parse({
+      'contract': 'v25_10_pool_topology_v1',
       'topology': {
         'data': [
           {'type': 'DISK', 'status': 'ONLINE', 'note': 'safe 😀'},
@@ -395,7 +567,10 @@ void main() {
     final leaf = _leaf('ONLINE');
     final roots = <Object?>[leaf];
     final topology = <String, Object?>{'data': roots};
-    final fixture = <String, Object?>{'topology': topology};
+    final fixture = <String, Object?>{
+      'contract': 'v25_10_pool_topology_v1',
+      'topology': topology,
+    };
     final snapshot = _contract.parse(fixture).snapshot!;
 
     leaf['status'] = 'FAULTED';
@@ -489,4 +664,47 @@ final class _OversizedMap extends MapBase<Object?, Object?> {
 
   @override
   Object? remove(Object? key) => throw StateError('map must not be mutated');
+}
+
+final class _DeceptiveEntriesMap extends MapBase<Object?, Object?> {
+  _DeceptiveEntriesMap(this._entryCount);
+
+  final int _entryCount;
+
+  @override
+  int get length => 1;
+
+  @override
+  Iterable<Object?> get keys sync* {
+    for (var index = 0; index < _entryCount; index++) {
+      yield 'safe-$index';
+    }
+  }
+
+  @override
+  Object? operator [](Object? key) => null;
+
+  @override
+  void operator []=(Object? key, Object? value) =>
+      throw StateError('map must not be mutated');
+
+  @override
+  void clear() => throw StateError('map must not be mutated');
+
+  @override
+  Object? remove(Object? key) => throw StateError('map must not be mutated');
+}
+
+final class _HugeList extends ListBase<Object?> {
+  _HugeList(this.length);
+
+  @override
+  int length;
+
+  @override
+  Object? operator [](int index) => null;
+
+  @override
+  void operator []=(int index, Object? value) =>
+      throw StateError('list must not be mutated');
 }

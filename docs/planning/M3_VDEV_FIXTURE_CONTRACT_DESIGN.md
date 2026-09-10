@@ -145,6 +145,7 @@ The first implementation uses these fixed limits:
 | Total retained nodes | 512 | mark partial and stop traversal |
 | Input maps visited | 1024 | reject to cap malformed traversal cost |
 | Input lists visited | 256 | reject to cap malformed traversal cost |
+| Input values/entries visited | 2048 | reject before enqueueing more work |
 | String input | 64 UTF-16 units | reject the containing node before lookup |
 
 Bounds apply to attempted positions, not just valid retained elements, so a
@@ -217,6 +218,15 @@ Each version family receives independent fixtures and an explicit selector.
 Fixtures may share a helper only for fields proven identical in all three
 captured schemas. A passing `25.10` fixture never admits a `25.04` or `26+`
 shape automatically.
+
+The three official pages currently document the same six topology group names.
+The fixture contract therefore does not invent unsupported per-version VDEV
+tokens. Instead, every static fixture carries one local version-family contract
+marker (`v25_04_pool_topology_v1`, `v25_10_pool_topology_v1`, or
+`v26_plus_pool_topology_v1`). Each selector owns an independent node/status
+table and rejects another family's marker before topology decoding. Equal
+source shapes remain separately bound contracts rather than transferable
+approval.
 
 The source discovery ledger remains the source index. M3-2 does not create a
 request fingerprint, response-schema approval, live evidence, admission record,

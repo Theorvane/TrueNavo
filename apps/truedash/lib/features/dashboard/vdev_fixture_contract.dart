@@ -95,6 +95,7 @@ final class VdevFixtureContract {
   static const maxNodes = 512;
   static const maxVisitedMaps = 1024;
   static const maxVisitedLists = 256;
+  static const maxVisitedValues = 2048;
   static const maxStringUnits = 64;
 
   final DashboardVersionFamily versionFamily;
@@ -112,11 +113,12 @@ final class VdevFixtureContract {
     }
 
     try {
-      _preflight(fixture, _PreflightContext());
+      final preflight = _PreflightContext();
+      _preflightFixture(fixture, preflight);
       final snapshot = switch (versionFamily) {
-        DashboardVersionFamily.v25_04 => _decodeV25_04(fixture),
-        DashboardVersionFamily.v25_10 => _decodeV25_10(fixture),
-        DashboardVersionFamily.v26Plus => _decodeV26Plus(fixture),
+        DashboardVersionFamily.v25_04 => _decodeV25_04(fixture, preflight),
+        DashboardVersionFamily.v25_10 => _decodeV25_10(fixture, preflight),
+        DashboardVersionFamily.v26Plus => _decodeV26Plus(fixture, preflight),
         DashboardVersionFamily.unknownUnsupported => null,
       };
       if (snapshot == null || snapshot.nodeCount == 0) {
@@ -134,20 +136,52 @@ final class VdevFixtureContract {
     }
   }
 
-  VdevTopologySnapshot? _decodeV25_04(Object? fixture) =>
-      _decodeKnownFixture(fixture, _v25_04NodeTypes);
+  VdevTopologySnapshot? _decodeV25_04(
+    Object? fixture,
+    _PreflightContext preflight,
+  ) => _decodeKnownFixture(
+    fixture,
+    _v25_04NodeTypes,
+    _v25_04Statuses,
+    'v25_04_pool_topology_v1',
+    preflight,
+  );
 
-  VdevTopologySnapshot? _decodeV25_10(Object? fixture) =>
-      _decodeKnownFixture(fixture, _v25_10NodeTypes);
+  VdevTopologySnapshot? _decodeV25_10(
+    Object? fixture,
+    _PreflightContext preflight,
+  ) => _decodeKnownFixture(
+    fixture,
+    _v25_10NodeTypes,
+    _v25_10Statuses,
+    'v25_10_pool_topology_v1',
+    preflight,
+  );
 
-  VdevTopologySnapshot? _decodeV26Plus(Object? fixture) =>
-      _decodeKnownFixture(fixture, _v26PlusNodeTypes);
+  VdevTopologySnapshot? _decodeV26Plus(
+    Object? fixture,
+    _PreflightContext preflight,
+  ) => _decodeKnownFixture(
+    fixture,
+    _v26PlusNodeTypes,
+    _v26PlusStatuses,
+    'v26_plus_pool_topology_v1',
+    preflight,
+  );
 
   VdevTopologySnapshot? _decodeKnownFixture(
     Object? fixture,
     Set<String> allowedNodeTypes,
+    Map<String, VdevOperationalStatus> allowedStatuses,
+    String expectedContract,
+    _PreflightContext preflight,
   ) {
     if (fixture is! Map) {
+      throw const _FixtureRejection(
+        VdevFixtureRejectionReason.malformedEnvelope,
+      );
+    }
+    if (fixture['contract'] != expectedContract) {
       throw const _FixtureRejection(
         VdevFixtureRejectionReason.malformedEnvelope,
       );
@@ -180,7 +214,11 @@ final class VdevFixtureContract {
       );
     }
 
-    final context = _DecodeContext(allowedNodeTypes);
+    final context = _DecodeContext(
+      allowedNodeTypes,
+      allowedStatuses,
+      preflight.invalidNodes,
+    );
     final groups = <VdevTopologyGroup>[];
     for (final kind in VdevTopologyGroupKind.values) {
       if (!rawGroups.containsKey(kind)) continue;
@@ -223,6 +261,10 @@ final class VdevFixtureContract {
       context.partial = true;
       return null;
     }
+    if (context.invalidNodes.contains(raw)) {
+      context.partial = true;
+      return null;
+    }
     final typeValue = raw['type'];
     if (typeValue is! String) {
       context.partial = true;
@@ -233,7 +275,7 @@ final class VdevFixtureContract {
       context.partial = true;
       return null;
     }
-    final status = _status(raw['status']);
+    final status = _status(raw['status'], context.allowedStatuses);
     if (status == null) {
       context.partial = true;
       return null;
@@ -282,7 +324,130 @@ final class VdevFixtureContract {
     );
   }
 
-  void _preflight(Object? root, _PreflightContext context) {
+  void _preflightFixture(Object? fixture, _PreflightContext context) {
+    if (fixture is! Map) {
+      throw const _FixtureRejection(
+        VdevFixtureRejectionReason.malformedEnvelope,
+      );
+    }
+    _registerMap(fixture, context);
+    var entries = 0;
+    for (final entry in fixture.entries) {
+      _visitEntry(entry, context, ++entries);
+      if (entry.key == 'topology') {
+        _preflightTopology(entry.value, context);
+      } else {
+        _preflightUnknown(entry.value, context);
+      }
+    }
+  }
+
+  void _preflightTopology(Object? topology, _PreflightContext context) {
+    if (topology is! Map) return;
+    _registerMap(topology, context);
+    var entries = 0;
+    for (final entry in topology.entries) {
+      _visitEntry(entry, context, ++entries);
+      final roots = entry.value;
+      if (roots is! List) continue;
+      _registerList(roots, context);
+      for (
+        var index = 0;
+        index < roots.length && index < maxChildren;
+        index++
+      ) {
+        _preflightNode(roots[index], context, 1);
+      }
+    }
+  }
+
+  void _preflightNode(Object? raw, _PreflightContext context, int depth) {
+    if (depth > maxDepth || raw is! Map) return;
+    try {
+      _registerMap(raw, context);
+      var entries = 0;
+      for (final entry in raw.entries) {
+        _visitEntry(entry, context, ++entries);
+        if (entry.key == 'children') {
+          if (depth >= maxDepth) continue;
+          final children = entry.value;
+          if (children is! List) continue;
+          _registerList(children, context);
+          for (
+            var index = 0;
+            index < children.length && index < maxChildren;
+            index++
+          ) {
+            _preflightNode(children[index], context, depth + 1);
+          }
+        } else if (entry.key == 'type' || entry.key == 'status') {
+          final value = entry.value;
+          if (value != null &&
+              (value is! String || !_isSafeFixtureString(value))) {
+            throw const _FixtureRejection(
+              VdevFixtureRejectionReason.malformedEnvelope,
+            );
+          }
+        } else {
+          _preflightUnknown(entry.value, context);
+        }
+      }
+    } on _FixtureRejection catch (error) {
+      if (error.reason != VdevFixtureRejectionReason.malformedEnvelope) {
+        rethrow;
+      }
+      context.invalidNodes.add(raw);
+    }
+  }
+
+  void _registerMap(Map value, _PreflightContext context) {
+    if (value.length > maxVisitedMaps ||
+        !context.containers.add(value) ||
+        ++context.maps > maxVisitedMaps) {
+      throw _FixtureRejection(
+        context.containers.contains(value) && context.maps <= maxVisitedMaps
+            ? VdevFixtureRejectionReason.sharedContainer
+            : VdevFixtureRejectionReason.traversalLimitExceeded,
+      );
+    }
+  }
+
+  void _registerList(List value, _PreflightContext context) {
+    if (value.length > maxVisitedMaps ||
+        context.values + value.length > maxVisitedValues) {
+      throw const _FixtureRejection(
+        VdevFixtureRejectionReason.traversalLimitExceeded,
+      );
+    }
+    if (!context.containers.add(value)) {
+      throw const _FixtureRejection(VdevFixtureRejectionReason.sharedContainer);
+    }
+    if (++context.lists > maxVisitedLists) {
+      throw const _FixtureRejection(
+        VdevFixtureRejectionReason.traversalLimitExceeded,
+      );
+    }
+    context.values += value.length.clamp(0, maxChildren);
+  }
+
+  void _visitEntry(
+    MapEntry<Object?, Object?> entry,
+    _PreflightContext context,
+    int entryCount,
+  ) {
+    if (entryCount > maxVisitedMaps || ++context.values > maxVisitedValues) {
+      throw const _FixtureRejection(
+        VdevFixtureRejectionReason.traversalLimitExceeded,
+      );
+    }
+    if (entry.key is! String || !_isSafeFixtureString(entry.key as String)) {
+      throw const _FixtureRejection(
+        VdevFixtureRejectionReason.malformedEnvelope,
+      );
+    }
+  }
+
+  void _preflightUnknown(Object? root, _PreflightContext context) {
     final pending = <Object?>[root];
     while (pending.isNotEmpty) {
       final value = pending.removeLast();
@@ -302,7 +467,14 @@ final class VdevFixtureContract {
             VdevFixtureRejectionReason.traversalLimitExceeded,
           );
         }
+        var entryCount = 0;
         for (final entry in value.entries) {
+          if (++entryCount > maxVisitedMaps ||
+              ++context.values > maxVisitedValues) {
+            throw const _FixtureRejection(
+              VdevFixtureRejectionReason.traversalLimitExceeded,
+            );
+          }
           if (entry.key is! String ||
               !_isSafeFixtureString(entry.key as String)) {
             throw const _FixtureRejection(
@@ -314,6 +486,12 @@ final class VdevFixtureContract {
         continue;
       }
       if (value is List) {
+        if (value.length > maxVisitedMaps ||
+            context.values + value.length > maxVisitedValues) {
+          throw const _FixtureRejection(
+            VdevFixtureRejectionReason.traversalLimitExceeded,
+          );
+        }
         if (!context.containers.add(value)) {
           throw const _FixtureRejection(
             VdevFixtureRejectionReason.sharedContainer,
@@ -324,10 +502,18 @@ final class VdevFixtureContract {
             VdevFixtureRejectionReason.traversalLimitExceeded,
           );
         }
-        pending.addAll(value);
+        context.values += value.length;
+        for (var index = 0; index < value.length; index++) {
+          pending.add(value[index]);
+        }
         continue;
       }
       if (value is String && !_isSafeFixtureString(value)) {
+        throw const _FixtureRejection(
+          VdevFixtureRejectionReason.malformedEnvelope,
+        );
+      }
+      if (value is num && !value.isFinite) {
         throw const _FixtureRejection(
           VdevFixtureRejectionReason.malformedEnvelope,
         );
@@ -345,17 +531,25 @@ final class VdevFixtureContract {
 }
 
 final class _DecodeContext {
-  _DecodeContext(this.allowedNodeTypes);
+  _DecodeContext(
+    this.allowedNodeTypes,
+    this.allowedStatuses,
+    this.invalidNodes,
+  );
 
   final Set<String> allowedNodeTypes;
+  final Map<String, VdevOperationalStatus> allowedStatuses;
+  final Set<Object> invalidNodes;
   int nodeCount = 0;
   bool partial = false;
 }
 
 final class _PreflightContext {
   final Set<Object> containers = HashSet.identity();
+  final Set<Object> invalidNodes = HashSet.identity();
   int maps = 0;
   int lists = 0;
+  int values = 0;
 }
 
 final class _FixtureRejection implements Exception {
@@ -375,8 +569,62 @@ const _v25_04NodeTypes = <String>{
   'DRAID3',
   'STRIPE',
 };
-const _v25_10NodeTypes = _v25_04NodeTypes;
-const _v26PlusNodeTypes = _v25_04NodeTypes;
+const _v25_10NodeTypes = <String>{
+  'DISK',
+  'MIRROR',
+  'RAIDZ1',
+  'RAIDZ2',
+  'RAIDZ3',
+  'DRAID1',
+  'DRAID2',
+  'DRAID3',
+  'STRIPE',
+};
+const _v26PlusNodeTypes = <String>{
+  'DISK',
+  'MIRROR',
+  'RAIDZ1',
+  'RAIDZ2',
+  'RAIDZ3',
+  'DRAID1',
+  'DRAID2',
+  'DRAID3',
+  'STRIPE',
+};
+
+const _v25_04Statuses = <String, VdevOperationalStatus>{
+  'ONLINE': VdevOperationalStatus.online,
+  'HEALTHY': VdevOperationalStatus.online,
+  'DEGRADED': VdevOperationalStatus.degraded,
+  'WARNING': VdevOperationalStatus.degraded,
+  'FAULTED': VdevOperationalStatus.faulted,
+  'CRITICAL': VdevOperationalStatus.faulted,
+  'OFFLINE': VdevOperationalStatus.offline,
+  'UNAVAIL': VdevOperationalStatus.unavailable,
+  'UNAVAILABLE': VdevOperationalStatus.unavailable,
+};
+const _v25_10Statuses = <String, VdevOperationalStatus>{
+  'ONLINE': VdevOperationalStatus.online,
+  'HEALTHY': VdevOperationalStatus.online,
+  'DEGRADED': VdevOperationalStatus.degraded,
+  'WARNING': VdevOperationalStatus.degraded,
+  'FAULTED': VdevOperationalStatus.faulted,
+  'CRITICAL': VdevOperationalStatus.faulted,
+  'OFFLINE': VdevOperationalStatus.offline,
+  'UNAVAIL': VdevOperationalStatus.unavailable,
+  'UNAVAILABLE': VdevOperationalStatus.unavailable,
+};
+const _v26PlusStatuses = <String, VdevOperationalStatus>{
+  'ONLINE': VdevOperationalStatus.online,
+  'HEALTHY': VdevOperationalStatus.online,
+  'DEGRADED': VdevOperationalStatus.degraded,
+  'WARNING': VdevOperationalStatus.degraded,
+  'FAULTED': VdevOperationalStatus.faulted,
+  'CRITICAL': VdevOperationalStatus.faulted,
+  'OFFLINE': VdevOperationalStatus.offline,
+  'UNAVAIL': VdevOperationalStatus.unavailable,
+  'UNAVAILABLE': VdevOperationalStatus.unavailable,
+};
 
 VdevTopologyGroupKind? _groupKind(String value) =>
     switch (value.toLowerCase()) {
@@ -389,18 +637,13 @@ VdevTopologyGroupKind? _groupKind(String value) =>
       _ => null,
     };
 
-VdevOperationalStatus? _status(Object? value) {
+VdevOperationalStatus? _status(
+  Object? value,
+  Map<String, VdevOperationalStatus> allowedStatuses,
+) {
   if (value == null) return VdevOperationalStatus.unknown;
   if (value is! String) return null;
-  return switch (value.toUpperCase()) {
-    'ONLINE' || 'HEALTHY' => VdevOperationalStatus.online,
-    'DEGRADED' || 'WARNING' => VdevOperationalStatus.degraded,
-    'FAULTED' || 'CRITICAL' => VdevOperationalStatus.faulted,
-    'OFFLINE' => VdevOperationalStatus.offline,
-    'UNAVAIL' || 'UNAVAILABLE' => VdevOperationalStatus.unavailable,
-    'UNKNOWN' => VdevOperationalStatus.unknown,
-    _ => null,
-  };
+  return allowedStatuses[value.toUpperCase()];
 }
 
 bool _isSafeFixtureString(String value) {
@@ -425,7 +668,7 @@ bool _isSafeFixtureString(String value) {
 }
 
 bool _looksSensitiveOrIdentifying(String value) {
-  final lower = value.toLowerCase();
+  final lower = value.trim().toLowerCase();
   if (const <String>{
     'password',
     'secret',
@@ -460,13 +703,13 @@ bool _looksSensitiveOrIdentifying(String value) {
     return true;
   }
   if (RegExp(
-    r'^(akia|asia)[a-z0-9]{16}$',
+    r'\b(akia|asia)[a-z0-9]{16}\b',
     caseSensitive: false,
   ).hasMatch(value)) {
     return true;
   }
   if (RegExp(
-    r'(https?://|wss?://|/dev/|\b(serial|guid|wwn|device|enclosure|slot|request[_-]?id|account|host)\s*[=:])',
+    r'(https?://|wss?://|/dev/|(?:[a-z0-9-]+\.)+[a-z]{2,}|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b|\b[0-9a-f]{16}\b|\b(serial|guid|wwn|device|enclosure|slot|request[_-]?id|account|host)\s*[=:])',
   ).hasMatch(lower)) {
     return true;
   }
