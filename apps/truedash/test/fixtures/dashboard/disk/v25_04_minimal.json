@@ -1,0 +1,6 @@
+{
+  "contract": "v25_04_disk_projection_v1",
+  "disks": [
+    {"media": "ROTATIONAL", "membership": "ASSIGNED"}
+  ]
+}

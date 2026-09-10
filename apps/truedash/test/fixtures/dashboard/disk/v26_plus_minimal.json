@@ -1,0 +1,6 @@
+{
+  "contract": "v26_plus_disk_projection_v1",
+  "disks": [
+    {"media": "ROTATIONAL", "membership": "UNKNOWN"}
+  ]
+}
