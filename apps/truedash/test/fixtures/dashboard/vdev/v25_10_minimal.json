@@ -1,0 +1,14 @@
+{
+  "topology": {
+    "data": [
+      {
+        "type": "MIRROR",
+        "status": "ONLINE",
+        "children": [
+          {"type": "DISK", "status": "ONLINE"},
+          {"type": "DISK", "status": "ONLINE"}
+        ]
+      }
+    ]
+  }
+}
