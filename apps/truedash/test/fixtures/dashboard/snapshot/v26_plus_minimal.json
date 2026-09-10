@@ -1,0 +1,6 @@
+{
+  "contract": "v26_plus_snapshot_projection_v1",
+  "snapshots": [
+    {"recursive":"UNKNOWN","hold":"UNKNOWN","retention":"UNKNOWN"}
+  ]
+}

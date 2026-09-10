@@ -1,0 +1,6 @@
+{
+  "contract": "v25_04_snapshot_projection_v1",
+  "snapshots": [
+    {"recursive":"RECURSIVE","hold":"PRESENT","retention":"MANAGED"}
+  ]
+}
