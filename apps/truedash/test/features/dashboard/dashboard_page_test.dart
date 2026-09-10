@@ -94,6 +94,131 @@ void main() {
     );
   });
 
+  testWidgets('storage groups known datasets and keeps orphans visible', (
+    tester,
+  ) async {
+    await _pumpDashboard(
+      tester,
+      AppDestination.storage,
+      const DashboardStorage(
+        pools: [
+          DashboardPool(
+            name: 'tank',
+            status: 'Healthy',
+            statusKind: DashboardStatus.success,
+            capacity: '72%',
+            capacityPercent: 72,
+          ),
+        ],
+        datasets: [
+          DashboardDataset(name: 'tank/media', poolName: 'tank'),
+          DashboardDataset(name: 'legacy/archive', poolName: ''),
+        ],
+        poolsAvailable: true,
+        datasetsAvailable: true,
+      ),
+    );
+
+    expect(find.text('1 pool'), findsOneWidget);
+    expect(find.text('2 datasets'), findsOneWidget);
+    expect(find.text('Datasets in tank'), findsOneWidget);
+    expect(find.text('tank/media'), findsOneWidget);
+    expect(find.text('Other datasets'), findsOneWidget);
+    expect(find.text('legacy/archive'), findsOneWidget);
+    final orphanTarget = find.ancestor(
+      of: find.text('legacy/archive'),
+      matching: find.byType(InkWell),
+    );
+    expect(orphanTarget, findsOneWidget);
+    expect(tester.getSize(orphanTarget).height, greaterThanOrEqualTo(44));
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('storage distinguishes partial from supported empty inventory', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await _pumpDashboard(
+      tester,
+      AppDestination.storage,
+      const DashboardStorage(
+        pools: [],
+        datasets: [],
+        poolsAvailable: true,
+        datasetsAvailable: false,
+      ),
+    );
+
+    expect(find.text('Partial inventory'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(RegExp('Storage inventory is partial')),
+      findsOneWidget,
+    );
+    expect(find.text('No pools were provided.'), findsOneWidget);
+    expect(
+      find.text('Dataset inventory is unavailable on this server.'),
+      findsOneWidget,
+    );
+    expect(find.text('VDEVs and disks unavailable'), findsOneWidget);
+    expect(find.text('Snapshots unavailable'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
+  testWidgets(
+    'storage renders supported empty inventory without partial state',
+    (tester) async {
+      await _pumpDashboard(
+        tester,
+        AppDestination.storage,
+        const DashboardStorage(
+          pools: [],
+          datasets: [],
+          poolsAvailable: true,
+          datasetsAvailable: true,
+        ),
+      );
+
+      expect(find.text('0 pools'), findsOneWidget);
+      expect(find.text('0 datasets'), findsOneWidget);
+      expect(find.text('No pools were provided.'), findsOneWidget);
+      expect(find.text('No datasets were provided.'), findsOneWidget);
+      expect(find.text('Partial inventory'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('storage bounds long content on a narrow viewport', (
+    tester,
+  ) async {
+    final longName = 'p' * 160;
+    await _pumpDashboard(
+      tester,
+      AppDestination.storage,
+      DashboardStorage(
+        pools: [
+          DashboardPool(
+            name: longName,
+            status: 'Healthy',
+            statusKind: DashboardStatus.success,
+            capacity: '50%',
+            capacityPercent: 50,
+          ),
+        ],
+        datasets: [
+          DashboardDataset(name: '$longName/media', poolName: longName),
+        ],
+        poolsAvailable: true,
+        datasetsAvailable: true,
+      ),
+    );
+
+    expect(find.text(longName), findsWidgets);
+    expect(find.text('$longName/media'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('workloads filters normalized services client-side', (
     tester,
   ) async {

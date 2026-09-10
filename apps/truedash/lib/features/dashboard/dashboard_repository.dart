@@ -350,10 +350,29 @@ final class DashboardRepository {
     if (pools.items == null && datasets.items == null) {
       return const DashboardFailure();
     }
+    final poolItems = pools.items ?? const <DashboardPool>[];
+    final knownPoolNames = poolItems
+        .map((pool) => pool.name)
+        .where((name) => !name.endsWith('…'))
+        .toSet();
+    final datasetItems =
+        (datasets.items ?? const <DashboardDataset>[])
+            .map(
+              (dataset) => DashboardDataset(
+                name: dataset.name,
+                poolName:
+                    !dataset.poolName.endsWith('…') &&
+                        knownPoolNames.contains(dataset.poolName)
+                    ? dataset.poolName
+                    : '',
+              ),
+            )
+            .toList()
+          ..sort(_compareDatasets);
     return DashboardData(
       DashboardStorage(
-        pools: pools.items ?? const [],
-        datasets: datasets.items ?? const [],
+        pools: poolItems,
+        datasets: datasetItems,
         poolsAvailable: pools.items != null,
         datasetsAvailable: datasets.items != null,
       ),
@@ -468,8 +487,20 @@ final class DashboardRepository {
     );
   }
 
-  List<DashboardPool> _pools(Object? value) =>
-      _list(value).take(50).map((item) => _pool(item)).toList();
+  List<DashboardPool> _pools(Object? value) {
+    if (value is! List) {
+      throw const FormatException('Pool inventory must be a list.');
+    }
+    final pools = <DashboardPool>[];
+    for (final item in value.take(50)) {
+      if (item is! Map) continue;
+      final name = item['name'];
+      if (name is! String || name.trim().isEmpty) continue;
+      pools.add(_pool({...item, 'name': name.trim()}));
+    }
+    pools.sort((left, right) => _compareText(left.name, right.name));
+    return pools;
+  }
 
   _DashboardHomePools _homePools(Object? value) {
     var criticalCount = 0;
@@ -524,12 +555,39 @@ final class DashboardRepository {
     );
   }
 
-  List<DashboardDataset> _datasets(Object? value) =>
-      _list(value).take(50).map((item) {
-        final map = _map(item);
-        final name = _text(map['name'] ?? map['id'], fallback: 'Unnamed');
-        return DashboardDataset(name: name, poolName: name.split('/').first);
-      }).toList();
+  List<DashboardDataset> _datasets(Object? value) {
+    if (value is! List) {
+      throw const FormatException('Dataset inventory must be a list.');
+    }
+    final datasets = <DashboardDataset>[];
+    for (final item in value.take(50)) {
+      if (item is! Map) continue;
+      final rawName = item['name'] ?? item['id'];
+      if (rawName is! String || rawName.trim().isEmpty) continue;
+      final normalizedName = rawName.trim();
+      final name = _text(normalizedName, fallback: 'Unnamed');
+      final rootName = normalizedName.split('/').first;
+      datasets.add(
+        DashboardDataset(
+          name: name,
+          poolName: rootName.length <= 160 ? rootName : '',
+        ),
+      );
+    }
+    return datasets;
+  }
+
+  int _compareDatasets(DashboardDataset left, DashboardDataset right) {
+    final leftPool = left.poolName.isEmpty ? '\uffff' : left.poolName;
+    final rightPool = right.poolName.isEmpty ? '\uffff' : right.poolName;
+    final poolOrder = _compareText(leftPool, rightPool);
+    return poolOrder != 0 ? poolOrder : _compareText(left.name, right.name);
+  }
+
+  int _compareText(String left, String right) {
+    final normalized = left.toLowerCase().compareTo(right.toLowerCase());
+    return normalized != 0 ? normalized : left.compareTo(right);
+  }
 
   List<DashboardService> _services(Object? value) =>
       _list(value).take(50).map((item) {

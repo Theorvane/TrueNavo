@@ -74,6 +74,183 @@ void main() {
     },
   );
 
+  test('sorts storage and attributes datasets only to known pools', () async {
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          {'name': 'zeta', 'status': 'HEALTHY'},
+          {'name': 'Alpha', 'status': 'DEGRADED'},
+          'not-a-pool',
+        ],
+        'pool.dataset.query': [
+          {'name': 'zeta/photos'},
+          {'name': 'unknown/private'},
+          {'name': 'Alpha/media'},
+          {'name': 'Alpha'},
+          {'name': '   '},
+          42,
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.pools.map((pool) => pool.name), ['Alpha', 'zeta']);
+    expect(storage.datasets.map((dataset) => dataset.name), [
+      'Alpha',
+      'Alpha/media',
+      'zeta/photos',
+      'unknown/private',
+    ]);
+    expect(storage.datasets.map((dataset) => dataset.poolName), [
+      'Alpha',
+      'Alpha',
+      'zeta',
+      '',
+    ]);
+    expect(queries.calledMethods, ['pool.query', 'pool.dataset.query']);
+  });
+
+  test('does not invent dataset pool context without pool inventory', () async {
+    final queries = _Queries(
+      results: {
+        'pool.dataset.query': [
+          {'name': 'tank/media'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.dataset.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.poolsAvailable, isFalse);
+    expect(storage.datasetsAvailable, isTrue);
+    expect(storage.datasets.single.poolName, isEmpty);
+    expect(queries.calledMethods, ['pool.dataset.query']);
+  });
+
+  test(
+    'does not attribute a dataset through a truncated pool-name collision',
+    () async {
+      final sharedPrefix = 'p' * 160;
+      final queries = _Queries(
+        results: {
+          'pool.query': [
+            {'name': '${sharedPrefix}a', 'status': 'HEALTHY'},
+          ],
+          'pool.dataset.query': [
+            {'name': '${sharedPrefix}b/media'},
+          ],
+        },
+      );
+
+      final result = await DashboardRepository(queries)
+          .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+      final storage = (result as DashboardData<DashboardStorage>).value;
+      expect(storage.datasets.single.poolName, isEmpty);
+    },
+  );
+
+  test('does not group through a literal ellipsis display collision', () async {
+    final prefix = 'p' * 159;
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          {'name': '${prefix}raw-suffix', 'status': 'HEALTHY'},
+        ],
+        'pool.dataset.query': [
+          {'name': '$prefix…/media'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.datasets.single.poolName, isEmpty);
+  });
+
+  test('trims pool identity before deterministic dataset grouping', () async {
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          {'name': ' tank ', 'status': 'HEALTHY'},
+        ],
+        'pool.dataset.query': [
+          {'name': 'tank/media'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.pools.single.name, 'tank');
+    expect(storage.datasets.single.poolName, 'tank');
+  });
+
+  test('rejects malformed top-level storage payloads', () async {
+    final queries = _Queries(
+      results: {
+        'pool.query': {'name': 'not-a-list'},
+        'pool.dataset.query': 'not-a-list',
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    expect(result, isA<DashboardFailure<DashboardStorage>>());
+  });
+
+  test('keeps valid pools when the dataset payload is malformed', () async {
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          {'name': 'tank', 'status': 'HEALTHY'},
+        ],
+        'pool.dataset.query': {'name': 'not-a-list'},
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.poolsAvailable, isTrue);
+    expect(storage.datasetsAvailable, isFalse);
+    expect(storage.pools.single.name, 'tank');
+  });
+
+  test('bounds storage parsing to the first 50 response records', () async {
+    final malformedPrefix = List<Object?>.filled(50, 'malformed');
+    final queries = _Queries(
+      results: {
+        'pool.query': [
+          ...malformedPrefix,
+          {'name': 'late-pool', 'status': 'HEALTHY'},
+        ],
+        'pool.dataset.query': [
+          ...malformedPrefix,
+          {'name': 'late-pool/media'},
+        ],
+      },
+    );
+
+    final result = await DashboardRepository(queries)
+        .loadStorage(const {'pool.query', 'pool.dataset.query'});
+
+    final storage = (result as DashboardData<DashboardStorage>).value;
+    expect(storage.pools, isEmpty);
+    expect(storage.datasets, isEmpty);
+  });
+
   test('keeps partial storage when dataset inventory is unavailable', () async {
     final queries = _Queries(
       results: {

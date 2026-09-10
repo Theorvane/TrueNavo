@@ -237,23 +237,64 @@ class DashboardPage extends ConsumerWidget {
       _titleWithRefresh('Storage', ref, key),
       const SizedBox(height: TdSpacing.inline),
       const Text('Read-only pool and dataset inventory.'),
+      const SizedBox(height: TdSpacing.inline),
+      Wrap(
+        spacing: TdSpacing.related,
+        runSpacing: TdSpacing.inline,
+        children: [
+          Text(
+            storage.poolsAvailable
+                ? '${storage.pools.length} ${storage.pools.length == 1 ? 'pool' : 'pools'}'
+                : 'Pools unavailable',
+          ),
+          Text(
+            storage.datasetsAvailable
+                ? '${storage.datasets.length} ${storage.datasets.length == 1 ? 'dataset' : 'datasets'}'
+                : 'Datasets unavailable',
+          ),
+        ],
+      ),
+      if (!storage.poolsAvailable || !storage.datasetsAvailable) ...[
+        const SizedBox(height: TdSpacing.inline),
+        Semantics(
+          container: true,
+          label: 'Storage inventory is partial',
+          child: const Text('Partial inventory'),
+        ),
+      ],
       const SizedBox(height: TdSpacing.sectionMobile),
       _inventoryPanel(
         'Pools',
-        storage.pools.map((pool) => _storagePoolRow(context, pool)).toList(),
+        storage.pools
+            .map(
+              (pool) => _storagePoolGroup(
+                context,
+                pool,
+                storage.datasets
+                    .where((dataset) => dataset.poolName == pool.name)
+                    .toList(),
+                storage.datasetsAvailable,
+              ),
+            )
+            .toList(),
         storage.poolsAvailable
             ? 'No pools were provided.'
             : 'Pool inventory is unavailable on this server.',
       ),
       const SizedBox(height: TdSpacing.related),
       _inventoryPanel(
-        'Datasets',
+        storage.datasets.any((dataset) => dataset.poolName.isEmpty)
+            ? 'Other datasets'
+            : 'Datasets',
         storage.datasets
+            .where((dataset) => dataset.poolName.isEmpty)
             .map((dataset) => _datasetRow(context, dataset))
             .toList(),
-        storage.datasetsAvailable
+        !storage.datasetsAvailable
+            ? 'Dataset inventory is unavailable on this server.'
+            : storage.datasets.isEmpty
             ? 'No datasets were provided.'
-            : 'Dataset inventory is unavailable on this server.',
+            : 'All datasets are grouped with their pools.',
       ),
       const SizedBox(height: TdSpacing.related),
       const TdPanel(
@@ -308,16 +349,51 @@ class DashboardPage extends ConsumerWidget {
               ),
       );
 
+  Widget _storagePoolGroup(
+    BuildContext context,
+    DashboardPool pool,
+    List<DashboardDataset> datasets,
+    bool datasetsAvailable,
+  ) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _storagePoolRow(context, pool),
+      const SizedBox(height: TdSpacing.inline),
+      Semantics(
+        header: true,
+        child: Text('Datasets in ${pool.name}', style: TdTypography.titleSmall),
+      ),
+      const SizedBox(height: TdSpacing.inline),
+      if (!datasetsAvailable)
+        const Text('Dataset inventory is unavailable on this server.')
+      else if (datasets.isEmpty)
+        const Text('No datasets were provided for this pool.')
+      else
+        for (final dataset in datasets) _datasetRow(context, dataset),
+    ],
+  );
+
   Widget _datasetRow(BuildContext context, DashboardDataset dataset) =>
       Semantics(
         button: true,
-        label: 'Dataset ${dataset.name}, pool ${dataset.poolName}',
+        label: dataset.poolName.isEmpty
+            ? 'Dataset ${dataset.name}, pool context unavailable'
+            : 'Dataset ${dataset.name}, pool ${dataset.poolName}',
         child: InkWell(
           onTap: () => _showDetail(context, 'Dataset details', [
             ('Dataset', dataset.name),
-            ('Pool context', dataset.poolName),
+            (
+              'Pool context',
+              dataset.poolName.isEmpty ? 'Unavailable' : dataset.poolName,
+            ),
           ]),
-          child: Text(dataset.name, style: TdTypography.body),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(dataset.name, style: TdTypography.body),
+            ),
+          ),
         ),
       );
 
