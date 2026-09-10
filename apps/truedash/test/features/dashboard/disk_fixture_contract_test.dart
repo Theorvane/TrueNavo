@@ -138,6 +138,14 @@ void main() {
       lessThanOrEqualTo(DiskFixtureContract.maxEncodedUnits),
     );
     expect(_contract.parse(exact).status, DiskFixtureStatus.complete);
+
+    final exactBoundary = exact.padRight(DiskFixtureContract.maxEncodedUnits);
+    expect(exactBoundary.length, DiskFixtureContract.maxEncodedUnits);
+    expect(_contract.parse(exactBoundary).status, DiskFixtureStatus.complete);
+    expect(
+      _contract.parse('$exactBoundary ').status,
+      DiskFixtureStatus.rejected,
+    );
   });
 
   test('accepts 128 records and marks record 129 partial', () {
@@ -189,22 +197,84 @@ void main() {
   });
 
   test('rejects excessive JSON nesting before decoding', () {
-    final nested = '${'[' * 17}null${']' * 17}';
-    expect(_contract.parse(nested).status, DiskFixtureStatus.rejected);
+    final depth16 = '${'[' * 16}null${']' * 16}';
+    final depth17 = '${'[' * 17}null${']' * 17}';
+    expect(
+      _contract.parse(depth16).rejectionReason,
+      DiskFixtureRejectionReason.malformedEnvelope,
+    );
+    expect(
+      _contract.parse(depth17).rejectionReason,
+      DiskFixtureRejectionReason.jsonDepthExceeded,
+    );
   });
 
   test('rejects deceptive JSON object enumeration at the value limit', () {
-    final fields = List.generate(
-      513,
-      (index) => '"field-$index":null',
-    ).join(',');
-    final result = _contract.parse(
-      '{"contract":"v25_10_disk_projection_v1","disks":[{$fields}]}',
+    String fixtureWithFields(int count) {
+      final fields = List.generate(
+        count,
+        (index) => '"field-$index":null',
+      ).join(',');
+      return '{"contract":"v25_10_disk_projection_v1","disks":[{$fields}]}';
+    }
+
+    final atLimit = _contract.parse(fixtureWithFields(509));
+    final overLimit = _contract.parse(fixtureWithFields(510));
+    expect(
+      atLimit.rejectionReason,
+      DiskFixtureRejectionReason.noSafeObservation,
     );
     expect(
-      result.rejectionReason,
+      overLimit.rejectionReason,
       DiskFixtureRejectionReason.traversalLimitExceeded,
     );
+  });
+
+  test('rejects sensitive and identifying values in keys and values', () {
+    const unsafeValues = <String>[
+      'Authorization: Bearer example',
+      'Authorization: Basic example',
+      'api_key=example',
+      'password=example',
+      'cookie=session',
+      'eyJhbGciOiJIUzI1NiJ9.payload.signature',
+      'AKIAIOSFODNN7EXAMPLE',
+      '192.168.0.123',
+      '2001:db8::1',
+      'nas.example.test',
+      'account=admin',
+      'request_id=123',
+      '00000000-0000-0000-0000-000000000000',
+      '01941f29-7c00-7cc3-98e1-2c3d4e5f6789',
+      'serial=ABC123',
+      'lunid=1',
+      'wwn-0x5000c500deadbeef',
+      '/dev/sda',
+      'model=example',
+      'vendor=example',
+      'enclosure=1',
+      'slot=2',
+      'pool=tank',
+    ];
+
+    for (final value in unsafeValues) {
+      final unsafeValue = _parse(
+        _root([
+          _disk('ROTATIONAL', 'ASSIGNED'),
+          {'media': 'ROTATIONAL', 'membership': value},
+        ]),
+      );
+      final unsafeKey = _parse(
+        _root([
+          _disk('ROTATIONAL', 'ASSIGNED'),
+          {'media': 'ROTATIONAL', 'membership': 'ASSIGNED', value: null},
+        ]),
+      );
+      expect(unsafeValue.status, DiskFixtureStatus.partial, reason: value);
+      expect(unsafeValue.snapshot!.totalCount, 1, reason: value);
+      expect(unsafeKey.status, DiskFixtureStatus.partial, reason: value);
+      expect(unsafeKey.snapshot!.totalCount, 1, reason: value);
+    }
   });
 
   test('treats 32 units as safe and 33 as a local invalid record', () {

@@ -104,11 +104,22 @@ Runtime unit coverage now uses public capability behavior only, while exact
 unchanged-path/import/UI/session/admission claims are checked by repository
 diff/search commands.
 
+The exact-SHA specification rereview of
+`405d686dba94dc1fe5f5af1f99830145868ee8a2` found that the design's
+credential/network/account/request/UUID/hardware matrix was not durably tested
+in both key and value positions, and that lower sides of encoded-size,
+value-entry, and JSON-depth boundaries were represented only by disposable
+review probes. A committed matrix now checks 23 representative unsafe values in
+both positions. Durable tests also cover encoded units 32768/32769, total
+visited entries 512/513, JSON depth 16/17, and literal plus escaped-equivalent
+duplicate keys. The focused count is verified as 19 contract tests plus one
+runtime behavior test.
+
 ## Full verification
 
 - formatting: 148 files checked, 0 changed;
 - app analyzer: no issues;
-- full app suite: 558 passed, 1 existing skip;
+- full app suite: 559 passed, 1 existing skip;
 - Web release build: success; `sqlite3.wasm` and `drift_worker.js` present;
 - `truenas_api`: 64 passed, with two pre-existing informational analyzer notices
   in unchanged files;

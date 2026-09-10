@@ -8,6 +8,7 @@ enum DiskFixtureRejectionReason {
   unsupportedVersion,
   malformedEnvelope,
   traversalLimitExceeded,
+  jsonDepthExceeded,
   noSafeObservation,
 }
 
@@ -192,6 +193,10 @@ final class DiskFixtureContract {
           partial: partial,
         ),
       );
+    } on _JsonDepthFailure {
+      return DiskFixtureResult._rejected(
+        DiskFixtureRejectionReason.jsonDepthExceeded,
+      );
     } on _DiskFixtureFailure catch (error) {
       return DiskFixtureResult._rejected(error.reason);
     } on Object {
@@ -326,6 +331,10 @@ bool _isDefaultIgnorable(int rune) =>
     (rune >= 0x1D173 && rune <= 0x1D17A) ||
     (rune >= 0xE0000 && rune <= 0xE0FFF);
 
+final class _JsonDepthFailure implements Exception {
+  const _JsonDepthFailure();
+}
+
 final class _JsonDuplicateKeyScanner {
   _JsonDuplicateKeyScanner(this.source);
 
@@ -343,7 +352,7 @@ final class _JsonDuplicateKeyScanner {
 
   void _value(int depth) {
     if (depth > DiskFixtureContract.maxJsonDepth) {
-      throw const FormatException();
+      throw const _JsonDepthFailure();
     }
     _skipWhitespace();
     if (_index >= source.length) throw const FormatException();
