@@ -107,7 +107,7 @@ A second read-only review after those fixes found no blocker, confirmed that the
 ```bash
 cd apps/truedash
 fvm flutter test test/features/dashboard/dashboard_controller_test.dart
-# 33 tests passed
+# 36 tests passed
 
 fvm flutter test test/features/dashboard/dashboard_page_test.dart
 # 15 tests passed
@@ -143,7 +143,7 @@ test -f build/web/drift_worker.js
 Results:
 
 - analyze: no issues;
-- full app suite: 512 tests passed, 1 existing skip;
+- full app suite: 513 tests passed, 1 existing skip;
 - Web release build: succeeded;
 - `sqlite3.wasm` and `drift_worker.js`: present.
 
@@ -229,7 +229,15 @@ surrogate, newline, and bidi-controlled pool/dataset identities crossing the
 boundary. Home and Storage now share one nullable strict pool decoder, and the
 identifier grammar rejects C0/C1 controls plus Unicode bidi formatting controls
 while retaining well-formed paired Unicode. The focused repository suite now
-contains 35 tests.
+contains 36 tests after a final review remediation: raw identifier strings are
+validated before trimming, invisible/default-ignorable-only identities are
+rejected, and every dataset path segment must contain visible content.
+
+The exact-SHA review of `65f61430379f4f185ac16b4ca81d6f1b670e9043`
+demonstrated both remaining cases with public-path probes: boundary newlines
+were trimmed into accepted names and U+200B-only identities crossed the typed
+boundary. Focused RED tests reproduced both; the final grammar makes them GREEN
+without rejecting a valid emoji identity.
 
 ## Tooling note
 

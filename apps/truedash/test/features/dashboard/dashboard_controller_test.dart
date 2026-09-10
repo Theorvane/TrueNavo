@@ -554,11 +554,15 @@ void main() {
           'system.info': {'hostname': 'atlas', 'version': '24.10'},
           'pool.query': [
             {'name': 'safe\nforged', 'status': 'HEALTHY'},
+            {'name': '\ntank', 'status': 'HEALTHY'},
+            {'name': 'backup\n', 'status': 'HEALTHY'},
             {'name': 'safe\u202Eevil', 'status': 'HEALTHY'},
             {'name': 'tank', 'status': 'HEALTHY'},
           ],
           'pool.dataset.query': [
             {'name': 'tank/safe\nforged'},
+            {'name': '\ntank/media'},
+            {'name': 'tank/archive\n'},
             {'name': 'tank/safe\u202Eevil'},
             {'name': 'tank/media'},
           ],
@@ -582,6 +586,40 @@ void main() {
       expect(storage.datasets.map((dataset) => dataset.name), ['tank/media']);
     },
   );
+
+  test('rejects visually blank and invisible-only identity segments', () async {
+    final queries = _Queries(
+      results: {
+        'system.info': {'hostname': 'atlas', 'version': '24.10'},
+        'pool.query': [
+          {'name': '\u200B', 'status': 'HEALTHY'},
+          {'name': 'tank', 'status': 'HEALTHY'},
+        ],
+        'pool.dataset.query': [
+          {'name': '\u200B'},
+          {'name': 'tank/\u200B'},
+          {'name': '\u200B/media'},
+          {'name': 'tank/media'},
+        ],
+      },
+    );
+    final repository = DashboardRepository(queries);
+
+    final homeResult = await repository.loadHome(const {
+      'system.info',
+      'pool.query',
+    });
+    final storageResult = await repository.loadStorage(const {
+      'pool.query',
+      'pool.dataset.query',
+    });
+
+    final home = (homeResult as DashboardData<DashboardHome>).value;
+    final storage = (storageResult as DashboardData<DashboardStorage>).value;
+    expect(home.pools.map((pool) => pool.name), ['tank']);
+    expect(storage.pools.map((pool) => pool.name), ['tank']);
+    expect(storage.datasets.map((dataset) => dataset.name), ['tank/media']);
+  });
 
   test('bounds and sanitizes parsed home data', () async {
     final longName = 'x' * 200;

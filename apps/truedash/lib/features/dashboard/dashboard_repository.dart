@@ -529,8 +529,9 @@ final class DashboardRepository {
     if (item is! Map) return null;
     final rawName = item['name'];
     if (rawName is! String) return null;
+    if (!_isSafeIdentifier(rawName)) return null;
     final name = rawName.trim();
-    if (name.isEmpty || !_isSafeIdentifier(name)) return null;
+    if (name.isEmpty) return null;
     final map = item;
     final capacityValue = map['capacity'];
     final usedPercent = map['used_pct'];
@@ -571,9 +572,9 @@ final class DashboardRepository {
     for (final item in value.take(50)) {
       if (item is! Map) continue;
       final rawName = item['name'] ?? item['id'];
-      if (rawName is! String || rawName.trim().isEmpty) continue;
+      if (rawName is! String || !_isSafeIdentifier(rawName)) continue;
       final normalizedName = rawName.trim();
-      if (!_isSafeIdentifier(normalizedName)) continue;
+      if (normalizedName.isEmpty) continue;
       final rootName = normalizedName.split('/').first;
       datasets.add(DashboardDataset(name: normalizedName, poolName: rootName));
     }
@@ -652,7 +653,9 @@ final class DashboardRepository {
     if (value.length > 160) return false;
     for (var index = 0; index < value.length; index++) {
       final unit = value.codeUnitAt(index);
-      if (_isIdentifierControl(unit)) return false;
+      if (_isIdentifierControl(unit) || _isUnsafeIdentifierFormat(unit)) {
+        return false;
+      }
       if (unit >= 0xD800 && unit <= 0xDBFF) {
         if (++index >= value.length) return false;
         final next = value.codeUnitAt(index);
@@ -661,7 +664,10 @@ final class DashboardRepository {
         return false;
       }
     }
-    return true;
+    return value
+        .trim()
+        .split('/')
+        .every((segment) => _hasVisibleIdentifierContent(segment));
   }
 
   bool _isIdentifierControl(int unit) =>
@@ -672,6 +678,41 @@ final class DashboardRepository {
       unit == 0x200F ||
       (unit >= 0x202A && unit <= 0x202E) ||
       (unit >= 0x2066 && unit <= 0x2069);
+
+  bool _isUnsafeIdentifierFormat(int unit) =>
+      unit == 0x00AD ||
+      unit == 0x034F ||
+      unit == 0x061C ||
+      (unit >= 0x180B && unit <= 0x180F) ||
+      (unit >= 0x200B && unit <= 0x200F) ||
+      (unit >= 0x202A && unit <= 0x202E) ||
+      (unit >= 0x2060 && unit <= 0x206F) ||
+      unit == 0xFEFF;
+
+  bool _hasVisibleIdentifierContent(String value) {
+    for (final rune in value.runes) {
+      if (_isUnicodeWhitespace(rune) || _isDefaultIgnorableModifier(rune)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool _isUnicodeWhitespace(int rune) =>
+      rune == 0x20 ||
+      rune == 0xA0 ||
+      rune == 0x1680 ||
+      (rune >= 0x2000 && rune <= 0x200A) ||
+      rune == 0x2028 ||
+      rune == 0x2029 ||
+      rune == 0x202F ||
+      rune == 0x205F ||
+      rune == 0x3000;
+
+  bool _isDefaultIgnorableModifier(int rune) =>
+      (rune >= 0xFE00 && rune <= 0xFE0F) ||
+      (rune >= 0xE0100 && rune <= 0xE01EF);
 
   Map _map(Object? value) => value is Map ? value : const {};
   List _list(Object? value) => value is List ? value : const [];
