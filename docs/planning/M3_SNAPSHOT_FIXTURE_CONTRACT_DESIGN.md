@@ -229,6 +229,7 @@ verified by repository-level diff/search commands, not source-reading unit tests
 - valid record plus malformed/unknown-token/unknown-key record within the first
   256 positions;
 - token 33 UTF-16 units beside a safe record;
+- sensitive, identifier, or unsafe Unicode key/value beside a safe record;
 - structurally valid record 257, globally scanned but not typed-decoded.
 
 ### Rejected
@@ -238,7 +239,8 @@ verified by repository-level diff/search commands, not source-reading unit tests
 - malformed JSON/root/list and empty/no-safe list;
 - literal/escaped-equivalent duplicate keys;
 - encoded units 65,537, depth 17, or typed root/record entry 1,025;
-- every sensitive/identifier/Unicode case above.
+- a sensitive, identifier, or unsafe Unicode case when no safe observation
+  remains.
 
 ## Verification and delivery
 
