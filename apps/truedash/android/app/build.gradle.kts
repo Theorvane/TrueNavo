@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.truedash.truedash"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
