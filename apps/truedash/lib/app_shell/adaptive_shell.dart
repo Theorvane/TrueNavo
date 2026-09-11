@@ -59,6 +59,9 @@ class _AdaptiveShellState extends ConsumerState<AdaptiveShell> {
         policy: OrderedTraversalPolicy(),
         child: Scaffold(
           appBar: AppBar(
+            toolbarHeight: mobile ? 64 : 72,
+            titleSpacing: mobile ? TdSpacing.pageMobile : TdSpacing.pageTablet,
+            surfaceTintColor: Colors.transparent,
             title: const FocusTraversalOrder(
               order: NumericFocusOrder(1),
               child: ServerSwitcher(),
@@ -313,29 +316,7 @@ class _Content extends ConsumerWidget {
                 )
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      destination.label,
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                    const SizedBox(height: TdSpacing.related),
-                    Text(_scopeFor(destination)),
-                    const SizedBox(height: TdSpacing.related),
-                    Semantics(
-                      label: 'Current server: ${profile.displayName}',
-                      child: Text(
-                        profile.displayName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(height: TdSpacing.sectionDesktop),
-                    const Text(
-                      'Server switching is display-only and does not reconnect.',
-                    ),
-                    const SizedBox(height: TdSpacing.related),
-                    DashboardPage(destination: destination),
-                  ],
+                  children: [DashboardPage(destination: destination)],
                 ),
         ),
       ),

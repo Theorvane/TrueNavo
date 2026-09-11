@@ -14,9 +14,7 @@ import 'package:truedash_design_system/truedash_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
 void main() {
-  testWidgets('switches displayed context only and explains its limit', (
-    tester,
-  ) async {
+  testWidgets('switches displayed server context', (tester) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final controller = container.read(
@@ -54,10 +52,6 @@ void main() {
     await tester.tap(find.text('One').last);
     await tester.pump();
     expect(find.text('One'), findsWidgets);
-    expect(
-      find.text('Server switching is display-only and does not reconnect.'),
-      findsOneWidget,
-    );
     expect(
       container.read(serverProfilesControllerProvider).profiles,
       hasLength(2),

@@ -128,12 +128,13 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
           child: DecoratedBox(
             key: const ValueKey('server-catalog-focus-ring'),
             decoration: BoxDecoration(
-              border: _triggerFocused
-                  ? Border.all(
-                      color: context.tdTheme.actionFocusOnSurface,
-                      width: _focusRingThickness,
-                    )
-                  : null,
+              borderRadius: BorderRadius.circular(TdRadius.control),
+              border: Border.all(
+                color: _triggerFocused
+                    ? context.tdTheme.actionFocusOnSurface
+                    : Colors.transparent,
+                width: _focusRingThickness,
+              ),
             ),
             child: PopupMenuButton<_ServerMenuAction>(
               tooltip: label,
@@ -195,22 +196,38 @@ class _ServerSwitcherState extends ConsumerState<ServerSwitcher> {
                 ),
                 child: DecoratedBox(
                   key: const ValueKey('server-catalog-trigger'),
-                  decoration: const BoxDecoration(),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.storage_outlined),
-                      const SizedBox(width: TdSpacing.inline),
-                      Flexible(
-                        child: Text(
-                          state.selectedProfile?.displayName ??
-                              'No server selected',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                  decoration: BoxDecoration(
+                    color: context.tdTheme.surfaceRaised,
+                    borderRadius: BorderRadius.circular(TdRadius.control),
+                    border: Border.all(color: context.tdTheme.borderSubtle),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: TdSpacing.related,
+                      vertical: TdSpacing.inline,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.dns_rounded,
+                          size: 20,
+                          color: context.tdTheme.actionPrimary,
                         ),
-                      ),
-                      const Icon(Icons.arrow_drop_down),
-                    ],
+                        const SizedBox(width: TdSpacing.inline),
+                        Flexible(
+                          child: Text(
+                            state.selectedProfile?.displayName ??
+                                'No server selected',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TdTypography.label,
+                          ),
+                        ),
+                        const SizedBox(width: TdSpacing.inlineTight),
+                        const Icon(Icons.expand_more_rounded, size: 20),
+                      ],
+                    ),
                   ),
                 ),
               ),

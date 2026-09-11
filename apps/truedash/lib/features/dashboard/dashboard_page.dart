@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:truedash_design_system/truedash_design_system.dart';
@@ -57,7 +55,7 @@ class DashboardPage extends ConsumerWidget {
   ) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      if (value is DashboardHome) _home(value, ref, key),
+      if (value is DashboardHome) _home(context, value, ref, key),
       if (value is List<DashboardAlert>) _alerts(value, ref, key),
       if (value is DashboardStorage) _storage(context, value, ref, key),
       if (value is DashboardWorkloads) _workloads(value, ref, key),
@@ -65,49 +63,130 @@ class DashboardPage extends ConsumerWidget {
     ],
   );
 
-  Widget _home(DashboardHome home, WidgetRef ref, String key) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Semantics(
-        header: true,
-        label: '${home.serverName}, ${home.version}',
-        child: Text(home.serverName, style: TdTypography.titleLarge),
-      ),
-      const SizedBox(height: TdSpacing.inline),
-      Text(home.version, style: TdTypography.body),
-      const SizedBox(height: TdSpacing.component),
-      TdPanel(
-        title: 'Server health',
-        description:
-            'Current state from available pools and all active alerts.',
-        action: _refresh(ref, key),
-        child: _healthSummary(home),
-      ),
-      const SizedBox(height: TdSpacing.sectionMobile),
-      _metrics(home),
-      const SizedBox(height: TdSpacing.sectionMobile),
-      TdPanel(
-        title: 'Storage pools',
-        description:
-            'Capacity reflects the latest values reported by the server.',
-        child: home.pools.isEmpty
-            ? Text(
-                home.poolsAvailable
-                    ? 'No storage pools were provided by the server.'
-                    : 'Pool status is unavailable on this server.',
-              )
-            : Column(
-                children: [
-                  for (final pool in home.pools) ...[
-                    _poolCapacity(pool),
-                    if (pool != home.pools.last)
-                      const Divider(height: TdSpacing.group),
+  Widget _home(
+    BuildContext context,
+    DashboardHome home,
+    WidgetRef ref,
+    String key,
+  ) {
+    final td = context.tdTheme;
+    final statusColor = _statusColor(context, home.health.status);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Semantics(
+                header: true,
+                label: '${home.serverName}, ${home.version}',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SYSTEM OVERVIEW',
+                      style: TdTypography.micro.copyWith(
+                        color: td.actionPrimary,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: TdSpacing.inline),
+                    Text(home.serverName, style: TdTypography.titleLarge),
+                    const SizedBox(height: TdSpacing.inlineTight),
+                    Text(
+                      home.version,
+                      style: TdTypography.metadata.copyWith(
+                        color: td.textSecondary,
+                      ),
+                    ),
                   ],
-                ],
+                ),
               ),
-      ),
-    ],
-  );
+            ),
+            const SizedBox(width: TdSpacing.related),
+            _refresh(ref, key),
+          ],
+        ),
+        const SizedBox(height: TdSpacing.component),
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: statusColor.withValues(alpha: .09),
+            borderRadius: BorderRadius.circular(TdRadius.card),
+            border: Border.all(color: statusColor.withValues(alpha: .32)),
+          ),
+          padding: const EdgeInsets.all(TdSpacing.component),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: .14),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _healthIcon(home.health.status),
+                  color: statusColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: TdSpacing.related),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Server health',
+                      style: TdTypography.metadata.copyWith(
+                        color: td.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: TdSpacing.inlineTight),
+                    TdStatusBadge(
+                      status: _status(home.health.status),
+                      label: home.health.summary,
+                    ),
+                    const SizedBox(height: TdSpacing.inline),
+                    Text(
+                      _healthDetail(home),
+                      style: TdTypography.metadata.copyWith(
+                        color: td.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: TdSpacing.component),
+        _metrics(context, home),
+        const SizedBox(height: TdSpacing.component),
+        TdPanel(
+          title: 'Storage pools',
+          description: 'Live capacity and health reported by this server.',
+          child: home.pools.isEmpty
+              ? Text(
+                  home.poolsAvailable
+                      ? 'No storage pools were provided by the server.'
+                      : 'Pool status is unavailable on this server.',
+                )
+              : Column(
+                  children: [
+                    for (var index = 0; index < home.pools.length; index++) ...[
+                      _poolCapacity(home.pools[index]),
+                      if (index < home.pools.length - 1)
+                        const Divider(height: TdSpacing.group),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
 
   String _healthDetail(DashboardHome home) {
     if (!home.alertsAvailable) {
@@ -120,69 +199,117 @@ class DashboardPage extends ConsumerWidget {
         : '$count primary ${count == 1 ? 'alert' : 'alerts'} across all active alerts.';
   }
 
-  /// Keeps the status-first health summary usable when the panel is narrow.
-  Widget _healthSummary(DashboardHome home) => LayoutBuilder(
-    builder: (context, constraints) {
-      final badge = TdStatusBadge(
-        status: _status(home.health.status),
-        label: home.health.summary,
-      );
-      final detail = Text(_healthDetail(home), style: TdTypography.body);
-
-      if (constraints.maxWidth < 400) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            badge,
-            const SizedBox(height: TdSpacing.related),
-            detail,
-          ],
-        );
-      }
-
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Flexible(child: badge),
-          const SizedBox(width: TdSpacing.related),
-          Expanded(child: detail),
-        ],
-      );
-    },
-  );
-
-  Widget _metrics(DashboardHome home) {
-    final cards = <Widget>[
-      TdMetricCard(
+  Widget _metrics(BuildContext context, DashboardHome home) {
+    final metrics = [
+      (
+        icon: Icons.storage_rounded,
         label: 'Pools shown',
         value: home.poolsAvailable ? '${home.pools.length}' : '—',
-        freshness: home.poolsAvailable
-            ? 'Up to 50 current results'
-            : 'Unavailable on this server',
+        note: home.poolsAvailable ? 'current pools' : 'unavailable',
       ),
-      TdMetricCard(
+      (
+        icon: Icons.notifications_active_outlined,
         label: 'Active alerts',
         value: home.alertsAvailable ? '${home.activeAlertCount}' : '—',
-        freshness: home.alertsAvailable
-            ? 'All reported alerts'
-            : 'Unavailable on this server',
+        note: home.alertsAvailable ? 'reported now' : 'unavailable',
       ),
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth < 480
-            ? constraints.maxWidth
-            : math.min((constraints.maxWidth - TdSpacing.related) / 2, 280.0);
+        final columns = constraints.maxWidth >= 280 ? 2 : 1;
+        final width = columns == 2
+            ? (constraints.maxWidth - TdSpacing.related) / 2
+            : constraints.maxWidth;
         return Wrap(
           spacing: TdSpacing.related,
           runSpacing: TdSpacing.related,
           children: [
-            for (final card in cards) SizedBox(width: width, child: card),
+            for (final metric in metrics)
+              SizedBox(
+                width: width,
+                child: _metricTile(
+                  context,
+                  icon: metric.icon,
+                  label: metric.label,
+                  value: metric.value,
+                  note: metric.note,
+                ),
+              ),
           ],
         );
       },
     );
   }
+
+  Widget _metricTile(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String value,
+    required String note,
+  }) {
+    final td = context.tdTheme;
+    return Semantics(
+      label: '$label, $value, $note',
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 112),
+        decoration: BoxDecoration(
+          color: td.surfaceBase,
+          borderRadius: BorderRadius.circular(TdRadius.card),
+          border: Border.all(color: td.borderSubtle),
+        ),
+        padding: const EdgeInsets.all(TdSpacing.component),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 18, color: td.actionPrimary),
+                const SizedBox(width: TdSpacing.inline),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TdTypography.metadata.copyWith(
+                      color: td.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: TdSpacing.related),
+            Text(value, style: TdTypography.metricMedium),
+            const SizedBox(height: TdSpacing.inlineTight),
+            Text(
+              note,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TdTypography.micro.copyWith(color: td.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _statusColor(BuildContext context, DashboardStatus status) {
+    final td = context.tdTheme;
+    return switch (status) {
+      DashboardStatus.success => td.statusSuccess,
+      DashboardStatus.warning => td.statusWarning,
+      DashboardStatus.critical => td.statusCritical,
+      DashboardStatus.info => td.statusInfo,
+      DashboardStatus.neutral || DashboardStatus.stale => td.textSecondary,
+    };
+  }
+
+  IconData _healthIcon(DashboardStatus status) => switch (status) {
+    DashboardStatus.success => Icons.check_circle_outline_rounded,
+    DashboardStatus.warning => Icons.warning_amber_rounded,
+    DashboardStatus.critical => Icons.error_outline_rounded,
+    DashboardStatus.info => Icons.info_outline_rounded,
+    DashboardStatus.neutral ||
+    DashboardStatus.stale => Icons.help_outline_rounded,
+  };
 
   Widget _poolCapacity(DashboardPool pool) => Semantics(
     label:

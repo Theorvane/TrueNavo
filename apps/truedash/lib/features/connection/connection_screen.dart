@@ -58,7 +58,7 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
               state,
               busy,
               browserManaged: browserManaged,
-              showIntroduction: !expanded,
+              showIntroduction: false,
             );
             return SingleChildScrollView(
               key: const Key('connection-scroll-view'),
@@ -79,7 +79,13 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
                             Expanded(child: form),
                           ],
                         )
-                      : form,
+                      : ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [const _MobileHeader(), form],
+                          ),
+                        ),
                 ),
               ),
             );
@@ -102,6 +108,20 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (showIntroduction) const _MobileHeader(),
+        Text(
+          'Connect to server',
+          style: TdTypography.titleMedium.copyWith(
+            color: context.tdTheme.textPrimary,
+          ),
+        ),
+        const SizedBox(height: TdSpacing.inline),
+        Text(
+          'Enter the secure endpoint and account for your TrueNAS server.',
+          style: TdTypography.body.copyWith(
+            color: context.tdTheme.textSecondary,
+          ),
+        ),
+        const SizedBox(height: TdSpacing.group),
         TdTextField(
           label: 'Server URL',
           fieldKey: const Key('server-url-field'),
@@ -548,7 +568,7 @@ class _ConnectionIntroduction extends StatelessWidget {
         ),
         const SizedBox(height: TdSpacing.inline),
         Text(
-          'Connect directly to a secure HTTPS or WSS endpoint. Your API key is never shown in the result. On supported devices, you can explicitly choose protected credential storage.',
+          'Monitor your TrueNAS server securely from one focused dashboard.',
           style: TdTypography.bodyLarge.copyWith(color: td.textSecondary),
         ),
       ],
