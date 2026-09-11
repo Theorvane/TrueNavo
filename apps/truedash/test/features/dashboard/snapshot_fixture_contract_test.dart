@@ -18,7 +18,7 @@ void main() {
       expect(SnapshotFixtureContract.select(family).isRuntimeEnabled, isFalse);
     }
     expect(SnapshotFixtureContract.maxRecords, 256);
-    expect(SnapshotFixtureContract.maxVisitedValues, 1024);
+    expect(SnapshotFixtureContract.maxTypedEntries, 1024);
     expect(SnapshotFixtureContract.maxStringUnits, 32);
     expect(SnapshotFixtureContract.maxEncodedUnits, 65536);
     expect(SnapshotFixtureContract.maxJsonDepth, 16);
@@ -76,6 +76,33 @@ void main() {
       }
     },
   );
+
+  test('globally validates cross-family and over-record tails', () {
+    final deep = '${'[' * 17}null${']' * 17}';
+    final crossFamily =
+        '{"contract":"v25_04_snapshot_projection_v1","snapshots":[$deep]}';
+    expect(
+      _contract.parse(crossFamily).rejectionReason,
+      SnapshotFixtureRejectionReason.jsonDepthExceeded,
+    );
+
+    final safe = List.generate(
+      256,
+      (_) => '{"recursive":"RECURSIVE","hold":"PRESENT","retention":"MANAGED"}',
+    ).join(',');
+    final duplicateTail =
+        '{"contract":"v25_10_snapshot_projection_v1","snapshots":[$safe,{"recursive":"RECURSIVE","recursive":"RECURSIVE","hold":"PRESENT","retention":"MANAGED"}]}';
+    final deepTail =
+        '{"contract":"v25_10_snapshot_projection_v1","snapshots":[$safe,$deep]}';
+    expect(
+      _contract.parse(duplicateTail).rejectionReason,
+      SnapshotFixtureRejectionReason.malformedEnvelope,
+    );
+    expect(
+      _contract.parse(deepTail).rejectionReason,
+      SnapshotFixtureRejectionReason.jsonDepthExceeded,
+    );
+  });
 
   test('aggregates every fixed projection token', () {
     final s = _parse(
@@ -171,7 +198,7 @@ void main() {
     );
   });
 
-  test('enforces value entry 1024 and 1025 boundaries', () {
+  test('enforces typed entry 1024 and 1025 boundaries', () {
     String encoded(int recordEntries) {
       final fields = List.generate(
         recordEntries,
@@ -207,6 +234,7 @@ void main() {
   test('rejects sensitive and identifying fields in keys and values', () {
     const values = [
       'Authorization: Bearer example',
+      'Authorization: Basic example',
       'api_key=example',
       'password=example',
       'cookie=session',
@@ -214,6 +242,7 @@ void main() {
       'AKIAIOSFODNN7EXAMPLE',
       '192.168.0.123',
       '2001:db8::1',
+      'https://nas.example/api/current',
       'nas.example.test',
       'account=admin',
       'request_id=1',
@@ -225,11 +254,20 @@ void main() {
       'createtxg=123',
       '2026-01-01T00:00:00Z',
       'properties',
+      'property.value=secret',
+      'property.source=LOCAL',
       'holds',
+      'hold-tag=keep',
       'retention',
+      'retention-detail=task',
+      'origin=tank/base',
+      'schedule=daily',
       'clone=child',
       'task=1',
       'replication=1',
+      'rollback',
+      'rename',
+      'delete',
     ];
     for (final value in values) {
       final badValue = _parse(
@@ -259,7 +297,9 @@ void main() {
   test('rejects malformed Unicode and all default ignorables locally', () {
     final unsafe = [
       'line\nbreak',
+      '\u0085control',
       '\u202Ehidden',
+      '   ',
       String.fromCharCodes([0xD800]),
     ];
     for (final v in unsafe) {

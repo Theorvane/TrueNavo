@@ -80,7 +80,7 @@ final class SnapshotFixtureContract {
   const SnapshotFixtureContract._(this.versionFamily);
 
   static const maxRecords = 256;
-  static const maxVisitedValues = 1024;
+  static const maxTypedEntries = 1024;
   static const maxStringUnits = 32;
   static const maxEncodedUnits = 65536;
   static const maxJsonDepth = 16;
@@ -276,7 +276,8 @@ final class SnapshotFixtureContract {
     final keys = <String>{};
     var entries = 0;
     for (final entry in value.entries) {
-      if (++entries > maxVisitedValues || ++context.values > maxVisitedValues) {
+      if (++entries > maxTypedEntries ||
+          ++context.typedEntries > maxTypedEntries) {
         throw const _SnapshotFixtureFailure(
           SnapshotFixtureRejectionReason.traversalLimitExceeded,
         );
@@ -292,7 +293,7 @@ final class SnapshotFixtureContract {
 }
 
 final class _TraversalContext {
-  int values = 0;
+  int typedEntries = 0;
 }
 
 final class _SnapshotFixtureFailure implements Exception {

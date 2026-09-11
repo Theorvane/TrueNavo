@@ -4,7 +4,7 @@
 
 **Goal:** Build a version-bound, fixture-only Snapshot projection decoder that returns immutable anonymous aggregate counts while `pool.snapshot.query` remains runtime-disabled.
 
-**Architecture:** Add `snapshot_fixture_contract.dart` as an isolated synchronous decoder. Accept only a bounded JSON string, reject duplicate decoded object keys and excessive nesting before `jsonDecode`, bind the exact family marker, decode the first 256 exact-shape records through fixed token tables, and return complete/partial/rejected scalar outcomes. Use behavioral unit tests plus repository diff/search gates for runtime exclusion.
+**Architecture:** Add `snapshot_fixture_contract.dart` as an isolated synchronous decoder. Accept only a bounded JSON string and globally scan the complete document for duplicate decoded keys and excessive nesting before `jsonDecode`; then bind the family marker and typed-decode the first 256 exact-shape records. Structurally valid tails are partial, while malformed/duplicate/deep tails reject globally. Use behavioral unit tests plus repository diff/search gates for runtime exclusion.
 
 **Tech Stack:** Dart 3.13, `dart:convert`, Flutter test, FVM.
 
@@ -48,9 +48,10 @@
 
 ## Task 3 — Outcomes and local record boundary
 
-1. RED: valid+malformed, valid+unknown token/key, empty/all-invalid, malformed root/list, record 256/257.
+1. RED: valid+malformed, valid+unknown token/key, empty/all-invalid, malformed root/list, and structurally valid record 256/257.
 2. Implement local invalidation and fixed global rejection. Do not retain values, keys, indexes, or errors.
-3. Stop decoding after position 255 and mark partial for a tail.
+3. Stop typed decoding after position 255 and mark a structurally valid tail
+   partial; global JSON scanning still rejects duplicate/deep/malformed tails.
 4. Run focused suite/analyzer.
 5. Commit `test(storage): enforce Snapshot fixture outcomes`.
 

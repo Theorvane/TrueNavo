@@ -20,7 +20,8 @@
 ## Tested boundaries
 
 - records: 256 complete; 257 partial with 256 retained;
-- object entries: 1,024 accepted through shape evaluation; 1,025 rejects;
+- typed root/record entries: 1,024 accepted through shape evaluation; 1,025
+  rejects;
 - token: 32/33 local record invalidation;
 - encoded fixture: 65,536/65,537;
 - JSON depth: 16/17 with fixed depth rejection;
@@ -54,11 +55,32 @@ fvm flutter test \
 
 Result: 14 contract tests plus 1 runtime-boundary test passed.
 
+## Exact-SHA review remediation
+
+The first exact-SHA reviews of
+`93ea5ee8b5aa427bba9e3baa04e83714c8222cc4` rejected the candidate because the
+design incorrectly claimed marker/tail exclusion before the global JSON scan,
+the 1,024 limit was described as counting every nested value although it counts
+typed root/record object entries, the sensitive/Unicode matrix omitted several
+required cases, and the evidence overstated the focused count by one.
+
+The executable contract now states that encoded size, duplicate keys, and JSON
+depth are validated over the complete document before marker and record
+admission. Consequently, malformed/duplicate/deep cross-family or post-256
+tails reject globally; only a structurally valid record 257 yields partial and
+is excluded from aggregate mapping. The 1,024 limit is named as typed
+root/record entries, while arbitrary nested malformed content remains bounded
+by 65,536 encoded units and depth 16. A committed regression covers cross-family
+depth, duplicate/deep record-257 tails, Basic authorization, endpoint URLs,
+property value/source, hold tags, retention details, origin/schedule, mutation
+tokens, C1 controls, and visually blank strings. Focused verification now
+contains exactly 14 contract tests and one runtime test.
+
 ## Full verification
 
 - formatting: 151 files, 0 changes;
 - app analyzer: no issues;
-- full app suite: 573 passed, 1 existing skip;
+- full app suite: 574 passed, 1 existing skip;
 - Web release build succeeded with `sqlite3.wasm` and `drift_worker.js`;
 - `truenas_api`: 64 passed; two pre-existing informational analyzer notices in
   unchanged files;

@@ -82,7 +82,7 @@ not define or authorize that producer.
 
 ```text
 bounded redacted fixture JSON string
-  -> reject non-String or input over 32,768 UTF-16 units
+  -> reject non-String or input over 65,536 UTF-16 units
   -> reject duplicate decoded JSON object keys
   -> reject JSON nesting beyond 16
   -> validate family marker
@@ -133,21 +133,28 @@ keys, paths, indexes, rejected counts, or error text.
 - Unknown keys invalidate the containing record because they could carry an
   identifier, property, hold tag, credential, or expansion data.
 - Values map only through family-owned fixed token tables.
-- Cross-family markers reject before the snapshot list is inspected.
+- Marker admission occurs after global JSON size/duplicate/depth validation and
+  before typed snapshot record decoding.
 
 ## Bounds
 
 | Boundary | Limit | Outcome |
 |---|---:|---|
-| Attempted/retained snapshot records | 256 | record 257 and tail are not decoded; result partial |
-| Values/object entries visited | 1,024 | entry 1,025 rejects globally |
+| Typed-decoded/retained snapshot records | 256 | structurally valid record 257 and tail are not typed-decoded; result partial |
+| Typed root/record object entries visited | 1,024 | typed entry 1,025 rejects globally |
 | Projection token length | 32 UTF-16 units | containing record invalid |
 | Encoded fixture length | 65,536 UTF-16 units | reject before scan/decode |
 | JSON nesting depth | 16 | reject before `jsonDecode` |
 
 The input length is larger than M3-3 because each record has three fixed fields,
-but remains bounded. Limits apply to attempted records. The decoder does not
-retain source order.
+but remains bounded. The encoded-size, duplicate-key, and depth scanner
+validates the entire JSON document before marker and record admission.
+Malformed, duplicate, or over-depth content in a cross-family document or after
+record 256 therefore rejects globally. The 256-record limit applies to typed
+record decoding: a structurally valid record 257 marks the result partial but
+is not mapped into aggregates. The 1,024 counter covers typed root and attempted
+record object entries; other malformed nested content is bounded by encoded
+size and JSON depth. The decoder does not retain source order.
 
 ## Outcome rules
 
@@ -219,9 +226,10 @@ verified by repository-level diff/search commands, not source-reading unit tests
 
 ### Partial
 
-- valid record plus malformed/unknown-token/unknown-key record;
+- valid record plus malformed/unknown-token/unknown-key record within the first
+  256 positions;
 - token 33 UTF-16 units beside a safe record;
-- record 257 without decoding its values.
+- structurally valid record 257, globally scanned but not typed-decoded.
 
 ### Rejected
 
@@ -229,7 +237,7 @@ verified by repository-level diff/search commands, not source-reading unit tests
 - cross-family marker;
 - malformed JSON/root/list and empty/no-safe list;
 - literal/escaped-equivalent duplicate keys;
-- encoded units 65,537, depth 17, or value/entry 1,025;
+- encoded units 65,537, depth 17, or typed root/record entry 1,025;
 - every sensitive/identifier/Unicode case above.
 
 ## Verification and delivery
@@ -246,13 +254,14 @@ pipeline. Do not merge, deploy, or contact/mutate TrueNAS.
 
 ## Acceptance criteria
 
-- [ ] Three version markers reject cross-family fixtures before list decoding.
+- [ ] Three version markers reject cross-family fixtures after global JSON
+      validation and before typed record decoding.
 - [ ] Output contains only version, fixed anonymous counts, and partial state.
 - [ ] No identity, path, time, TXG, property, hold tag, or retention detail
       crosses the boundary.
 - [ ] Exact schema and fixed tokens determine all accepted data.
 - [ ] Complete/partial/rejected outcomes are deterministic and non-sensitive.
-- [ ] Record 256/257, entry 1024/1025, token 32/33, encoded 65536/65537, and
+- [ ] Record 256/257, typed entry 1024/1025, token 32/33, encoded 65536/65537, and
       depth 16/17 are durably tested.
 - [ ] Non-String custom collections reject untouched; duplicate keys reject.
 - [ ] Runtime allowlists/capabilities/UI remain unchanged and snapshots disabled.
