@@ -10,6 +10,7 @@ import 'iscsi_auth_panel.dart';
 import 'iscsi_global_panel.dart';
 import 'iscsi_initiator_comment_editor.dart';
 import 'iscsi_mapping_chart.dart';
+import 'iscsi_portal_comment_editor.dart';
 import 'iscsi_sessions_panel.dart';
 import 'iscsi_threshold_editor.dart';
 
@@ -92,7 +93,7 @@ class IscsiPage extends ConsumerWidget {
                 const Text('Targets & extents', style: TdTypography.titleLarge),
                 const SizedBox(height: 8),
                 const Text(
-                  'Configuration overview with reviewed threshold and initiator-description edits. Five inventories are read sequentially, so server changes during loading may temporarily appear unmatched. Active sessions and CHAP references load separately on request. CHAP secrets, extent paths and serials are not shown.',
+                  'Configuration overview with reviewed threshold, portal-description and initiator-description edits. Five inventories are read sequentially, so server changes during loading may temporarily appear unmatched. Active sessions and CHAP references load separately on request. CHAP secrets, extent paths and serials are not shown.',
                 ),
                 const SizedBox(height: 20),
                 switch (state) {
@@ -212,6 +213,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         const IscsiGlobalPanel(),
         const SizedBox(height: 16),
         const IscsiThresholdEditor(),
+        const SizedBox(height: 16),
+        IscsiPortalCommentEditor(overview: value),
         const SizedBox(height: 16),
         IscsiInitiatorCommentEditor(overview: value),
         const SizedBox(height: 16),

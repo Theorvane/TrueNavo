@@ -44,6 +44,7 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
     final profile = ref.watch(serverProfilesControllerProvider).selectedProfile;
     final unavailable = switch (widget.operation.method) {
       'iscsi.global.update' ||
+      'iscsi.portal.update' ||
       'iscsi.initiator.update' => 'Use the dedicated iSCSI workflow.',
       _ => adminUnavailableReason(widget.operation, catalog),
     };

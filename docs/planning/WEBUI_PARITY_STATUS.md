@@ -4,6 +4,10 @@ Updated 2026-09-26. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: reviewed iSCSI portal description
+
+The native iSCSI page now offers a comment-only update for an existing portal. It requires a five-minute endpoint-bound review and exact portal confirmation, rereads the selected portal ID, tag, listener IPs/ports and comment immediately before submission, sends only the comment field to iscsi.portal.update, and independently checks the saved comment while confirming the tag and listener list are unchanged. Generic administration execution for this method is blocked and routes to the native page. An ambiguous response or post-read retains the shared iSCSI write fence until reconnection. This is not listener editing, target access verification or an atomic guard against other administrators. Tests use a synthetic API only; no NAS write was attempted. The public method contract is [TrueNAS 25.10 portal update](https://api.truenas.com/v25.10/api_methods_iscsi.portal.update.html). TD-036 remains partial.
+
 ## Current continuation: iSCSI access configuration audit
 
 The native iSCSI page now charts the configured target access associations by no CHAP, CHAP, mutual CHAP and unknown authentication modes. It highlights target references to portal or initiator groups missing from the sequential inventory, plus configured groups unreferenced by the returned targets. These are saved-configuration counts, not connected-client telemetry or proof of safe deletion. Synthetic widget tests only; no appliance read or write was performed in this increment. TD-036 remains partial.

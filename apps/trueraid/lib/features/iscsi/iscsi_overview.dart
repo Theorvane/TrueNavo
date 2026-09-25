@@ -83,13 +83,18 @@ List<T> _rows<T>(Object? raw, T? Function(Map) parse) {
 }
 
 final class IscsiPortal {
-  const IscsiPortal(this.id, this.listeners);
+  const IscsiPortal(this.id, this.listeners, this.comment);
   final int id;
   final List<IscsiListener> listeners;
+  final String comment;
 
   static IscsiPortal? parse(Map raw) {
     final id = _id(raw['id']);
     final listen = raw['listen'];
+    final comment = raw['comment'];
+    if (comment != null && (comment is! String || comment.length > 1024)) {
+      return null;
+    }
     if (id == null || listen is! List || listen.length > 100) return null;
     final listeners = <IscsiListener>[];
     for (final item in listen) {
@@ -99,7 +104,11 @@ final class IscsiPortal {
       if (ip == null || port is! int || port < 1 || port > 65535) return null;
       listeners.add(IscsiListener(ip, port));
     }
-    return IscsiPortal(id, List.unmodifiable(listeners));
+    return IscsiPortal(
+      id,
+      List.unmodifiable(listeners),
+      comment as String? ?? '',
+    );
   }
 }
 

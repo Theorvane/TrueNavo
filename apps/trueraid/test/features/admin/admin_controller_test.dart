@@ -35,6 +35,7 @@ void main() {
     'alert.restore',
     'disk.query',
     'disk.update',
+    'iscsi.portal.update',
     'disk.temperatures',
     'pool.scrub.query',
     'pool.scrub.create',
@@ -537,6 +538,7 @@ class _AdminManager
           {'_name_': 'id', '_required_': true, 'type': 'integer'},
         ],
       },
+      'iscsi.portal.update': _method(),
       'alert.list': _method(),
       for (final name in [
         'cronjob.query',

@@ -63,6 +63,7 @@ void main() {
     expect(find.text('target-one'), findsOneWidget);
     expect(find.text('Configured access associations'), findsOneWidget);
     expect(find.text('Pool free-space alert threshold'), findsOneWidget);
+    expect(find.text('Portal description'), findsOneWidget);
     expect(find.text('Initiator group description'), findsOneWidget);
     expect(find.text('LUN 0 → extent-two'), findsOneWidget);
     expect(

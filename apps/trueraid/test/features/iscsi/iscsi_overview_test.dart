@@ -12,6 +12,7 @@ void main() {
             'listen': [
               {'ip': '192.0.2.10', 'port': 3260},
             ],
+            'comment': 'rack A',
           },
         ],
         initiators: [
@@ -48,6 +49,7 @@ void main() {
       );
       expect(overview.targetById(4)?.name, 'iqn.example:tank');
       expect(overview.portalById(3)?.listeners.single.port, 3260);
+      expect(overview.portalById(3)?.comment, 'rack A');
       expect(overview.initiatorById(6)?.names.single, 'iqn.example:client');
       expect(overview.targetById(4)?.groups.single.portalId, 3);
       expect(overview.targetById(4)?.groups.single.initiatorId, 6);
