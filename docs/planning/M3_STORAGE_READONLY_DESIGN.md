@@ -4,7 +4,7 @@
 
 ## Goal
 
-Improve the existing TrueDash Storage destination using only the already-admitted, parameterless read-only methods:
+Improve the existing TrueRAID Storage destination using only the already-admitted, parameterless read-only methods:
 
 - `pool.query`
 - `pool.dataset.query`
@@ -86,12 +86,12 @@ AuthenticatedSessionQueries (fixed allowlist)
 ### Required verification
 
 ```sh
-fvm dart format --output=none --set-exit-if-changed apps/truedash/lib apps/truedash/test
-(cd apps/truedash && fvm flutter test test/features/dashboard)
-(cd apps/truedash && fvm flutter analyze)
-(cd apps/truedash && fvm flutter test)
+fvm dart format --output=none --set-exit-if-changed apps/trueraid/lib apps/trueraid/test
+(cd apps/trueraid && fvm flutter test test/features/dashboard)
+(cd apps/trueraid && fvm flutter analyze)
+(cd apps/trueraid && fvm flutter test)
 (cd packages/truenas_api && fvm dart analyze && fvm dart test)
-(cd apps/truedash && fvm flutter build web --release)
+(cd apps/trueraid && fvm flutter build web --release)
 git diff --check
 ```
 

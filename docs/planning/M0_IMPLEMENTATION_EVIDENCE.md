@@ -15,7 +15,7 @@
 
 ## 2. 구현 경계
 
-- `apps/truedash`: Android, iOS, macOS, Windows, Linux, web 타깃 Flutter 앱
+- `apps/trueraid`: Android, iOS, macOS, Windows, Linux, web 타깃 Flutter 앱
 - `packages/truenas_api`: Flutter UI에 의존하지 않는 Dart 패키지
 - endpoint: `https://`/`wss://`만 허용하고 기본 path를 `/api/current`로 정규화
 - transport: 플랫폼 WebSocket/TLS 기본 검증을 그대로 사용하며 인증서 우회 훅 없음
@@ -54,9 +54,9 @@ Codex sandbox 밖의 동일한 격리 worktree에서 다음 명령을 다시 실
 fvm dart format --set-exit-if-changed .
 fvm flutter pub get
 (cd packages/truenas_api && fvm dart test --reporter=compact)
-(cd apps/truedash && fvm flutter analyze --no-fatal-infos)
-(cd apps/truedash && fvm flutter test --reporter=compact)
-plutil -lint apps/truedash/ios/Runner/Info.plist apps/truedash/macos/Runner/Release.entitlements apps/truedash/macos/Runner/DebugProfile.entitlements
+(cd apps/trueraid && fvm flutter analyze --no-fatal-infos)
+(cd apps/trueraid && fvm flutter test --reporter=compact)
+plutil -lint apps/trueraid/ios/Runner/Info.plist apps/trueraid/macos/Runner/Release.entitlements apps/trueraid/macos/Runner/DebugProfile.entitlements
 git diff --check
 ```
 
@@ -68,8 +68,8 @@ git diff --check
 - formatter 및 `git diff --check`: 통과
 - iOS plist와 macOS entitlement plist: `plutil -lint` 통과. `NSLocalNetworkUsageDescription`과 양 entitlement의 `com.apple.security.network.client=true`를 static inspection으로 확인했다.
 - Android main manifest의 `android.permission.INTERNET`을 static inspection으로 확인했다. debug/profile manifest의 중복 permission은 제거했다.
-- Web release build: 성공 (`apps/truedash/build/web`).
-- macOS release build: 성공 (`apps/truedash/build/macos/Build/Products/Release/truedash.app`, 42.1 MB).
+- Web release build: 성공 (`apps/trueraid/build/web`).
+- macOS release build: 성공 (`apps/trueraid/build/macos/Build/Products/Release/trueraid.app`, 42.1 MB).
 - 생성된 macOS release 앱을 `codesign -d --entitlements :-`로 읽어 `com.apple.security.network.client=true`가 최종 서명 entitlement에 포함됨을 확인했다.
 
 ## 5. 남은 검증 한계

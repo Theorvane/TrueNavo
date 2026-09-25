@@ -21,13 +21,17 @@ final class JsonRpcClient {
       StreamController<JsonRpcProtocolException>.broadcast();
   late final StreamSubscription<String> _subscription;
   bool _closed = false;
+  bool _transportFailed = false;
+
+  bool get isOpen => !_closed && !_transportFailed;
 
   Stream<Map<String, Object?>> get notifications => _notifications.stream;
   Stream<JsonRpcProtocolException> get protocolErrors => _protocolErrors.stream;
 
   Future<Object?> call(String method, {required Object id, Object? params}) {
-    if (_closed)
+    if (!isOpen) {
       return Future<Object?>.error(const RpcTransportClosedException());
+    }
     if (_pending.containsKey(id) || _completedIds.contains(id)) {
       return Future<Object?>.error(
         const JsonRpcProtocolException('A request ID was reused.'),
@@ -147,10 +151,15 @@ final class JsonRpcClient {
     );
   }
 
-  void _onTransportError(Object error, StackTrace stackTrace) =>
-      _failAll(error, stackTrace);
-  void _onDone() =>
-      _failAll(const RpcTransportClosedException(), StackTrace.current);
+  void _onTransportError(Object error, StackTrace stackTrace) {
+    _transportFailed = true;
+    _failAll(error, stackTrace);
+  }
+
+  void _onDone() {
+    _transportFailed = true;
+    _failAll(const RpcTransportClosedException(), StackTrace.current);
+  }
 
   void _protocolFailure(String message) {
     final error = JsonRpcProtocolException(message);

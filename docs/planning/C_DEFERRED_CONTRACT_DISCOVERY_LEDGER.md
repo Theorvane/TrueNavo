@@ -70,7 +70,7 @@ for an initial observation tuple:
   configuration retrieval.[7][8][9]
 
 These options are not request defaults, display fields, or evidence inputs for
-TrueDash. Any future request must prove an immutable parameter fingerprint and
+TrueRAID. Any future request must prove an immutable parameter fingerprint and
 an allowlisted, bounded projection without them.
 
 For VDEV observation, `pool.query` is already a permitted dashboard method;

@@ -4,20 +4,20 @@
 >
 > 기준 커밋: `3ae642a6165c126623e6dd164de640c429ba26b3` (`main`, 2026-09-05)
 >
-> 선행 근거: [M0 Foundation 설계](./M0_FOUNDATION_DESIGN.md), [TrueDash 디자인 시스템](./TRUEDASH_DESIGN_SYSTEM.md), [제품 기획안](./TRUEDASH_PRODUCT_PLAN.md)
+> 선행 근거: [M0 Foundation 설계](./M0_FOUNDATION_DESIGN.md), [TrueRAID 디자인 시스템](./TRUERAID_DESIGN_SYSTEM.md), [제품 기획안](./TRUERAID_PRODUCT_PLAN.md)
 
 ## 1. 목적과 범위
 
 M1은 보안 WSS/API-key 연결을 이미 제공하는 M0 위에 실제 제품 탐색 구조를 놓는다. 연결이 성공하면 사용자는 현재 세션에서 선택된 서버의 이름을 확인하고 Home, Alerts, Manage, Jobs 네 목적지 사이를 이동할 수 있다. 각 목적지는 데이터·명령·재연결을 제공하지 않는 명시적 placeholder로 시작한다.
 
-이 슬라이스는 앱 소유의 `ServerProfile`과 `ServerProfileCatalog` 경계를 정의한다. catalog는 프로세스 메모리에만 존재하며 현재 선택과 안전한 메타데이터만 관리한다. `truenas_api`의 전송·JSON-RPC·인증 계약과 `truedash_design_system`의 범용 토큰·컴포넌트는 이 경계에 의존하지 않는다.
+이 슬라이스는 앱 소유의 `ServerProfile`과 `ServerProfileCatalog` 경계를 정의한다. catalog는 프로세스 메모리에만 존재하며 현재 선택과 안전한 메타데이터만 관리한다. `truenas_api`의 전송·JSON-RPC·인증 계약과 `trueraid_design_system`의 범용 토큰·컴포넌트는 이 경계에 의존하지 않는다.
 
 ## 2. 구현 경계와 의존성
 
-앱 패키지 `apps/truedash` 안에 셸과 프로필 기능을 둔다. 제안 파일 배치는 다음과 같으며, 정확한 private file name은 구현 계획에서 확정한다.
+앱 패키지 `apps/trueraid` 안에 셸과 프로필 기능을 둔다. 제안 파일 배치는 다음과 같으며, 정확한 private file name은 구현 계획에서 확정한다.
 
 ```text
-apps/truedash/lib/
+apps/trueraid/lib/
   features/server_profiles/
     server_profile.dart                 # 불변 metadata 값 객체
     server_profile_catalog.dart         # session-memory 선택/등록 경계
@@ -26,7 +26,7 @@ apps/truedash/lib/
     app_shell.dart                      # breakpoint별 navigation layout
     shell_destination.dart              # 네 고정 목적지와 label/icon
     destination_placeholder.dart        # 비데이터 상태 화면
-  truedash_app.dart                     # 연결 화면 또는 shell의 최상위 전환
+  trueraid_app.dart                     # 연결 화면 또는 shell의 최상위 전환
 ```
 
 의존 방향은 한쪽뿐이다.
@@ -36,7 +36,7 @@ ConnectionController 성공 ServerSummary
               ↓  (안전한 필드만 변환)
 App-owned ServerProfileCatalog ← Shell controller/UI
               ↓
-truedash_design_system tokens/theme/components
+trueraid_design_system tokens/theme/components
 
 truenas_api transport/session ── X ── ServerProfileCatalog
 ```
@@ -65,7 +65,7 @@ truenas_api transport/session ── X ── ServerProfileCatalog
 | `600–999` | 72px `NavigationRail` | rail 옆 단일 content pane, page padding 24 |
 | `>=1000` | 확장된 `NavigationRail` | label이 보이는 224px 이하 rail과 content, page padding 32, content max-width 1440 |
 
-분기는 OS 종류나 orientation이 아니라 `LayoutBuilder`의 실제 사용 가능 width로 결정한다. 600과 1000은 각각 새 구간에 포함된다. 이 규칙은 이미 디자인 시스템의 `TrueDashDensity.resolve`: `<600` comfortable, `600–999` standard, `>=1000` compact와 반드시 동일한 width를 사용한다.
+분기는 OS 종류나 orientation이 아니라 `LayoutBuilder`의 실제 사용 가능 width로 결정한다. 600과 1000은 각각 새 구간에 포함된다. 이 규칙은 이미 디자인 시스템의 `TrueRAIDDensity.resolve`: `<600` comfortable, `600–999` standard, `>=1000` compact와 반드시 동일한 width를 사용한다.
 
 각 목적지는 제목, 짧은 범위 설명, 선택된 서버의 비밀 없는 이름, 그리고 “데이터 연결은 후속 슬라이스에서 제공”이라는 상태를 표시한다. Home은 Dashboard를, Alerts는 경고 데이터를, Manage는 관리 명령을, Jobs는 job feed를 대체하지 않는다. 화면에는 0개 데이터·차트·행이 있는 것이 정상 상태이며 fake metric이나 성공 수치를 표시하지 않는다.
 
@@ -152,4 +152,4 @@ M1은 destination data를 요청하지 않으므로 destination별 loading spinn
 
 ## 9. 구현 인계 기준
 
-구현 계획은 이 명세의 public boundary를 유지하고 M0 `ConnectionController`와 `ServerSummary`의 실제 API에 맞춘 최소 adapter를 정의한다. `truenas_api`와 `truedash_design_system`에 M1 전용 navigation·profile domain을 밀어 넣지 않는다. 모든 UI copy는 session-memory 한계와 비데이터 placeholder임을 숨기지 않아야 하며, 구현 diff가 이 문서의 비목표를 침범하면 별도 설계 승인을 받아야 한다.
+구현 계획은 이 명세의 public boundary를 유지하고 M0 `ConnectionController`와 `ServerSummary`의 실제 API에 맞춘 최소 adapter를 정의한다. `truenas_api`와 `trueraid_design_system`에 M1 전용 navigation·profile domain을 밀어 넣지 않는다. 모든 UI copy는 session-memory 한계와 비데이터 placeholder임을 숨기지 않아야 하며, 구현 diff가 이 문서의 비목표를 침범하면 별도 설계 승인을 받아야 한다.

@@ -8,7 +8,7 @@
 
 ## 1. Goal
 
-TrueDash will survive application restarts without weakening the TLS trust boundary delivered in M1. Safe server metadata, the selected profile, and a bounded snapshot of available TrueNAS RPC method names are stored in SQLite. API keys remain outside SQLite in platform secure storage, and certificate pins remain in the existing `PinStore`.
+TrueRAID will survive application restarts without weakening the TLS trust boundary delivered in M1. Safe server metadata, the selected profile, and a bounded snapshot of available TrueNAS RPC method names are stored in SQLite. API keys remain outside SQLite in platform secure storage, and certificate pins remain in the existing `PinStore`.
 
 This slice does not automatically connect at startup and does not add broad TrueNAS management capabilities.
 
@@ -109,7 +109,7 @@ A deterministic in-memory implementation remains available for unit/widget tests
 7. `ConnectionController` awaits `registerAndSelect`; authentication success is not published with an unpersisted profile.
 8. Selection/removal calls are serialized by the store transaction boundary. Duplicate endpoint registration preserves the original opaque id and sort position.
 
-Database open failures are surfaced as a safe startup persistence failure. TrueDash must not silently claim that a profile was saved. Tests inject an in-memory store and do not require platform plugins.
+Database open failures are surfaced as a safe startup persistence failure. TrueRAID must not silently claim that a profile was saved. Tests inject an in-memory store and do not require platform plugins.
 
 ## 7. Credential flow
 

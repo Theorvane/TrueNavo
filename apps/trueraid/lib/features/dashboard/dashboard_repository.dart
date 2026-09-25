@@ -1,0 +1,969 @@
+import 'package:truenas_api/truenas_api.dart';
+
+sealed class DashboardResult<T> {
+  const DashboardResult();
+}
+
+final class DashboardData<T> extends DashboardResult<T> {
+  const DashboardData(this.value);
+  final T value;
+}
+
+final class DashboardUnavailable<T> extends DashboardResult<T> {
+  const DashboardUnavailable();
+}
+
+final class DashboardNoConnection<T> extends DashboardResult<T> {
+  const DashboardNoConnection();
+}
+
+final class DashboardFailure<T> extends DashboardResult<T> {
+  const DashboardFailure();
+}
+
+enum DashboardStatus { neutral, success, warning, critical, info, stale }
+
+DashboardStatus dashboardSeverityStatus(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'critical':
+    case 'alert':
+    case 'error':
+    case 'emergency':
+      return DashboardStatus.critical;
+    case 'warning':
+    case 'warn':
+      return DashboardStatus.warning;
+    case 'info':
+    case 'notice':
+      return DashboardStatus.info;
+    default:
+      return DashboardStatus.info;
+  }
+}
+
+DashboardStatus dashboardOperationalStatus(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'healthy':
+    case 'online':
+    case 'running':
+    case 'active':
+    case 'success':
+    case 'finished':
+      return DashboardStatus.success;
+    case 'degraded':
+    case 'warning':
+    case 'waiting':
+    case 'pending':
+    case 'queued':
+      return DashboardStatus.warning;
+    case 'critical':
+    case 'faulted':
+    case 'offline':
+    case 'unavail':
+    case 'unavailable':
+    case 'removed':
+    case 'failed':
+    case 'failure':
+    case 'error':
+    case 'aborted':
+      return DashboardStatus.critical;
+    case 'stale':
+      return DashboardStatus.stale;
+    case 'unknown':
+    case 'stopped':
+    case 'disabled':
+    case 'idle':
+      return DashboardStatus.neutral;
+    default:
+      return DashboardStatus.info;
+  }
+}
+
+final class DashboardHealth {
+  const DashboardHealth({required this.status, required this.summary});
+  final DashboardStatus status;
+  final String summary;
+}
+
+/// Selected public system.info fields. Serial and license data are discarded.
+final class DashboardSystemFacts {
+  const DashboardSystemFacts({
+    this.uptimeSeconds,
+    this.cpuModel,
+    this.logicalCores,
+    this.physicalCores,
+    this.memoryBytes,
+    this.manufacturer,
+    this.product,
+    this.eccMemory,
+    this.loadAverage,
+  });
+
+  final int? uptimeSeconds, logicalCores, physicalCores, memoryBytes;
+  final String? cpuModel, manufacturer, product;
+  final bool? eccMemory;
+  final ({double one, double five, double fifteen})? loadAverage;
+
+  bool get hasDetails =>
+      uptimeSeconds != null ||
+      cpuModel != null ||
+      logicalCores != null ||
+      physicalCores != null ||
+      memoryBytes != null ||
+      manufacturer != null ||
+      product != null ||
+      eccMemory != null ||
+      loadAverage != null;
+}
+
+enum DashboardEdition { community, enterprise }
+
+final class DashboardHome {
+  const DashboardHome({
+    required this.serverName,
+    required this.version,
+    this.system,
+    this.edition,
+    required this.pools,
+    required this.alerts,
+    required this.poolsAvailable,
+    required this.alertsAvailable,
+    required this.activeAlertCount,
+    required this.criticalAlertCount,
+    required this.warningAlertCount,
+    required this.criticalPoolCount,
+    required this.warningPoolCount,
+  });
+  final String serverName;
+  final String version;
+  final DashboardSystemFacts? system;
+  final DashboardEdition? edition;
+  final List<DashboardPool> pools;
+  final List<DashboardAlert> alerts;
+  final bool poolsAvailable;
+  final bool alertsAvailable;
+
+  /// Counts are derived from the complete alert response; [alerts] is display-bounded.
+  final int? activeAlertCount;
+  final int? criticalAlertCount;
+  final int? warningAlertCount;
+
+  /// Counts are derived from the complete pool response; [pools] is display-bounded.
+  final int? criticalPoolCount;
+  final int? warningPoolCount;
+
+  DashboardHealth get health => dashboardHealthFor(
+    pools,
+    alerts,
+    criticalAlertCount: criticalAlertCount,
+    warningAlertCount: warningAlertCount,
+    criticalPoolCount: criticalPoolCount,
+    warningPoolCount: warningPoolCount,
+    alertsAvailable: alertsAvailable,
+  );
+}
+
+DashboardHealth dashboardHealthFor(
+  List<DashboardPool> pools,
+  List<DashboardAlert> alerts, {
+  int? criticalAlertCount,
+  int? warningAlertCount,
+  int? criticalPoolCount,
+  int? warningPoolCount,
+  bool alertsAvailable = true,
+}) {
+  final criticalAlerts =
+      criticalAlertCount ??
+      alerts.where((alert) => alert.status == DashboardStatus.critical).length;
+  final warningAlerts =
+      warningAlertCount ??
+      alerts.where((alert) => alert.status == DashboardStatus.warning).length;
+  final criticalPools =
+      criticalPoolCount ??
+      pools.where((pool) => pool.statusKind == DashboardStatus.critical).length;
+  final warningPools =
+      warningPoolCount ??
+      pools.where((pool) => pool.statusKind == DashboardStatus.warning).length;
+  if (criticalAlerts + criticalPools > 0) {
+    return const DashboardHealth(
+      status: DashboardStatus.critical,
+      summary: 'Needs attention',
+    );
+  }
+  if (warningAlerts + warningPools > 0) {
+    return const DashboardHealth(
+      status: DashboardStatus.warning,
+      summary: 'Review recommended',
+    );
+  }
+  if (!alertsAvailable) {
+    return const DashboardHealth(
+      status: DashboardStatus.stale,
+      summary: 'Alert state unavailable',
+    );
+  }
+  if (pools.isEmpty && alerts.isEmpty) {
+    return const DashboardHealth(
+      status: DashboardStatus.info,
+      summary: 'Current state',
+    );
+  }
+  return const DashboardHealth(
+    status: DashboardStatus.success,
+    summary: 'Operating normally',
+  );
+}
+
+final class DashboardAlert {
+  const DashboardAlert({
+    required this.level,
+    required this.message,
+    required this.status,
+  });
+  final String level;
+  final String message;
+  final DashboardStatus status;
+}
+
+/// Sanitized, derived alert state for the home view. It retains no raw payload.
+final class _DashboardHomeAlerts {
+  const _DashboardHomeAlerts({
+    required this.items,
+    required this.activeCount,
+    required this.criticalCount,
+    required this.warningCount,
+  });
+  final List<DashboardAlert> items;
+  final int activeCount;
+  final int criticalCount;
+  final int warningCount;
+}
+
+/// Sanitized, derived pool state for the home view. It retains no raw payload.
+final class _DashboardHomePools {
+  const _DashboardHomePools({
+    required this.items,
+    required this.criticalCount,
+    required this.warningCount,
+  });
+  final List<DashboardPool> items;
+  final int criticalCount;
+  final int warningCount;
+}
+
+final class DashboardStorage {
+  const DashboardStorage({
+    required this.pools,
+    required this.datasets,
+    required this.poolsAvailable,
+    required this.datasetsAvailable,
+  });
+  final List<DashboardPool> pools;
+  final List<DashboardDataset> datasets;
+  final bool poolsAvailable;
+  final bool datasetsAvailable;
+}
+
+/// The method may be unavailable, or it may be advertised but its response
+/// failed. Keep those states distinct for storage availability.
+final class _OptionalList<T> {
+  const _OptionalList({required this.supported, this.items});
+  final bool supported;
+  final List<T>? items;
+}
+
+final class DashboardWorkloads {
+  const DashboardWorkloads({
+    required this.services,
+    required this.servicesAvailable,
+  });
+  final List<DashboardService> services;
+  final bool servicesAvailable;
+}
+
+final class DashboardJobs {
+  const DashboardJobs(this.items);
+  final List<DashboardJob> items;
+}
+
+final class DashboardPool {
+  const DashboardPool({
+    required this.name,
+    required this.status,
+    required this.statusKind,
+    this.capacity,
+    this.capacityPercent,
+  });
+  final String name;
+  final String status;
+  final DashboardStatus statusKind;
+  final String? capacity;
+  final double? capacityPercent;
+}
+
+final class DashboardDataset {
+  const DashboardDataset({
+    required this.name,
+    required this.poolName,
+    this.managementId,
+  });
+  final String name;
+  final String poolName;
+
+  /// Exact, unique server identifier; never derived from a display label.
+  /// Null means this inventory entry cannot safely identify a write target.
+  final String? managementId;
+}
+
+final class DashboardService {
+  const DashboardService({
+    required this.name,
+    required this.status,
+    required this.statusKind,
+    this.managementId,
+  });
+  final String name;
+  final String status;
+  final DashboardStatus statusKind;
+
+  /// Exact, unique `service` field; display fallbacks are not write targets.
+  final String? managementId;
+}
+
+final class DashboardJob {
+  const DashboardJob({
+    required this.id,
+    required this.name,
+    required this.status,
+    required this.statusKind,
+  });
+  final String id;
+  final String name;
+  final String status;
+  final DashboardStatus statusKind;
+}
+
+/// App-owned parser over the narrow authenticated query capability. Raw RPC
+/// values are consumed immediately and never retained or persisted.
+final class DashboardRepository {
+  DashboardRepository(this._queries);
+  final AuthenticatedSessionQueries _queries;
+
+  Future<DashboardResult<DashboardHome>> loadHome(Set<String> methods) async {
+    if (!methods.contains('system.info')) return const DashboardUnavailable();
+    try {
+      final map = _map(await _queries.query('system.info'));
+      final homePools = methods.contains('pool.query')
+          ? _homePools(await _queries.query('pool.query'))
+          : const _DashboardHomePools(
+              items: <DashboardPool>[],
+              criticalCount: 0,
+              warningCount: 0,
+            );
+      final homeAlerts = await _optionalHomeAlerts(methods);
+      final edition = await _optionalEdition(methods);
+      return DashboardData(
+        DashboardHome(
+          serverName: _text(map['hostname'] ?? map['name'], fallback: 'Server'),
+          version: _text(map['version'], fallback: 'Unknown version'),
+          system: _systemFacts(map),
+          edition: edition,
+          pools: homePools.items,
+          alerts: homeAlerts?.items ?? const <DashboardAlert>[],
+          poolsAvailable: methods.contains('pool.query'),
+          alertsAvailable: homeAlerts != null,
+          activeAlertCount: homeAlerts?.activeCount,
+          criticalAlertCount: homeAlerts?.criticalCount,
+          warningAlertCount: homeAlerts?.warningCount,
+          criticalPoolCount: homePools.criticalCount,
+          warningPoolCount: homePools.warningCount,
+        ),
+      );
+    } on Object {
+      return const DashboardFailure();
+    }
+  }
+
+  Future<DashboardEdition?> _optionalEdition(Set<String> methods) async {
+    if (!methods.contains('system.product_type')) return null;
+    try {
+      final response = await _queries.query('system.product_type');
+      return switch (response) {
+        'COMMUNITY_EDITION' => DashboardEdition.community,
+        'ENTERPRISE' => DashboardEdition.enterprise,
+        _ => null,
+      };
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<DashboardResult<List<DashboardAlert>>> loadAlerts(
+    Set<String> methods,
+  ) => _load('alert.list', methods, _alerts);
+
+  Future<DashboardResult<DashboardStorage>> loadStorage(
+    Set<String> methods,
+  ) async {
+    final pools = await _optionalList(methods, 'pool.query', _pools);
+    final datasets = await _optionalList(
+      methods,
+      'pool.dataset.query',
+      _datasets,
+    );
+    if (!pools.supported && !datasets.supported) {
+      return const DashboardUnavailable();
+    }
+    if (pools.items == null && datasets.items == null) {
+      return const DashboardFailure();
+    }
+    final poolItems = pools.items ?? const <DashboardPool>[];
+    final poolIdentityCounts = <String, int>{};
+    for (final pool in poolItems) {
+      poolIdentityCounts.update(
+        pool.name,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final knownPoolNames = poolIdentityCounts.entries
+        .where((entry) => entry.value == 1)
+        .map((entry) => entry.key)
+        .toSet();
+    final datasetItems =
+        (datasets.items ?? const <DashboardDataset>[])
+            .map(
+              (dataset) => DashboardDataset(
+                name: dataset.name,
+                managementId: dataset.managementId,
+                poolName: knownPoolNames.contains(dataset.poolName)
+                    ? dataset.poolName
+                    : '',
+              ),
+            )
+            .toList()
+          ..sort(_compareDatasets);
+    return DashboardData(
+      DashboardStorage(
+        pools: poolItems,
+        datasets: datasetItems,
+        poolsAvailable: pools.items != null,
+        datasetsAvailable: datasets.items != null,
+      ),
+    );
+  }
+
+  Future<DashboardResult<DashboardWorkloads>> loadWorkloads(
+    Set<String> methods,
+  ) => _load(
+    'service.query',
+    methods,
+    (value) =>
+        DashboardWorkloads(services: _services(value), servicesAvailable: true),
+  );
+
+  Future<DashboardResult<DashboardJobs>> loadJobs(Set<String> methods) => _load(
+    'core.get_jobs',
+    methods,
+    (value) => DashboardJobs(
+      _list(value).take(50).map((item) {
+        final map = _map(item);
+        final status = _text(
+          map['state'] ?? map['status'],
+          fallback: 'Unknown',
+        );
+        return DashboardJob(
+          id: _text(map['id'], fallback: '—'),
+          name: _text(map['method'] ?? map['description'], fallback: 'Job'),
+          status: status,
+          statusKind: dashboardOperationalStatus(status),
+        );
+      }).toList(),
+    ),
+  );
+
+  Future<DashboardResult<T>> _load<T>(
+    String method,
+    Set<String> methods,
+    T Function(Object? value) parse,
+  ) async {
+    if (!methods.contains(method)) return const DashboardUnavailable();
+    try {
+      return DashboardData(parse(await _queries.query(method)));
+    } on Object {
+      return const DashboardFailure();
+    }
+  }
+
+  /// A supported storage section can fail independently; do not hide useful
+  /// pool or dataset inventory merely because its companion is unavailable.
+  Future<_OptionalList<T>> _optionalList<T>(
+    Set<String> methods,
+    String method,
+    List<T> Function(Object? value) parse,
+  ) async {
+    if (!methods.contains(method)) {
+      return const _OptionalList(supported: false);
+    }
+    try {
+      return _OptionalList(
+        supported: true,
+        items: parse(await _queries.query(method)),
+      );
+    } on Object {
+      return const _OptionalList(supported: true);
+    }
+  }
+
+  /// Alert state is supplemental to Home's system and pool state. A server can
+  /// advertise the method but still reject the individual request.
+  Future<_DashboardHomeAlerts?> _optionalHomeAlerts(Set<String> methods) async {
+    if (!methods.contains('alert.list')) return null;
+    try {
+      return _homeAlerts(await _queries.query('alert.list'));
+    } on Object {
+      return null;
+    }
+  }
+
+  _DashboardHomeAlerts _homeAlerts(Object? value) {
+    final allAlerts = _activeAlerts(value);
+    var criticalCount = 0;
+    var warningCount = 0;
+    final items = <DashboardAlert>[];
+    for (final item in allAlerts) {
+      final alert = _alert(item);
+      if (alert.status == DashboardStatus.critical) criticalCount++;
+      if (alert.status == DashboardStatus.warning) warningCount++;
+      if (items.length < 50) items.add(alert);
+    }
+    return _DashboardHomeAlerts(
+      items: items,
+      activeCount: allAlerts.length,
+      criticalCount: criticalCount,
+      warningCount: warningCount,
+    );
+  }
+
+  List<DashboardAlert> _alerts(Object? value) =>
+      _activeAlerts(value).take(50).map(_alert).toList();
+
+  List<Map> _activeAlerts(Object? value) {
+    if (value is! List || value.length > 512) {
+      throw const FormatException('Alert inventory is unavailable.');
+    }
+    final active = <Map>[];
+    for (final item in value) {
+      if (item is! Map ||
+          item['dismissed'] is! bool ||
+          !const {
+            'INFO',
+            'NOTICE',
+            'WARNING',
+            'ERROR',
+            'CRITICAL',
+            'ALERT',
+            'EMERGENCY',
+          }.contains(item['level'])) {
+        throw const FormatException('Alert metadata is unavailable.');
+      }
+      if (item['dismissed'] == false) active.add(item);
+    }
+    return active;
+  }
+
+  DashboardAlert _alert(Object? item) {
+    final map = _map(item);
+    final level = map['level'] as String;
+    return DashboardAlert(
+      level: level,
+      // Never render server-generated messages, arguments, HTML or key values.
+      message: alertClassTitle(
+        map['klass'] is String ? map['klass'] as String : '',
+      ),
+      status: dashboardSeverityStatus(level),
+    );
+  }
+
+  List<DashboardPool> _pools(Object? value) {
+    if (value is! List) {
+      throw const FormatException('Pool inventory must be a list.');
+    }
+    final pools = <DashboardPool>[];
+    for (final item in value.take(50)) {
+      final pool = _strictPool(item);
+      if (pool != null) pools.add(pool);
+    }
+    pools.sort((left, right) => _compareText(left.name, right.name));
+    return pools;
+  }
+
+  _DashboardHomePools _homePools(Object? value) {
+    var criticalCount = 0;
+    var warningCount = 0;
+    final items = <DashboardPool>[];
+    for (final item in _list(value)) {
+      final pool = _strictPool(item);
+      if (pool == null) continue;
+      if (pool.statusKind == DashboardStatus.critical) criticalCount++;
+      if (pool.statusKind == DashboardStatus.warning) warningCount++;
+      if (items.length < 50) items.add(pool);
+    }
+    return _DashboardHomePools(
+      items: items,
+      criticalCount: criticalCount,
+      warningCount: warningCount,
+    );
+  }
+
+  DashboardPool? _strictPool(Object? item) {
+    if (item is! Map) return null;
+    final rawName = item['name'];
+    if (rawName is! String) return null;
+    if (!_isSafeIdentifier(rawName)) return null;
+    final name = rawName.trim();
+    if (name.isEmpty) return null;
+    final map = item;
+    final capacityValue = map['capacity'];
+    final usedPercent = map['used_pct'];
+    final rawCapacity = capacityValue ?? usedPercent;
+    final isRatioSource = capacityValue == null && usedPercent != null;
+    final capacityPercent =
+        !map.containsKey('capacity') && !map.containsKey('used_pct')
+        ? _capacityFromPoolBytes(map)
+        : _capacityPercent(rawCapacity, isRatio: isRatioSource);
+    final capacity = capacityPercent == null
+        ? null
+        : _percentText(capacityPercent);
+    final explicitStatus = map['status'];
+    final healthy = map['healthy'];
+    final normalizedStatus = explicitStatus is String
+        ? _normalizedPoolStatus(explicitStatus)
+        : null;
+    final status =
+        normalizedStatus ??
+        (healthy is bool ? (healthy ? 'Healthy' : 'Unhealthy') : 'Unknown');
+    final statusKind = healthy is bool && normalizedStatus == null
+        ? (healthy ? DashboardStatus.success : DashboardStatus.critical)
+        : dashboardOperationalStatus(status);
+    return DashboardPool(
+      name: name,
+      status: status,
+      statusKind: statusKind,
+      capacity: capacity,
+      capacityPercent: capacityPercent,
+    );
+  }
+
+  List<DashboardDataset> _datasets(Object? value) {
+    if (value is! List) {
+      throw const FormatException('Dataset inventory must be a list.');
+    }
+    // Check the complete response, including entries outside the display bound.
+    // A duplicate hidden later in the inventory is still an ambiguous target.
+    final identityCounts = _stringFieldCounts(value, 'id');
+    final displayCounts = <String, int>{};
+    for (final item in value) {
+      if (item is! Map) continue;
+      final name = item['name'] ?? item['id'];
+      if (name is! String || !_isSafeIdentifier(name)) continue;
+      displayCounts.update(
+        name.trim(),
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final datasets = <DashboardDataset>[];
+    for (final item in value.take(50)) {
+      if (item is! Map) continue;
+      final rawName = item['name'] ?? item['id'];
+      if (rawName is! String || !_isSafeIdentifier(rawName)) continue;
+      final normalizedName = rawName.trim();
+      if (normalizedName.isEmpty) continue;
+      final rootName = normalizedName.split('/').first;
+      final rawId = item['id'];
+      final managementId =
+          rawId is String &&
+              _isManagementDatasetId(rawId) &&
+              (item['name'] == null || item['name'] == rawId) &&
+              identityCounts[rawId] == 1 &&
+              displayCounts[normalizedName] == 1
+          ? rawId
+          : null;
+      datasets.add(
+        DashboardDataset(
+          name: normalizedName,
+          poolName: rootName,
+          managementId: managementId,
+        ),
+      );
+    }
+    return datasets;
+  }
+
+  int _compareDatasets(DashboardDataset left, DashboardDataset right) {
+    final leftPool = left.poolName.isEmpty ? '\uffff' : left.poolName;
+    final rightPool = right.poolName.isEmpty ? '\uffff' : right.poolName;
+    final poolOrder = _compareText(leftPool, rightPool);
+    return poolOrder != 0 ? poolOrder : _compareText(left.name, right.name);
+  }
+
+  int _compareText(String left, String right) {
+    final normalized = left.toLowerCase().compareTo(right.toLowerCase());
+    return normalized != 0 ? normalized : left.compareTo(right);
+  }
+
+  List<DashboardService> _services(Object? value) {
+    final items = _list(value);
+    final identityCounts = _stringFieldCounts(items, 'service');
+    return items.take(50).map((item) {
+      final map = _map(item);
+      final rawService = map['service'];
+      final status = _text(
+        map['state'] ?? map['status'] ?? map['enable'],
+        fallback: 'Unknown',
+      );
+      return DashboardService(
+        name: _text(
+          map['service'] ?? map['name'] ?? map['id'],
+          fallback: 'Unnamed',
+        ),
+        status: status,
+        statusKind: dashboardOperationalStatus(status),
+        managementId:
+            rawService is String &&
+                RegExp(r'^[a-z][a-z0-9_]{0,63}$').stringMatch(rawService) ==
+                    rawService &&
+                identityCounts[rawService] == 1
+            ? rawService
+            : null,
+      );
+    }).toList();
+  }
+
+  Map<String, int> _stringFieldCounts(List items, String field) {
+    final counts = <String, int>{};
+    for (final item in items) {
+      if (item is! Map) continue;
+      final id = item[field];
+      if (id is String) {
+        counts.update(id, (count) => count + 1, ifAbsent: () => 1);
+      }
+    }
+    return counts;
+  }
+
+  bool _isManagementDatasetId(String value) =>
+      value.length <= 160 &&
+      value
+          .split('/')
+          .every(
+            (segment) =>
+                RegExp(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
+                        .stringMatch(segment) ==
+                    segment &&
+                !const {
+                  'boot-pool',
+                  'freenas-boot',
+                  'ix-apps',
+                  'ix-applications',
+                }.contains(segment),
+          );
+
+  double? _capacityFromPoolBytes(Map pool) {
+    // TrueNAS 25.10 pool.query can expose byte totals without a percentage.
+    // Keep counts exact on native and web, and reject inconsistent snapshots.
+    final size = _poolBytes(pool['size']);
+    final allocated = _poolBytes(pool['allocated']);
+    if (size == null || size == 0 || allocated == null || allocated > size) {
+      return null;
+    }
+    if (pool.containsKey('free') &&
+        _poolBytes(pool['free']) != size - allocated) {
+      return null;
+    }
+    return allocated / size * 100;
+  }
+
+  int? _poolBytes(Object? value) =>
+      value is int && value >= 0 && value <= 9007199254740991 ? value : null;
+
+  double? _capacityPercent(Object? value, {required bool isRatio}) {
+    final hasExplicitPercent = value is String && value.trim().endsWith('%');
+    final number = switch (value) {
+      num value => value.toDouble(),
+      String value
+          when RegExp(r'^(?:\d+(?:\.\d+)?|\.\d+)%?$').hasMatch(value.trim()) =>
+        double.tryParse(
+          value.trim().endsWith('%')
+              ? value.trim().substring(0, value.trim().length - 1)
+              : value.trim(),
+        ),
+      _ => null,
+    };
+    if (number == null || !number.isFinite) return null;
+    final percent = isRatio && !hasExplicitPercent && number >= 0 && number <= 1
+        ? number * 100
+        : number;
+    return percent.clamp(0, 100).toDouble();
+  }
+
+  String _percentText(double percent) {
+    if (percent == 0) return '0%';
+    if (percent > 0 && percent < 0.1) return '<0.1%';
+    if (percent > 99.9 && percent < 100) return '>99.9%';
+    final rounded = percent.toStringAsFixed(1);
+    final label = rounded.endsWith('.0')
+        ? rounded.substring(0, rounded.length - 2)
+        : rounded;
+    return '$label%';
+  }
+
+  String? _normalizedPoolStatus(String value) {
+    return switch (value.trim().toLowerCase()) {
+      'healthy' => 'Healthy',
+      'online' => 'Online',
+      'degraded' => 'Degraded',
+      'warning' => 'Warning',
+      'critical' => 'Critical',
+      'faulted' => 'Faulted',
+      'offline' => 'Offline',
+      'unavail' => 'Unavailable',
+      'removed' => 'Removed',
+      'unknown' => 'Unknown',
+      _ => null,
+    };
+  }
+
+  bool _isSafeIdentifier(String value) {
+    if (value.length > 160) return false;
+    for (final rune in value.runes) {
+      if (_isIdentifierControl(rune) || _isDefaultIgnorableCodePoint(rune)) {
+        return false;
+      }
+    }
+    for (var index = 0; index < value.length; index++) {
+      final unit = value.codeUnitAt(index);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        if (++index >= value.length) return false;
+        final next = value.codeUnitAt(index);
+        if (next < 0xDC00 || next > 0xDFFF) return false;
+      } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        return false;
+      }
+    }
+    return value
+        .trim()
+        .split('/')
+        .every((segment) => _hasVisibleIdentifierContent(segment));
+  }
+
+  bool _isIdentifierControl(int unit) =>
+      unit <= 0x1F ||
+      (unit >= 0x7F && unit <= 0x9F) ||
+      unit == 0x061C ||
+      unit == 0x200E ||
+      unit == 0x200F ||
+      (unit >= 0x202A && unit <= 0x202E) ||
+      (unit >= 0x2066 && unit <= 0x2069);
+
+  /// Unicode DerivedCoreProperties `Default_Ignorable_Code_Point` ranges.
+  /// Identity text rejects the property rather than maintaining a shorter
+  /// visual denylist that can miss invisible fillers or supplementary tags.
+  bool _isDefaultIgnorableCodePoint(int rune) =>
+      rune == 0x00AD ||
+      rune == 0x034F ||
+      rune == 0x061C ||
+      (rune >= 0x115F && rune <= 0x1160) ||
+      (rune >= 0x17B4 && rune <= 0x17B5) ||
+      (rune >= 0x180B && rune <= 0x180F) ||
+      (rune >= 0x200B && rune <= 0x200F) ||
+      (rune >= 0x202A && rune <= 0x202E) ||
+      (rune >= 0x2060 && rune <= 0x206F) ||
+      rune == 0x3164 ||
+      (rune >= 0xFE00 && rune <= 0xFE0F) ||
+      rune == 0xFEFF ||
+      rune == 0xFFA0 ||
+      (rune >= 0xFFF0 && rune <= 0xFFF8) ||
+      (rune >= 0x1BCA0 && rune <= 0x1BCA3) ||
+      (rune >= 0x1D173 && rune <= 0x1D17A) ||
+      (rune >= 0xE0000 && rune <= 0xE0FFF);
+
+  bool _hasVisibleIdentifierContent(String value) {
+    for (final rune in value.runes) {
+      if (_isUnicodeWhitespace(rune) || _isDefaultIgnorableCodePoint(rune)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool _isUnicodeWhitespace(int rune) =>
+      rune == 0x20 ||
+      rune == 0xA0 ||
+      rune == 0x1680 ||
+      (rune >= 0x2000 && rune <= 0x200A) ||
+      rune == 0x2028 ||
+      rune == 0x2029 ||
+      rune == 0x202F ||
+      rune == 0x205F ||
+      rune == 0x3000;
+
+  Map _map(Object? value) => value is Map ? value : const {};
+  List _list(Object? value) => value is List ? value : const [];
+  DashboardSystemFacts? _systemFacts(Map map) {
+    ({double one, double five, double fifteen})? loadAverage(Object? raw) {
+      if (raw is! List || raw.length != 3) return null;
+      final values = <double>[];
+      for (final entry in raw) {
+        if (entry is! num || !entry.isFinite || entry < 0 || entry > 1000000) {
+          return null;
+        }
+        values.add(entry.toDouble());
+      }
+      return (one: values[0], five: values[1], fifteen: values[2]);
+    }
+
+    int? boundedUptime(Object? raw) {
+      if (raw is! num || !raw.isFinite || raw < 0 || raw > 10000000000) {
+        return null;
+      }
+      return raw.floor();
+    }
+
+    int? boundedNumber(Object? raw, {required int min, required int max}) {
+      if (raw is! num || !raw.isFinite || raw < min || raw > max) return null;
+      if (raw != raw.truncateToDouble()) return null;
+      return raw.toInt();
+    }
+
+    String? boundedText(Object? raw) {
+      if (raw is! String || raw.trim().isEmpty) return null;
+      final value = raw.trim();
+      if (value.runes.any((rune) => rune < 32 || rune == 127)) return null;
+      return value.length > 160 ? '${value.substring(0, 159)}…' : value;
+    }
+
+    final facts = DashboardSystemFacts(
+      uptimeSeconds: boundedUptime(map['uptime_seconds']),
+      cpuModel: boundedText(map['model']),
+      logicalCores: boundedNumber(map['cores'], min: 1, max: 65536),
+      physicalCores: boundedNumber(map['physical_cores'], min: 1, max: 65536),
+      memoryBytes: boundedNumber(map['physmem'], min: 1, max: 1000000000000000),
+      manufacturer: boundedText(map['system_manufacturer']),
+      product: boundedText(map['system_product']),
+      eccMemory: map['ecc_memory'] is bool ? map['ecc_memory'] as bool : null,
+      loadAverage: loadAverage(map['loadavg']),
+    );
+    return facts.hasDetails ? facts : null;
+  }
+
+  String _text(Object? value, {required String fallback}) {
+    final text = value is String || value is num || value is bool
+        ? '$value'
+        : '';
+    if (text.isEmpty) return fallback;
+    return text.length > 160 ? '${text.substring(0, 159)}…' : text;
+  }
+}

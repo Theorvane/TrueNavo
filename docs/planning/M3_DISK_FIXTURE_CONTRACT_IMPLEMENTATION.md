@@ -12,10 +12,10 @@
 
 ## Immutable work boundary
 
-- Worktree: `/Users/jungwon/workspace/.worktrees/truedash-m3-disk-contract`
+- Worktree: `/Users/jungwon/workspace/.worktrees/trueraid-m3-disk-contract`
 - Branch: `feat/m3-disk-fixture-contract`
 - Base: `84405d5fea7222d88621aebb401cfa75d028d3a9`
-- Allowed production file: `apps/truedash/lib/features/dashboard/disk_fixture_contract.dart`
+- Allowed production file: `apps/trueraid/lib/features/dashboard/disk_fixture_contract.dart`
 - Allowed tests/fixtures: dedicated `disk_fixture_*` files and `test/fixtures/dashboard/disk/`
 - Allowed documentation: this design/plan and implementation evidence.
 - Do not modify dashboard repository/controller/page/capabilities, `truenas_api`, persistence, platform, CI, or generated schema.
@@ -85,14 +85,14 @@
 2. Run:
 
 ```sh
-fvm dart format --output=none --set-exit-if-changed packages/truenas_api packages/truedash_design_system examples/design_system_consumer apps/truedash
-(cd apps/truedash && fvm flutter analyze && fvm flutter test && fvm flutter build web --release)
+fvm dart format --output=none --set-exit-if-changed packages/truenas_api packages/trueraid_design_system examples/design_system_consumer apps/trueraid
+(cd apps/trueraid && fvm flutter analyze && fvm flutter test && fvm flutter build web --release)
 (cd packages/truenas_api && fvm dart analyze && fvm dart test)
-(cd packages/truedash_design_system && fvm flutter analyze && fvm flutter test)
+(cd packages/trueraid_design_system && fvm flutter analyze && fvm flutter test)
 (cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test)
-(cd apps/truedash && ./tool/verify_drift_generated.sh && ./tool/verify_drift_generated.sh)
-(cd apps/truedash && fvm dart run tool/verify_drift_web_assets.dart)
-(cd apps/truedash && fvm dart run tool/verify_persistence_security_boundaries.dart)
+(cd apps/trueraid && ./tool/verify_drift_generated.sh && ./tool/verify_drift_generated.sh)
+(cd apps/trueraid && fvm dart run tool/verify_drift_web_assets.dart)
+(cd apps/trueraid && fvm dart run tool/verify_persistence_security_boundaries.dart)
 git diff --check
 ```
 

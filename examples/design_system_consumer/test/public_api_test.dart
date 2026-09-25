@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truedash_design_system/truedash_design_system.dart';
+import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 void main() {
   testWidgets('public barrel supports an external consumer', (tester) async {
@@ -9,7 +9,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        theme: TrueDashTheme.light(density: TrueDashDensity.standard),
+        theme: TrueRAIDTheme.light(density: TrueRAIDDensity.standard),
         home: Scaffold(
           body: Column(
             children: [
@@ -34,8 +34,8 @@ void main() {
     );
 
     final extension = tester.element(find.byType(TdPanel).first).tdTheme;
-    expect(extension.density, TrueDashDensity.standard);
-    expect(TrueDashDensity.resolve(600), TrueDashDensity.standard);
+    expect(extension.density, TrueRAIDDensity.standard);
+    expect(TrueRAIDDensity.resolve(600), TrueRAIDDensity.standard);
     expect(TdSpacing.scale, isNotEmpty);
     expect(TdRadius.control, greaterThan(0));
     expect(TdSizing.minimumTouchTarget, greaterThanOrEqualTo(44));

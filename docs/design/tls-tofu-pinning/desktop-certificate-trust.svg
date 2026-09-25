@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
-  <title id="title">TrueDash desktop certificate replacement trust review</title>
+  <title id="title">TrueRAID desktop certificate replacement trust review</title>
   <desc id="desc">Light desktop shell with native navigation rail and a bounded dialog comparing old and new certificate fingerprints before an explicit pin replacement.</desc>
   <rect width="1440" height="900" fill="#F4F7F8"/>
   <g font-family="Arial, sans-serif">
-    <rect width="224" height="900" fill="#FFFFFF"/><text x="34" y="55" fill="#18212B" font-size="25" font-weight="700">TrueDash</text>
+    <rect width="224" height="900" fill="#FFFFFF"/><text x="34" y="55" fill="#18212B" font-size="25" font-weight="700">TrueRAID</text>
     <g fill="#596878" font-size="16"><text x="62" y="137">⌂  Home</text><text x="62" y="193">△  Alerts</text><text x="62" y="249">☷  Manage</text><text x="62" y="305">◷  Jobs</text></g>
     <text x="275" y="71" fill="#18212B" font-size="29" font-weight="700">Connection</text><text x="275" y="102" fill="#596878" font-size="16">Certificate safety review is blocking this connection.</text>
     <rect x="224" width="1216" height="900" fill="#18212B" opacity=".38"/>

@@ -24,7 +24,7 @@
 
 ## RPC and data boundary
 
-- `apps/truedash/lib/features/dashboard/dashboard_capabilities.dart` has no diff.
+- `apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart` has no diff.
 - Storage still requests only `pool.query` and `pool.dataset.query` through `_optionalList`.
 - No disk, snapshot, filesystem, sharing, shell, or mutation RPC literal was added to the dashboard runtime.
 - Raw response maps are consumed during parsing and do not cross the repository boundary or enter persistence.
@@ -37,7 +37,7 @@
 Command:
 
 ```bash
-cd apps/truedash
+cd apps/trueraid
 fvm flutter test test/features/dashboard/dashboard_controller_test.dart
 ```
 
@@ -53,7 +53,7 @@ After the minimal parser/reconciliation implementation, the focused repository s
 Command:
 
 ```bash
-cd apps/truedash
+cd apps/trueraid
 fvm flutter test test/features/dashboard/dashboard_page_test.dart
 ```
 
@@ -105,7 +105,7 @@ A second read-only review after those fixes found no blocker, confirmed that the
 ### Final focused GREEN
 
 ```bash
-cd apps/truedash
+cd apps/trueraid
 fvm flutter test test/features/dashboard/dashboard_controller_test.dart
 # 36 tests passed
 
@@ -123,8 +123,8 @@ the static ACL-unavailable notice, and the 44 px dataset target assertion.
 
 ```bash
 fvm dart format --output=none --set-exit-if-changed \
-  packages/truenas_api packages/truedash_design_system \
-  examples/design_system_consumer apps/truedash
+  packages/truenas_api packages/trueraid_design_system \
+  examples/design_system_consumer apps/trueraid
 ```
 
 Result: 142 files checked, 0 changed.
@@ -132,7 +132,7 @@ Result: 142 files checked, 0 changed.
 ### App
 
 ```bash
-cd apps/truedash
+cd apps/trueraid
 fvm flutter analyze
 fvm flutter test
 fvm flutter build web --release
@@ -165,7 +165,7 @@ Results:
 ### Design system and external consumer
 
 ```bash
-cd packages/truedash_design_system
+cd packages/trueraid_design_system
 fvm flutter analyze
 fvm flutter test
 # no issues; 27 tests passed
@@ -179,7 +179,7 @@ fvm flutter test
 ### Drift and security gates
 
 ```bash
-cd apps/truedash
+cd apps/trueraid
 ./tool/verify_drift_generated.sh
 ./tool/verify_drift_generated.sh
 fvm dart run tool/verify_drift_web_assets.dart
@@ -192,7 +192,7 @@ Result: all commands passed; repeated generation left no generated diff.
 
 ```bash
 git diff --check
-git diff -- apps/truedash/lib/features/dashboard/dashboard_capabilities.dart
+git diff -- apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart
 ```
 
 Result: clean whitespace; capability diff empty.

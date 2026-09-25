@@ -4,11 +4,11 @@
 >
 > 기준 도구체인: Flutter 3.47.0 stable, Dart 3.13.0, macOS arm64
 >
-> 설계 기준: [M0 설계](./M0_FOUNDATION_DESIGN.md), [제품 기획안](./TRUEDASH_PRODUCT_PLAN.md), [TrueNAS API 조사](../research/TRUENAS_API_RESEARCH.md)
+> 설계 기준: [M0 설계](./M0_FOUNDATION_DESIGN.md), [제품 기획안](./TRUERAID_PRODUCT_PLAN.md), [TrueNAS API 조사](../research/TRUENAS_API_RESEARCH.md)
 
 ## 1. 실행 규칙
 
-- 모든 명령은 저장소 루트에서 실행한다: `/Users/jungwon/workspace/.worktrees/truedash-m0`.
+- 모든 명령은 저장소 루트에서 실행한다: `/Users/jungwon/workspace/.worktrees/trueraid-m0`.
 - Flutter 명령은 `fvm flutter`, 순수 Dart 명령은 `fvm dart`만 사용한다.
 - 각 행동 조각은 먼저 RED 테스트를 추가하고, 그 테스트를 실행해 예상 실패를 기록한 뒤 최소 구현으로 GREEN을 만든다. 리팩터링은 GREEN 뒤에만 한다.
 - 테스트는 `InMemoryTransport`/fake connector를 통해 production protocol·repository·controller 코드 경로를 실행한다. 소스 텍스트 검사, live TrueNAS, 인터넷 의존 테스트는 금지한다.
@@ -19,8 +19,8 @@
 
 ```sh
 fvm dart format --set-exit-if-changed .
-(cd apps/truedash && fvm flutter analyze)
-(cd apps/truedash && fvm flutter test)
+(cd apps/trueraid && fvm flutter analyze)
+(cd apps/trueraid && fvm flutter test)
 (cd packages/truenas_api && fvm dart test)
 ```
 
@@ -28,14 +28,14 @@ fvm dart format --set-exit-if-changed .
 
 ### 2.1 Workspace와 Flutter bootstrap
 
-생성·수정 대상은 `pubspec.yaml`, `apps/truedash/pubspec.yaml`, `packages/truenas_api/pubspec.yaml`, `.fvmrc`, 그리고 최소 앱/패키지 소스와 테스트 디렉터리다. 루트 `pubspec.yaml`에는 Dart pub workspace의 members로 `apps/truedash`, `packages/truenas_api`를 선언한다. 앱은 path dependency로 `truenas_api`를 사용한다. workspace가 정상 해석된 뒤에만 Melos를 추가하지 않기로 확정한다.
+생성·수정 대상은 `pubspec.yaml`, `apps/trueraid/pubspec.yaml`, `packages/truenas_api/pubspec.yaml`, `.fvmrc`, 그리고 최소 앱/패키지 소스와 테스트 디렉터리다. 루트 `pubspec.yaml`에는 Dart pub workspace의 members로 `apps/trueraid`, `packages/truenas_api`를 선언한다. 앱은 path dependency로 `truenas_api`를 사용한다. workspace가 정상 해석된 뒤에만 Melos를 추가하지 않기로 확정한다.
 
 RED:
 
 ```sh
 fvm flutter pub get
 (cd packages/truenas_api && fvm dart test)
-(cd apps/truedash && fvm flutter test)
+(cd apps/trueraid && fvm flutter test)
 ```
 
 예상 실패: package/app 또는 test target이 아직 없다는 오류.
@@ -45,10 +45,10 @@ GREEN 구현과 검증:
 ```sh
 fvm flutter pub get
 (cd packages/truenas_api && fvm dart test)
-(cd apps/truedash && fvm flutter test)
+(cd apps/trueraid && fvm flutter test)
 ```
 
-통과 기준: 두 프로젝트가 workspace에서 해석되고, package와 앱의 최소 smoke test가 통과한다. `apps/truedash/lib/main.dart`는 `ProviderScope`만 만들고, `apps/truedash/lib/truedash_app.dart`의 `TrueDashApp`은 scope-free 상태로 분리한다.
+통과 기준: 두 프로젝트가 workspace에서 해석되고, package와 앱의 최소 smoke test가 통과한다. `apps/trueraid/lib/main.dart`는 `ProviderScope`만 만들고, `apps/trueraid/lib/trueraid_app.dart`의 `TrueRAIDApp`은 scope-free 상태로 분리한다.
 
 ### 2.2 Endpoint 검증과 정규화
 
@@ -114,22 +114,22 @@ GREEN에서 `NoopCredentialVault`와 `InMemoryCredentialVault`만 구현하고 U
 
 ### 2.5 Riverpod 3 controller와 연결 화면
 
-대상 파일은 `apps/truedash/lib/features/connection/connection_controller.dart`, `connection_state.dart`, `connection_screen.dart`, `apps/truedash/lib/truedash_app.dart`, `apps/truedash/lib/main.dart`와 widget tests다. provider는 connector/repository factory/vault를 override 가능하게 선언한다.
+대상 파일은 `apps/trueraid/lib/features/connection/connection_controller.dart`, `connection_state.dart`, `connection_screen.dart`, `apps/trueraid/lib/trueraid_app.dart`, `apps/trueraid/lib/main.dart`와 widget tests다. provider는 connector/repository factory/vault를 override 가능하게 선언한다.
 
 RED 테스트 순서는 다음과 같다.
 
-1. 앱 root 바깥 test-owned `ProviderScope(overrides: ...)`가 fake repository를 주입하고, `TrueDashApp`이 추가 scope 없이 연결 화면을 보이는지 확인한다.
+1. 앱 root 바깥 test-owned `ProviderScope(overrides: ...)`가 fake repository를 주입하고, `TrueRAIDApp`이 추가 scope 없이 연결 화면을 보이는지 확인한다.
 2. URL·masked API key 입력과 Connect 버튼, connecting progress, 중복 제출 방지를 확인한다.
 3. 성공 시 원래 host 입력, normalized endpoint, identity/version/method count가 표시되는지 확인한다.
 4. validation, TLS, RPC, transport, protocol, OTP/AUTH_ERR/EXPIRED/REDIRECT 오류가 API key를 노출하지 않는지 확인한다.
 
 ```sh
-(cd apps/truedash && fvm flutter test test/features/connection)
+(cd apps/trueraid && fvm flutter test test/features/connection)
 ```
 
 예상 실패: scope-free 앱, controller state, 주입 경계, 입력/결과 UI가 아직 없다.
 
-GREEN에서 controller는 injected repository만 호출한다. `main.dart`는 `ProviderScope(child: TrueDashApp())`를 제공하고, widget test는 `ProviderScope`를 직접 만든다. 통과 기준은 live network 없이 사용자가 한 연결 흐름의 상태 변화를 볼 수 있고, API key 필드는 기본 mask이며 상태/오류에 sentinel key가 나타나지 않는 것이다.
+GREEN에서 controller는 injected repository만 호출한다. `main.dart`는 `ProviderScope(child: TrueRAIDApp())`를 제공하고, widget test는 `ProviderScope`를 직접 만든다. 통과 기준은 live network 없이 사용자가 한 연결 흐름의 상태 변화를 볼 수 있고, API key 필드는 기본 mask이며 상태/오류에 sentinel key가 나타나지 않는 것이다.
 
 ### 2.6 Quality, build, 문서 증거
 
@@ -137,12 +137,12 @@ GREEN에서 controller는 injected repository만 호출한다. `main.dart`는 `P
 
 ```sh
 fvm dart format --set-exit-if-changed .
-(cd apps/truedash && fvm flutter analyze)
-(cd apps/truedash && fvm flutter test)
+(cd apps/trueraid && fvm flutter analyze)
+(cd apps/trueraid && fvm flutter test)
 (cd packages/truenas_api && fvm dart test)
-(cd apps/truedash && fvm flutter build web --release)
-(cd apps/truedash && fvm flutter build macos --debug)
-(cd apps/truedash && fvm flutter build macos --release)
+(cd apps/trueraid && fvm flutter build web --release)
+(cd apps/trueraid && fvm flutter build macos --debug)
+(cd apps/trueraid && fvm flutter build macos --release)
 ```
 
 macOS desktop build가 로컬 Flutter 설치에 의해 지원되지 않으면, 해당 명령의 정확한 실패 출력과 환경 제약을 구현 증거에 기록하고 다른 검증을 성공으로 오인하지 않는다. 웹은 제품 기획안에서 v1 릴리스 게이트가 아니지만, 이 M0 UI의 build·반응형 렌더 검증 대상이다.
@@ -150,7 +150,7 @@ macOS desktop build가 로컬 Flutter 설치에 의해 지원되지 않으면, �
 마지막으로 release가 아닌 테스트용 served web 앱을 실행해 browser inspection을 한다.
 
 ```sh
-(cd apps/truedash && fvm flutter run -d chrome --web-port 7357)
+(cd apps/trueraid && fvm flutter run -d chrome --web-port 7357)
 ```
 
 검사 기준:

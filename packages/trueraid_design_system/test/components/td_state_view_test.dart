@@ -1,0 +1,25 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:trueraid_design_system/trueraid_design_system.dart';
+
+void main() {
+  testWidgets('state view supports compact accessible error content', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: TrueRAIDTheme.dark(),
+        home: const Scaffold(
+          body: TdStateView(
+            kind: TdStateKind.error,
+            title: 'Connection failed',
+            description: 'Try again',
+            compact: true,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Connection failed'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+  });
+}

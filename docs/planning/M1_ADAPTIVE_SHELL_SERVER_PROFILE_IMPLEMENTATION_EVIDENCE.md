@@ -46,11 +46,11 @@ fvm flutter test \
 
 | 대상 | 명령 | 실제 결과 |
 | --- | --- | --- |
-| 앱 format | `cd apps/truedash && fvm dart format --output=none --set-exit-if-changed lib test` | exit 0, 22 files unchanged |
-| 앱 analyze | `cd apps/truedash && fvm flutter analyze` | exit 0, no issues |
-| 앱 전체 | `cd apps/truedash && fvm flutter test --reporter compact` | exit 0, **55 tests passed** |
-| 디자인 시스템 analyze | `cd packages/truedash_design_system && fvm flutter analyze` | exit 0, no issues |
-| 디자인 시스템 전체 | `cd packages/truedash_design_system && fvm flutter test --reporter compact` | exit 0, **27 tests passed** |
+| 앱 format | `cd apps/trueraid && fvm dart format --output=none --set-exit-if-changed lib test` | exit 0, 22 files unchanged |
+| 앱 analyze | `cd apps/trueraid && fvm flutter analyze` | exit 0, no issues |
+| 앱 전체 | `cd apps/trueraid && fvm flutter test --reporter compact` | exit 0, **55 tests passed** |
+| 디자인 시스템 analyze | `cd packages/trueraid_design_system && fvm flutter analyze` | exit 0, no issues |
+| 디자인 시스템 전체 | `cd packages/trueraid_design_system && fvm flutter test --reporter compact` | exit 0, **27 tests passed** |
 | API analyze | `cd packages/truenas_api && fvm dart analyze` | exit 0; 기존 info diagnostics 4건, error/warning 0 |
 | API 전체 | `cd packages/truenas_api && fvm dart test --reporter compact` | exit 0, **45 tests passed** |
 | 외부 consumer | `cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test --reporter compact` | exit 0, no issues, **1 test passed** |
@@ -60,12 +60,12 @@ Breakpoint widget tests는 599/600/999/1000을 포함합니다. connection tests
 
 ## Hosted exact-head CI
 
-GitLab pipeline [`528`](https://git.sanhouse.kr/sjungwon03/truedash/-/pipelines/528)은 기능·CI 커밋 `8d0536f3c4d6aab14179c31e09a15661aeaec7e0`에서 **success**였습니다.
+GitLab pipeline [`528`](https://git.sanhouse.kr/sjungwon03/trueraid/-/pipelines/528)은 기능·CI 커밋 `8d0536f3c4d6aab14179c31e09a15661aeaec7e0`에서 **success**였습니다.
 
 | job | runner | 실제 결과 |
 | --- | --- | --- |
-| [`portable_quality_and_web` #1690](https://git.sanhouse.kr/sjungwon03/truedash/-/jobs/1690) | protected `shared-build` Linux amd64 | format, API/design-system/consumer/app analyze와 전체 tests, Web release build 성공 |
-| [`macos_release` #1691](https://git.sanhouse.kr/sjungwon03/truedash/-/jobs/1691) | protected `shared-macos` arm64 | macOS release build, strict codesign, `network.client=true` 검증 성공 |
+| [`portable_quality_and_web` #1690](https://git.sanhouse.kr/sjungwon03/trueraid/-/jobs/1690) | protected `shared-build` Linux amd64 | format, API/design-system/consumer/app analyze와 전체 tests, Web release build 성공 |
+| [`macos_release` #1691](https://git.sanhouse.kr/sjungwon03/trueraid/-/jobs/1691) | protected `shared-macos` arm64 | macOS release build, strict codesign, `network.client=true` 검증 성공 |
 
 CI는 `.fvmrc`의 Flutter `3.47.0`을 사용합니다. Linux shell runner는 exact Flutter tag를 job workspace에 준비하고, macOS runner는 FVM의 pinned SDK를 사용합니다. source branch도 force-push 금지·Maintainer 전용 protected branch로 설정했습니다.
 
@@ -73,10 +73,10 @@ CI는 `.fvmrc`의 Flutter `3.47.0`을 사용합니다. Linux shell runner는 exa
 
 | 명령 | 실제 결과 |
 | --- | --- |
-| `cd apps/truedash && fvm flutter build web --release` | exit 0 — `✓ Built build/web` |
-| `cd apps/truedash && fvm flutter build macos --release` | exit 0 — `✓ Built .../truedash.app (49.7MB)` |
-| `codesign --verify --deep --strict --verbose=2 .../truedash.app` | exit 0 — valid on disk, satisfies Designated Requirement |
-| `codesign -d --entitlements :- .../truedash.app` | `com.apple.security.app-sandbox=true`, `com.apple.security.network.client=true` |
+| `cd apps/trueraid && fvm flutter build web --release` | exit 0 — `✓ Built build/web` |
+| `cd apps/trueraid && fvm flutter build macos --release` | exit 0 — `✓ Built .../trueraid.app (49.7MB)` |
+| `codesign --verify --deep --strict --verbose=2 .../trueraid.app` | exit 0 — valid on disk, satisfies Designated Requirement |
+| `codesign -d --entitlements :- .../trueraid.app` | `com.apple.security.app-sandbox=true`, `com.apple.security.network.client=true` |
 | `macos/Runner/Release.entitlements` 직접 확인 | app sandbox와 network client만 선언 |
 
 로컬 산출물은 ad-hoc signature(`TeamIdentifier=not set`)이며 배포용 Developer ID/App Store 서명 또는 notarization 증거가 아닙니다.
@@ -103,6 +103,6 @@ CI는 `.fvmrc`의 Flutter `3.47.0`을 사용합니다. Linux shell runner는 exa
 
 ## 범위·보안 점검
 
-- remediation 변경은 `apps/truedash`의 shell/profile 구현과 테스트, root GitLab CI와 runner bootstrap shim, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
+- remediation 변경은 `apps/trueraid`의 shell/profile 구현과 테스트, root GitLab CI와 runner bootstrap shim, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
 - M1 profile/shell 파일은 persistence, discovery, secure storage, TLS trust mutation, credential persistence, reconnect coordinator, capability registry, operational data, ads/billing을 구현하지 않습니다.
 - 이 구현은 credential-backed live switching, real TrueNAS interoperability, Developer ID/notarized distribution, Android/iOS build, 또는 TD-002 완료의 증거가 아닙니다.

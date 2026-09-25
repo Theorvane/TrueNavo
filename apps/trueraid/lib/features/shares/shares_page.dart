@@ -1,0 +1,452 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:trueraid_design_system/trueraid_design_system.dart';
+
+import '../dashboard/dashboard_controller.dart';
+import '../management/management_page.dart';
+import '../nfs_shares/nfs_shares_controller.dart';
+import '../nfs_shares/nfs_shares_page.dart';
+import '../smb_shares/smb_shares_controller.dart';
+import '../smb_shares/smb_shares_page.dart';
+import 'shares_overview.dart';
+
+class SharesPage extends ConsumerStatefulWidget {
+  const SharesPage({super.key});
+  @override
+  ConsumerState<SharesPage> createState() => _SharesPageState();
+}
+
+class _SharesPageState extends ConsumerState<SharesPage> {
+  final _filter = TextEditingController();
+  ShareProtocol? _protocol;
+  bool _attention = false;
+  @override
+  void dispose() {
+    _filter.dispose();
+    super.dispose();
+  }
+
+  void _open(ShareProtocol protocol) {
+    // Overview reads replace SDK-issued inventory leases. A previously visited
+    // workspace must obtain a fresh lease rather than reuse its provider cache.
+    if (protocol == ShareProtocol.smb) {
+      ref.invalidate(smbSharesInventoryProvider);
+    } else {
+      ref.invalidate(nfsSharesInventoryProvider);
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => protocol == ShareProtocol.smb
+            ? const SmbSharesPage()
+            : const NfsSharesPage(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(dashboardActiveSessionProvider, (before, after) {
+      if (!identical(before, after)) {
+        _filter.clear();
+        _protocol = null;
+        _attention = false;
+      }
+    });
+    final overview = ref.watch(sharesOverviewProvider);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('File sharing'),
+        actions: [
+          IconButton(
+            key: const Key('shares-overview-refresh'),
+            tooltip: 'Refresh local inventories',
+            onPressed: overview.isLoading
+                ? null
+                : () => ref.invalidate(sharesOverviewProvider),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: overview.when(
+        skipLoadingOnRefresh: false,
+        skipLoadingOnReload: false,
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (_, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'File-sharing information is unavailable. Connect to the selected server or finish the pending operation, then refresh. No automatic retry.',
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () => ref.invalidate(sharesOverviewProvider),
+                  child: const Text('Refresh'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        data: _content,
+      ),
+    );
+  }
+
+  Widget _content(SharesOverview value) {
+    final sources = value.protocols;
+    final visible = value.shares
+        .where(
+          (s) =>
+              (_protocol == null || s.protocol == _protocol) &&
+              s.matches(_filter.text) &&
+              (!_attention ||
+                  sources
+                      .firstWhere((p) => p.protocol == s.protocol)
+                      .needsAttention(s)),
+        )
+        .toList();
+    return SingleChildScrollView(
+      key: const Key('shares-overview-scroll'),
+      padding: const EdgeInsets.all(16),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('SHARES & SERVICES', style: TdTypography.micro),
+              const SizedBox(height: 8),
+              const Text(
+                'File sharing at a glance',
+                style: TdTypography.titleLarge,
+              ),
+              const SizedBox(height: 12),
+              Text(value.endpoint),
+              Text(
+                'Read ${value.loadedSources} of 2 protocol inventories · ${value.observedAt.toIso8601String()} (client UTC)',
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Configuration and last-read service state only. Enabled does not prove client access, network reachability or valid permissions. Reads are sequential, not an atomic server snapshot.',
+              ),
+              const SizedBox(height: 20),
+              _ShareEnablement(value),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) => Wrap(
+                  spacing: 16,
+                  runSpacing: 16,
+                  children: [
+                    for (final source in sources)
+                      SizedBox(
+                        width: constraints.maxWidth >= 800
+                            ? (constraints.maxWidth - 16) / 2
+                            : constraints.maxWidth,
+                        child: _ProtocolCard(
+                          source: source,
+                          open: () => _open(source.protocol),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                key: const Key('shares-service-controls'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ManagementPage(),
+                  ),
+                ),
+                icon: const Icon(Icons.settings_outlined),
+                label: const Text('Open reviewed service controls'),
+              ),
+              const SizedBox(height: 24),
+              TdPanel(
+                title: 'Share explorer',
+                description: 'Search applies to the list below; charts always describe all loaded shares.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      key: const Key('shares-overview-filter'),
+                      controller: _filter,
+                      decoration: const InputDecoration(
+                        labelText: 'Find name, path or dataset',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('All'),
+                          selected: _protocol == null,
+                          onSelected: (_) => setState(() => _protocol = null),
+                        ),
+                        for (final p in ShareProtocol.values)
+                          ChoiceChip(
+                            label: Text(p.label),
+                            selected: _protocol == p,
+                            onSelected: (_) => setState(() => _protocol = p),
+                          ),
+                      ],
+                    ),
+                    Material(
+                      type: MaterialType.transparency,
+                      child: CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Service, lock or editing restrictions only',
+                        ),
+                        value: _attention,
+                        onChanged: (v) =>
+                            setState(() => _attention = v == true),
+                      ),
+                    ),
+                    Text('${visible.length} matching shares'),
+                    if (visible.isEmpty)
+                      const Text(
+                        'No matches among successfully read inventories.',
+                      ),
+                    for (final entry in visible)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Text(
+                                  entry.name,
+                                  style: TdTypography.titleSmall,
+                                ),
+                                Text(
+                                  '${entry.protocol.label} #${entry.id} · ${entry.enabled ? 'Enabled' : 'Disabled'} · ${entry.readOnly ? 'Read-only' : 'Read-write'}',
+                                ),
+                                Text(entry.path),
+                                Text(
+                                  'Exact dataset-root match: ${entry.dataset ?? 'not established'}',
+                                ),
+                                if (entry.protocol == ShareProtocol.smb)
+                                  Text(
+                                    'Reported SMB lock: ${switch (entry.locked) {
+                                      true => 'locked',
+                                      false => 'not locked',
+                                      null => 'unknown',
+                                    }}',
+                                  ),
+                                if (entry.restriction != null)
+                                  Text(
+                                    'Native editing restriction: ${entry.restriction}',
+                                  ),
+                                TextButton(
+                                  key: Key('shares-inspect-${entry.identity}'),
+                                  onPressed: () => _open(entry.protocol),
+                                  child: const Text('Inspect in workspace'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              TdPanel(
+                title: 'Exact shared paths',
+                description: 'All loaded shares, including disabled entries. Equal path strings are not proof of filesystem identity; aliases, descendants and block-storage consumers are not resolved.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (value.paths.isEmpty)
+                      const Text(
+                        'No paths from successfully read inventories.',
+                      ),
+                    for (final group in value.paths.entries)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(group.key, style: TdTypography.label),
+                            Text(
+                              '${group.value.length} share records · ${group.value.map((s) => s.protocol.label).toSet().join(' + ')}',
+                            ),
+                            Text(
+                              '${group.value.where((s) => s.enabled).length} enabled · ${group.value.where((s) => s.readOnly).length} configured read-only',
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'iSCSI, NVMe, Fibre Channel and WebShare are not included yet. This screen never starts services, changes shares or probes clients. Refresh manually after making changes elsewhere.',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProtocolCard extends StatelessWidget {
+  const _ProtocolCard({required this.source, required this.open});
+  final ShareProtocolOverview source;
+  final VoidCallback open;
+  @override
+  Widget build(BuildContext context) => TdPanel(
+    title: '${source.protocol.label} service',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!source.loaded)
+          Text(source.unavailable!)
+        else ...[
+          Text(
+            'Reported state: ${source.serviceState}',
+            style: TdTypography.titleSmall,
+          ),
+          Text(
+            'Start automatically: ${source.autostart == true ? 'On' : 'Off'}',
+          ),
+          const SizedBox(height: 8),
+          Text('${source.shares.length} shares · ${source.enabled} enabled'),
+          if (source.enabled > 0 && source.serviceState != 'RUNNING')
+            const Text(
+              'Enabled shares exist, but this service was not reported running. Inspect its service settings.',
+            ),
+          if (source.restriction != null)
+            Text('Native configuration restriction: ${source.restriction}'),
+          const SizedBox(height: 12),
+          Semantics(
+            label:
+                '${source.protocol.label}: ${source.readOnly} configured read-only; ${source.shares.length - source.readOnly} configured read-write',
+            child: LinearProgressIndicator(
+              minHeight: 12,
+              value: source.shares.isEmpty
+                  ? 0
+                  : source.readOnly / source.shares.length,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Read-only ${source.readOnly} / Read-write ${source.shares.length - source.readOnly} · includes disabled shares',
+          ),
+        ],
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          key: Key('shares-open-${source.protocol.name}'),
+          onPressed: open,
+          icon: const Icon(Icons.open_in_new),
+          label: Text('Open ${source.protocol.label} workspace'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ShareEnablement extends StatelessWidget {
+  const _ShareEnablement(this.value);
+  final SharesOverview value;
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return TdPanel(
+      title: 'Configured share enablement',
+      description: 'Only successfully read SMB and NFS inventories contribute to these counts.',
+      child: Wrap(
+        spacing: 24,
+        runSpacing: 16,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Semantics(
+            label:
+                '${value.shares.length} loaded shares: ${value.enabled} enabled, ${value.disabled} disabled. Not client access.',
+            child: ExcludeSemantics(
+              child: SizedBox(
+                width: 140,
+                height: 140,
+                child: CustomPaint(
+                  key: const Key('shares-enablement-chart'),
+                  painter: _ShareRing(
+                    value.enabled,
+                    value.shares.length,
+                    colors.primary,
+                    colors.tertiary,
+                    colors.outlineVariant,
+                  ),
+                  child: Center(
+                    child: Text(
+                      '${value.shares.length}',
+                      style: TdTypography.metricMedium,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '● Enabled · ${value.enabled}',
+                style: TextStyle(color: colors.primary),
+              ),
+              Text(
+                '● Disabled · ${value.disabled}',
+                style: TextStyle(color: colors.tertiary),
+              ),
+              Text('${value.paths.length} distinct configured paths'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShareRing extends CustomPainter {
+  _ShareRing(this.enabled, this.total, this.active, this.disabled, this.empty);
+  final int enabled, total;
+  final Color active, disabled, empty;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 15;
+    final rect = (Offset.zero & size).deflate(10);
+    canvas.drawOval(rect, paint..color = total == 0 ? empty : disabled);
+    if (total > 0) {
+      canvas.drawArc(
+        rect,
+        -math.pi / 2,
+        enabled / total * math.pi * 2,
+        false,
+        paint..color = active,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShareRing old) =>
+      old.enabled != enabled ||
+      old.total != total ||
+      old.active != active ||
+      old.disabled != disabled ||
+      old.empty != empty;
+}

@@ -1,9 +1,9 @@
-name: truedash_workspace
+name: trueraid_workspace
 publish_to: none
 environment:
   sdk: ^3.13.0
 workspace:
-  - apps/truedash
+  - apps/trueraid
   - examples/design_system_consumer
   - packages/truenas_api
-  - packages/truedash_design_system
+  - packages/trueraid_design_system
