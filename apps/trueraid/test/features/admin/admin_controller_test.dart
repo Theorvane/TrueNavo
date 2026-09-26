@@ -36,6 +36,7 @@ void main() {
     'disk.query',
     'disk.update',
     'iscsi.portal.update',
+    'iscsi.portal.delete',
     'iscsi.portal.listen_ip_choices',
     'iscsi.extent.get_instance',
     'iscsi.extent.update',
@@ -94,7 +95,7 @@ void main() {
       final harness = _Harness(_AdminManager());
       addTearDown(harness.dispose);
       harness.switchSession(_session(harness.manager));
-      await harness.execute('iscsi.portal.delete');
+      await harness.execute('iscsi.targetextent.delete');
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('connection changed'));
@@ -107,7 +108,7 @@ void main() {
       final harness = _Harness(_AdminManager());
       addTearDown(harness.dispose);
       harness.switchSession(null);
-      await harness.execute('iscsi.portal.delete');
+      await harness.execute('iscsi.targetextent.delete');
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
     },
@@ -120,7 +121,7 @@ void main() {
       addTearDown(harness.dispose);
       await harness.execute(
         'pool.query',
-        operation: _operation('iscsi.portal.delete'),
+        operation: _operation('iscsi.targetextent.delete'),
       );
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
@@ -145,14 +146,14 @@ void main() {
       final harness = _Harness(_AdminManager());
       addTearDown(harness.dispose);
       const forged = AdminOperationDefinition(
-        id: 'iscsi.portal.delete',
+        id: 'iscsi.targetextent.delete',
         domain: AdminDomain.shares,
         title: 'Read portal',
-        method: 'iscsi.portal.delete',
+        method: 'iscsi.targetextent.delete',
         risk: AdminRisk.read,
         description: 'This is not the compiled policy.',
       );
-      await harness.execute('iscsi.portal.delete', operation: forged);
+      await harness.execute('iscsi.targetextent.delete', operation: forged);
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('Nothing was sent'));
@@ -163,9 +164,9 @@ void main() {
     final completion = Completer<AdminResult>();
     final harness = _Harness(_AdminManager(onInvoke: (_) => completion.future));
     addTearDown(harness.dispose);
-    final first = harness.execute('iscsi.portal.delete');
+    final first = harness.execute('iscsi.targetextent.delete');
     expect(harness.state.busy, isTrue);
-    await harness.execute('iscsi.portal.delete');
+    await harness.execute('iscsi.targetextent.delete');
     expect(harness.manager.requests, hasLength(1));
     completion.complete(
       AdminCompleted(harness.manager.requests.single, value: null),
@@ -182,7 +183,7 @@ void main() {
         _AdminManager(onInvoke: (_) => completion.future),
       );
       addTearDown(harness.dispose);
-      final first = harness.execute('iscsi.portal.delete');
+      final first = harness.execute('iscsi.targetextent.delete');
       await harness.quickExecute();
       expect(harness.manager.quickCommands, isEmpty);
       expect(harness.quickState.phase, ManagementPhase.failed);
@@ -205,13 +206,13 @@ void main() {
       );
       addTearDown(harness.dispose);
       final quick = harness.quickExecute();
-      await harness.execute('iscsi.portal.delete');
+      await harness.execute('iscsi.targetextent.delete');
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('Another server operation'));
       completion.complete(const ManagementCompleted(_quickCommand));
       await quick;
-      await harness.execute('iscsi.portal.delete');
+      await harness.execute('iscsi.targetextent.delete');
       expect(harness.manager.requests, hasLength(1));
       expect(harness.state.phase, AdminPhase.completed);
     },
@@ -393,7 +394,7 @@ void main() {
         ),
       );
       addTearDown(harness.dispose);
-      await harness.execute('iscsi.portal.delete');
+      await harness.execute('iscsi.targetextent.delete');
       expect(harness.state.phase, AdminPhase.unknown);
       expect(harness.state.message, isNot(contains('TEST-SECRET')));
       expect(harness.state.message, isNot(contains('payload')));
@@ -415,7 +416,7 @@ void main() {
         ),
       );
       addTearDown(harness.dispose);
-      await harness.execute('iscsi.portal.delete');
+      await harness.execute('iscsi.targetextent.delete');
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('25.10'));
       expect(harness.manager.requests, hasLength(1));
@@ -431,7 +432,7 @@ void main() {
       ),
     );
     addTearDown(harness.dispose);
-    await harness.execute('iscsi.portal.delete');
+    await harness.execute('iscsi.targetextent.delete');
     expect(harness.state.phase, AdminPhase.failed);
     expect(harness.state.message, contains('permission'));
     expect(harness.manager.requests, hasLength(1));
@@ -483,7 +484,7 @@ class _Harness {
             method: spec,
             arguments: spec.parameters.isEmpty
                 ? const []
-                : method == 'iscsi.portal.delete'
+                : method == 'iscsi.targetextent.delete'
                 ? const [7]
                 : const ['fixture-target'],
           ),
@@ -542,13 +543,14 @@ class _AdminManager
       'pool.query': _method(),
       // Synthetic generic lifecycle fixture. Alerts and cron now require
       // native gateways; these tests verify controller locking, not iSCSI RPC.
-      'iscsi.portal.delete': {
+      'iscsi.targetextent.delete': {
         ..._method(),
         'accepts': [
           {'_name_': 'id', '_required_': true, 'type': 'integer'},
         ],
       },
       'iscsi.portal.update': _method(),
+      'iscsi.portal.delete': _method(),
       'iscsi.portal.listen_ip_choices': _method(),
       'iscsi.extent.get_instance': _method(),
       'iscsi.extent.update': _method(),

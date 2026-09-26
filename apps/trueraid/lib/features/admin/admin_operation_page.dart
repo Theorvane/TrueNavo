@@ -46,6 +46,7 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'iscsi.global.update' ||
       'iscsi.portal.listen_ip_choices' ||
       'iscsi.portal.update' ||
+      'iscsi.portal.delete' ||
       'iscsi.extent.get_instance' ||
       'iscsi.extent.update' ||
       'iscsi.target.validate_name' ||

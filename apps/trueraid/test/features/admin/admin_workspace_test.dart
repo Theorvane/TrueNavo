@@ -348,6 +348,7 @@ void main() {
     ('iscsi.initiator.update', IscsiPage),
     ('iscsi.initiator.create', IscsiPage),
     ('iscsi.initiator.delete', IscsiPage),
+    ('iscsi.portal.delete', IscsiPage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -649,7 +650,7 @@ void main() {
   testWidgets(
     'delete requires exact untrimmed target and impact acknowledgement',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('iscsi.portal.delete'));
+      final (_, api) = await _pump(tester, _page('iscsi.targetextent.delete'));
       await tester.enterText(_key('admin-value-id'), '42');
       await _tap(tester, 'admin-review-submit');
       await tester.enterText(_key('admin-confirm-target'), '42');
@@ -948,6 +949,9 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
         },
       ]),
       'iscsi.portal.delete': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
+      ]),
+      'iscsi.targetextent.delete': _metadata([
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
       ]),
       'system.reboot': _metadata([]),

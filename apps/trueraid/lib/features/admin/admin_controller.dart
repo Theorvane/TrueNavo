@@ -78,6 +78,7 @@ class AdminController extends Notifier<AdminOperationState> {
         operation.method == 'iscsi.global.update' ||
         operation.method == 'iscsi.portal.listen_ip_choices' ||
         operation.method == 'iscsi.portal.update' ||
+        operation.method == 'iscsi.portal.delete' ||
         operation.method == 'iscsi.extent.get_instance' ||
         operation.method == 'iscsi.extent.update' ||
         operation.method == 'iscsi.target.validate_name' ||

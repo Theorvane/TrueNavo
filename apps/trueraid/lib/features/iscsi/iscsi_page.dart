@@ -17,6 +17,7 @@ import 'iscsi_initiator_delete_editor.dart';
 import 'iscsi_initiator_iqn_editor.dart';
 import 'iscsi_mapping_chart.dart';
 import 'iscsi_portal_comment_editor.dart';
+import 'iscsi_portal_delete_editor.dart';
 import 'iscsi_sessions_panel.dart';
 import 'iscsi_target_name_check.dart';
 import 'iscsi_target_create_editor.dart';
@@ -251,6 +252,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         const IscsiThresholdEditor(),
         const SizedBox(height: 16),
         IscsiPortalCommentEditor(overview: value),
+        const SizedBox(height: 16),
+        IscsiPortalDeleteEditor(overview: value),
         const SizedBox(height: 16),
         IscsiInitiatorCommentEditor(overview: value),
         const SizedBox(height: 16),
