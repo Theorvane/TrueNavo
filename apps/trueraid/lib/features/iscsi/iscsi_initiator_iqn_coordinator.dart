@@ -68,6 +68,23 @@ final class IscsiInitiatorIqnAddReview {
   String get confirmation => 'ADD ISCSI INITIATOR #$id $proposed';
 }
 
+final class IscsiInitiatorIqnRemoveReview {
+  IscsiInitiatorIqnRemoveReview._(
+    this.endpoint,
+    this.id,
+    this.before,
+    this.removed,
+    this.comment,
+    this.proof,
+    this.issuedAt,
+  );
+  final String endpoint, removed, comment, proof;
+  final int id;
+  final List<String> before;
+  final DateTime issuedAt;
+  String get confirmation => 'REMOVE ISCSI INITIATOR #$id $removed';
+}
+
 final class _Snapshot {
   const _Snapshot(this.groups, this.targets, this.service);
   final List<Object> groups, targets;
@@ -103,6 +120,7 @@ final class IscsiInitiatorIqnCoordinator {
   final DateTime Function() _now;
   final _issued = <IscsiInitiatorIqnReview>{};
   final _addIssued = <IscsiInitiatorIqnAddReview>{};
+  final _removeIssued = <IscsiInitiatorIqnRemoveReview>{};
   bool _busy = false;
 
   bool get locked => _busy || IscsiWriteFence.isUncertain(session);
@@ -301,6 +319,95 @@ final class IscsiInitiatorIqnCoordinator {
     return row;
   }
 
+  List<Object> _removeCandidate(_Snapshot snapshot, int id, String removed) {
+    final row = snapshot.group(id);
+    final names = row[1] as List<String>;
+    if (names.length < 2 ||
+        names.length > 10 ||
+        names.toSet().length != names.length ||
+        names.any((name) => !IscsiInitiatorCreateCoordinator.validIqn(name))) {
+      throw StateError(
+        'Only a group with two to ten distinct explicit lowercase IQNs is supported.',
+      );
+    }
+    if (snapshot.references(id)) {
+      throw StateError(
+        'Remove target references independently before removing an IQN.',
+      );
+    }
+    if (!names.contains(removed)) {
+      throw StateError('The selected IQN is not in this group.');
+    }
+    return row;
+  }
+
+  Future<IscsiInitiatorIqnRemoveReview> prepareRemove(
+    int id,
+    String removed,
+  ) async {
+    _guard();
+    if (!available ||
+        _busy ||
+        id < 1 ||
+        !IscsiInitiatorCreateCoordinator.validIqn(removed)) {
+      throw StateError('Choose a group and one explicit lowercase IQN.');
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    _addIssued.clear();
+    _removeIssued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final row = _removeCandidate(snapshot, id, removed);
+      final review = IscsiInitiatorIqnRemoveReview._(
+        session.endpoint!,
+        id,
+        List<String>.unmodifiable(row[1] as List<String>),
+        removed,
+        row[2] as String,
+        snapshot.proof,
+        _now().toUtc(),
+      );
+      _removeIssued.add(review);
+      return review;
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError('The initiator preflight failed. Nothing was sent.');
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  void cancelRemove(IscsiInitiatorIqnRemoveReview review) =>
+      _removeIssued.remove(review);
+
+  Future<IscsiInitiatorIqnResult> executeRemove(
+    IscsiInitiatorIqnRemoveReview review,
+    String confirmation,
+  ) => _executeListChange(
+    issued: _removeIssued.remove(review),
+    endpoint: review.endpoint,
+    id: review.id,
+    proof: review.proof,
+    comment: review.comment,
+    issuedAt: review.issuedAt,
+    requiredConfirmation: review.confirmation,
+    confirmation: confirmation,
+    expectedNames: [
+      for (final name in review.before)
+        if (name != review.removed) name,
+    ],
+    validate: (snapshot) =>
+        _removeCandidate(snapshot, review.id, review.removed),
+    successMessage: 'The IQN was removed; remaining IQNs and target associations matched a fresh inventory read.',
+  );
+
   Future<IscsiInitiatorIqnAddReview> prepareAdd(int id, String proposed) async {
     _guard();
     if (!available ||
@@ -316,13 +423,14 @@ final class IscsiInitiatorIqnCoordinator {
     _busy = true;
     _issued.clear();
     _addIssued.clear();
+    _removeIssued.clear();
     try {
       final snapshot = await _snapshot();
       final row = _addCandidate(snapshot, id, proposed);
       final review = IscsiInitiatorIqnAddReview._(
         session.endpoint!,
         id,
-        List<String>.from(row[1] as List<String>),
+        List<String>.unmodifiable(row[1] as List<String>),
         proposed,
         row[2] as String,
         snapshot.proof,
@@ -346,17 +454,42 @@ final class IscsiInitiatorIqnCoordinator {
   Future<IscsiInitiatorIqnResult> executeAdd(
     IscsiInitiatorIqnAddReview review,
     String confirmation,
-  ) async {
-    final issued = _addIssued.remove(review);
+  ) => _executeListChange(
+    issued: _addIssued.remove(review),
+    endpoint: review.endpoint,
+    id: review.id,
+    proof: review.proof,
+    comment: review.comment,
+    issuedAt: review.issuedAt,
+    requiredConfirmation: review.confirmation,
+    confirmation: confirmation,
+    expectedNames: [...review.before, review.proposed],
+    validate: (snapshot) => _addCandidate(snapshot, review.id, review.proposed),
+    successMessage: 'The new IQN and preserved existing list matched a fresh inventory read.',
+  );
+
+  Future<IscsiInitiatorIqnResult> _executeListChange({
+    required bool issued,
+    required String endpoint,
+    required int id,
+    required String proof,
+    required String comment,
+    required DateTime issuedAt,
+    required String requiredConfirmation,
+    required String confirmation,
+    required List<String> expectedNames,
+    required void Function(_Snapshot) validate,
+    required String successMessage,
+  }) async {
     final now = _now().toUtc();
     if (!issued ||
         _busy ||
         !isCurrent() ||
         IscsiWriteFence.isUncertain(session) ||
-        review.endpoint != session.endpoint ||
-        confirmation != review.confirmation ||
-        now.isBefore(review.issuedAt) ||
-        now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+        endpoint != session.endpoint ||
+        confirmation != requiredConfirmation ||
+        now.isBefore(issuedAt) ||
+        now.difference(issuedAt) >= const Duration(minutes: 5)) {
       return const IscsiInitiatorIqnResult(
         IscsiInitiatorIqnOutcome.rejected,
         'Review expired or confirmation did not match. Nothing was sent.',
@@ -373,20 +506,19 @@ final class IscsiInitiatorIqnCoordinator {
     var sent = false;
     try {
       final before = await _snapshot();
-      _addCandidate(before, review.id, review.proposed);
-      if (before.proof != review.proof) {
+      validate(before);
+      if (before.proof != proof) {
         return const IscsiInitiatorIqnResult(
           IscsiInitiatorIqnOutcome.rejected,
           'Initiator, target or service state changed since review. Nothing was sent.',
         );
       }
-      final expectedNames = <String>[...review.before, review.proposed];
       sent = true;
       final result = await api.invokeAdmin(
         AdminRequest(
           method: _method('iscsi.initiator.update'),
           arguments: [
-            review.id,
+            id,
             {'initiators': expectedNames},
           ],
         ),
@@ -400,16 +532,16 @@ final class IscsiInitiatorIqnCoordinator {
       if (result is! AdminCompleted) return _unknown();
       final response = result.value;
       if (response is! Map ||
-          response['id'] != review.id ||
+          response['id'] != id ||
           jsonEncode(response['initiators']) != jsonEncode(expectedNames) ||
-          response['comment'] != review.comment) {
+          response['comment'] != comment) {
         return _unknown();
       }
       final after = await _snapshot();
       final expected = <Object>[
         for (final item in before.groups)
-          if ((item as List)[0] == review.id)
-            <Object>[review.id, expectedNames, review.comment]
+          if ((item as List)[0] == id)
+            <Object>[id, expectedNames, comment]
           else
             item,
       ];
@@ -419,9 +551,9 @@ final class IscsiInitiatorIqnCoordinator {
           after.service.enabledOnBoot != before.service.enabledOnBoot) {
         return _unknown();
       }
-      return const IscsiInitiatorIqnResult(
+      return IscsiInitiatorIqnResult(
         IscsiInitiatorIqnOutcome.completed,
-        'The new IQN and preserved existing list matched a fresh inventory read.',
+        successMessage,
       );
     } on Object {
       return sent
@@ -451,6 +583,7 @@ final class IscsiInitiatorIqnCoordinator {
     _busy = true;
     _issued.clear();
     _addIssued.clear();
+    _removeIssued.clear();
     try {
       final snapshot = await _snapshot();
       final row = _candidate(snapshot, id, proposed);
@@ -579,6 +712,7 @@ final class IscsiInitiatorIqnCoordinator {
     IscsiWriteFence.markUncertain(session);
     _issued.clear();
     _addIssued.clear();
+    _removeIssued.clear();
     return const IscsiInitiatorIqnResult(
       IscsiInitiatorIqnOutcome.unknown,
       'The IQN update may have changed the server. Do not retry; inspect the server and reconnect.',

@@ -5,6 +5,7 @@ import 'package:trueraid/features/connection/connection_controller.dart';
 import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/iscsi/iscsi_initiator_iqn_coordinator.dart';
 import 'package:trueraid/features/iscsi/iscsi_initiator_iqn_editor.dart';
+import 'package:trueraid/features/iscsi/iscsi_initiator_iqn_remove_editor.dart';
 import 'package:trueraid/features/iscsi/iscsi_overview.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
@@ -146,6 +147,201 @@ class _Harness {
 }
 
 void main() {
+  testWidgets('remove editor requires review and exact confirmation', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.groups.single['initiators'] = [
+      'iqn.2026-01.example.com:old',
+      'iqn.2026-01.example.com:second',
+    ];
+    final overview = IscsiOverview.parse(
+      portals: [],
+      initiators: h.api.groups,
+      targets: h.api.targets,
+      extents: [],
+      mappings: [],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiInitiatorIqnRemoveEditor(overview: overview),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-initiator-iqn-remove-select')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#3 (2 IQNs)').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-initiator-iqn-remove-name')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('iqn.2026-01.example.com:old').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-initiator-iqn-remove-review')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.writes, 0);
+    await tester.enterText(
+      find.byKey(const Key('iscsi-initiator-iqn-remove-confirmation')),
+      'REMOVE ISCSI INITIATOR #3 iqn.2026-01.example.com:old',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-initiator-iqn-remove-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-initiator-iqn-remove-submit')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.writes, 1);
+  });
+
+  test('removes one IQN while preserving remaining list and comment', () async {
+    final h = _Harness();
+    h.api.groups.single['initiators'] = [
+      'iqn.2026-01.example.com:old',
+      'iqn.2026-01.example.com:second',
+      'iqn.2026-01.example.com:third',
+    ];
+    final review = await h.coordinator.prepareRemove(
+      3,
+      'iqn.2026-01.example.com:second',
+    );
+    expect(() => review.before.add(_Harness.next), throwsUnsupportedError);
+    expect(h.writes, 0);
+    final result = await h.coordinator.executeRemove(
+      review,
+      review.confirmation,
+    );
+    expect(result.outcome, IscsiInitiatorIqnOutcome.completed);
+    expect(
+      h.api.calls
+          .singleWhere((call) => call.method.name == 'iscsi.initiator.update')
+          .arguments,
+      [
+        3,
+        {
+          'initiators': [
+            'iqn.2026-01.example.com:old',
+            'iqn.2026-01.example.com:third',
+          ],
+        },
+      ],
+    );
+    expect(h.api.groups.single['comment'], 'host');
+    expect(
+      (await h.coordinator.executeRemove(review, review.confirmation)).outcome,
+      IscsiInitiatorIqnOutcome.rejected,
+    );
+  });
+
+  test(
+    'remove rejects last IQN, wildcard, reference, drift and expiry',
+    () async {
+      final h = _Harness();
+      await expectLater(
+        h.coordinator.prepareRemove(3, 'iqn.2026-01.example.com:old'),
+        throwsStateError,
+      );
+      h.api.groups.single['initiators'] = [
+        'ALL',
+        'iqn.2026-01.example.com:old',
+      ];
+      await expectLater(
+        h.coordinator.prepareRemove(3, 'iqn.2026-01.example.com:old'),
+        throwsStateError,
+      );
+      h.api.groups.single['initiators'] = [
+        'iqn.2026-01.example.com:old',
+        'iqn.2026-01.example.com:second',
+      ];
+      h.api.targets.single['groups'] = [
+        {'portal': 1, 'initiator': 3, 'authmethod': 'NONE', 'auth': null},
+      ];
+      await expectLater(
+        h.coordinator.prepareRemove(3, 'iqn.2026-01.example.com:old'),
+        throwsStateError,
+      );
+      h.api.targets.single['groups'] = <Object?>[];
+      h.api.state = 'RUNNING';
+      await expectLater(
+        h.coordinator.prepareRemove(3, 'iqn.2026-01.example.com:old'),
+        throwsStateError,
+      );
+      h.api.state = 'STOPPED';
+      h.api.sessions = true;
+      await expectLater(
+        h.coordinator.prepareRemove(3, 'iqn.2026-01.example.com:old'),
+        throwsStateError,
+      );
+      h.api.sessions = false;
+      var review = await h.coordinator.prepareRemove(
+        3,
+        'iqn.2026-01.example.com:old',
+      );
+      expect(
+        (await h.coordinator.executeRemove(review, 'wrong')).outcome,
+        IscsiInitiatorIqnOutcome.rejected,
+      );
+      review = await h.coordinator.prepareRemove(
+        3,
+        'iqn.2026-01.example.com:old',
+      );
+      h.api.groups.single['comment'] = 'changed';
+      expect(
+        (await h.coordinator.executeRemove(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiInitiatorIqnOutcome.rejected,
+      );
+      h.api.groups.single['comment'] = 'host';
+      review = await h.coordinator.prepareRemove(
+        3,
+        'iqn.2026-01.example.com:old',
+      );
+      h.clock = h.clock.add(const Duration(minutes: 5));
+      expect(
+        (await h.coordinator.executeRemove(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiInitiatorIqnOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    },
+  );
+
+  test('remove unknown outcome fences the session', () async {
+    final h = _Harness();
+    h.api.groups.single['initiators'] = [
+      'iqn.2026-01.example.com:old',
+      'iqn.2026-01.example.com:second',
+    ];
+    final review = await h.coordinator.prepareRemove(
+      3,
+      'iqn.2026-01.example.com:old',
+    );
+    h.api.unknown = true;
+    expect(
+      (await h.coordinator.executeRemove(review, review.confirmation)).outcome,
+      IscsiInitiatorIqnOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
   test('adds one IQN while preserving existing list and comment', () async {
     final h = _Harness();
     h.api.groups.single['initiators'] = [
