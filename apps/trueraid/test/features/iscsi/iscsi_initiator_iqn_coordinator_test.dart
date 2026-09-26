@@ -146,6 +146,149 @@ class _Harness {
 }
 
 void main() {
+  test('adds one IQN while preserving existing list and comment', () async {
+    final h = _Harness();
+    h.api.groups.single['initiators'] = [
+      'iqn.2026-01.example.com:old',
+      'iqn.2026-01.example.com:second',
+    ];
+    final review = await h.coordinator.prepareAdd(3, _Harness.next);
+    expect(h.writes, 0);
+    expect(review.before, hasLength(2));
+    final result = await h.coordinator.executeAdd(review, review.confirmation);
+    expect(result.outcome, IscsiInitiatorIqnOutcome.completed);
+    expect(h.writes, 1);
+    expect(
+      h.api.calls
+          .singleWhere((call) => call.method.name == 'iscsi.initiator.update')
+          .arguments,
+      [
+        3,
+        {
+          'initiators': [
+            'iqn.2026-01.example.com:old',
+            'iqn.2026-01.example.com:second',
+            _Harness.next,
+          ],
+        },
+      ],
+    );
+    expect(h.api.groups.single['comment'], 'host');
+    expect(
+      (await h.coordinator.executeAdd(review, review.confirmation)).outcome,
+      IscsiInitiatorIqnOutcome.rejected,
+    );
+  });
+
+  test(
+    'add blocks references, service, sessions, duplicate and malformed lists',
+    () async {
+      final h = _Harness();
+      h.api.targets.single['groups'] = [
+        {'portal': 1, 'initiator': 3, 'authmethod': 'NONE', 'auth': null},
+      ];
+      await expectLater(
+        h.coordinator.prepareAdd(3, _Harness.next),
+        throwsStateError,
+      );
+      h.api.targets.single['groups'] = <Object?>[];
+      h.api.state = 'RUNNING';
+      await expectLater(
+        h.coordinator.prepareAdd(3, _Harness.next),
+        throwsStateError,
+      );
+      h.api.state = 'STOPPED';
+      h.api.sessions = true;
+      await expectLater(
+        h.coordinator.prepareAdd(3, _Harness.next),
+        throwsStateError,
+      );
+      h.api.sessions = false;
+      h.api.groups.single['initiators'] = ['ALL'];
+      await expectLater(
+        h.coordinator.prepareAdd(3, _Harness.next),
+        throwsStateError,
+      );
+      h.api.groups.single['initiators'] = ['iqn.2026-01.example.com:old'];
+      h.api.groups.add({
+        'id': 5,
+        'initiators': [_Harness.next],
+        'comment': '',
+      });
+      await expectLater(
+        h.coordinator.prepareAdd(3, _Harness.next),
+        throwsStateError,
+      );
+      h.api.groups.removeLast();
+      h.api.groups.single['initiators'] = [
+        for (var index = 0; index < 10; index++)
+          'iqn.2026-01.example.com:host$index',
+      ];
+      await expectLater(
+        h.coordinator.prepareAdd(3, _Harness.next),
+        throwsStateError,
+      );
+      h.api.groups.single['initiators'] = ['iqn.2026-01.example.com:old'];
+      await expectLater(
+        h.coordinator.prepareAdd(3, 'iqn.BAD'),
+        throwsStateError,
+      );
+      expect(h.writes, 0);
+    },
+  );
+
+  test(
+    'add recheck rejects drift, phrase mismatch and expired review',
+    () async {
+      final h = _Harness();
+      var review = await h.coordinator.prepareAdd(3, _Harness.next);
+      expect(
+        (await h.coordinator.executeAdd(review, 'wrong')).outcome,
+        IscsiInitiatorIqnOutcome.rejected,
+      );
+      review = await h.coordinator.prepareAdd(3, _Harness.next);
+      h.api.groups.single['comment'] = 'changed';
+      expect(
+        (await h.coordinator.executeAdd(review, review.confirmation)).outcome,
+        IscsiInitiatorIqnOutcome.rejected,
+      );
+      h.api.groups.single['comment'] = 'host';
+      review = await h.coordinator.prepareAdd(3, _Harness.next);
+      h.clock = h.clock.add(const Duration(minutes: 5));
+      expect(
+        (await h.coordinator.executeAdd(review, review.confirmation)).outcome,
+        IscsiInitiatorIqnOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    },
+  );
+
+  test('add unknown result fences the session', () async {
+    final h = _Harness();
+    final review = await h.coordinator.prepareAdd(3, _Harness.next);
+    h.api.unknown = true;
+    expect(
+      (await h.coordinator.executeAdd(review, review.confirmation)).outcome,
+      IscsiInitiatorIqnOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
+  test(
+    'add unexpected post-write comment mutation fences the session',
+    () async {
+      final h = _Harness();
+      final review = await h.coordinator.prepareAdd(3, _Harness.next);
+      h.api.mutateComment = true;
+      expect(
+        (await h.coordinator.executeAdd(review, review.confirmation)).outcome,
+        IscsiInitiatorIqnOutcome.unknown,
+      );
+      expect(h.coordinator.locked, isTrue);
+      expect(h.writes, 1);
+    },
+  );
+
   test(
     'replaces one unreferenced IQN with exact payload and readback',
     () async {
