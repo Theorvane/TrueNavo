@@ -387,6 +387,10 @@ final class _SessionAdmin {
           !_completeIscsiListenerChoices(value)) {
         return AdminFailed(redacted, reason: AdminFailureReason.rejected);
       }
+      if (spec.name == 'iscsi.extent.get_instance' &&
+          !_completeIscsiExtentDetail(value)) {
+        return AdminFailed(redacted, reason: AdminFailureReason.rejected);
+      }
       if (spec.isJob) {
         if (value is! int || value <= 0) return _unknown(redacted);
         final submitted = AdminJobSubmitted(redacted, jobId: value);
@@ -496,6 +500,31 @@ bool _completeIscsiListenerChoices(Object? raw) {
         address.contains(RegExp(r'[\x00-\x20\x7f]')) ||
         description is! String ||
         description.length > 512) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _completeIscsiExtentDetail(Object? raw) {
+  if (raw is! Map || raw.isEmpty || raw.length >= 100) return false;
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    final value = entry.value;
+    if (key is! String ||
+        key.isEmpty ||
+        key.length > 128 ||
+        _adminSensitiveKey(key)) {
+      return false;
+    }
+    if (value == null || value is bool || value is num) continue;
+    if (value is! String ||
+        value.length > 512 ||
+        value.contains(
+          RegExp(
+            r'[\x00-\x1f\x7f\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]',
+          ),
+        )) {
       return false;
     }
   }

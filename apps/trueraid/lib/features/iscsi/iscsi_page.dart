@@ -6,6 +6,7 @@ import 'package:truenas_api/truenas_api.dart';
 import '../dashboard/dashboard_controller.dart';
 import 'iscsi_access_audit.dart';
 import 'iscsi_extent_chart.dart';
+import 'iscsi_extent_comment_editor.dart';
 import 'iscsi_overview.dart';
 import 'iscsi_listener_choices_panel.dart';
 import 'iscsi_auth_panel.dart';
@@ -95,7 +96,7 @@ class IscsiPage extends ConsumerWidget {
                 const Text('Targets & extents', style: TdTypography.titleLarge),
                 const SizedBox(height: 8),
                 const Text(
-                  'Configuration overview with reviewed threshold, portal-description and initiator-description edits. Five inventories are read sequentially, so server changes during loading may temporarily appear unmatched. Active sessions and CHAP references load separately on request. CHAP secrets, extent paths and serials are not shown.',
+                  'Configuration overview with reviewed threshold, portal-description, initiator-description and extent-description edits. Five inventories are read sequentially, so server changes during loading may temporarily appear unmatched. Active sessions and CHAP references load separately on request. CHAP secrets, extent paths and serials are not shown.',
                 ),
                 const SizedBox(height: 20),
                 switch (state) {
@@ -244,6 +245,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         IscsiPortalCommentEditor(overview: value),
         const SizedBox(height: 16),
         IscsiInitiatorCommentEditor(overview: value),
+        const SizedBox(height: 16),
+        IscsiExtentCommentEditor(overview: value),
         const SizedBox(height: 16),
         if (value.targets.isNotEmpty) ...[
           KeyedSubtree(

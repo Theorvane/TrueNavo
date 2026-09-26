@@ -744,6 +744,12 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'iSCSI extents',
     'Backing devices and files exposed to targets.',
   ),
+  AdminOperationDefinition.read(
+    AdminDomain.shares,
+    'iscsi.extent.get_instance',
+    'iSCSI extent detail',
+    'Exact extent configuration for reviewed edits.',
+  ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'iscsi.extent.create',
@@ -758,7 +764,6 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'Edit iSCSI extent',
     'Change backing storage options.',
     warning: 'Changing a live backing device can corrupt client data.',
-    blockedReason: _storageWizard,
   ),
   AdminOperationDefinition.destructive(
     AdminDomain.shares,

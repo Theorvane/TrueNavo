@@ -210,15 +210,22 @@ final class IscsiExtent {
     this.enabled,
     this.readOnly,
     this.locked,
+    this.comment,
   );
   final int id;
   final String name, type;
   final bool? enabled, readOnly, locked;
+  final String comment;
 
   static IscsiExtent? parse(Map raw) {
     final id = _id(raw['id']);
     final name = _label(raw['name']);
-    if (id == null || name == null) return null;
+    final comment = raw['comment'];
+    if (id == null ||
+        name == null ||
+        (comment != null && (comment is! String || comment.length > 1024))) {
+      return null;
+    }
     return IscsiExtent(
       id,
       name,
@@ -230,6 +237,7 @@ final class IscsiExtent {
       raw['enabled'] is bool ? raw['enabled'] as bool : null,
       raw['ro'] is bool ? raw['ro'] as bool : null,
       raw['locked'] is bool ? raw['locked'] as bool : null,
+      comment as String? ?? '',
     );
   }
 }

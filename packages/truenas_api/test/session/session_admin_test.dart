@@ -116,6 +116,46 @@ void main() {
     },
   );
 
+  test(
+    'extent detail rejects sanitized truncation before review use',
+    () async {
+      final h = await _connected(
+        metadata: {
+          'iscsi.extent.get_instance': _spec(
+            accepts: [
+              {'_name_': 'id', '_required_': true, 'type': 'integer'},
+            ],
+          ),
+        },
+      );
+      for (final raw in [
+        {'id': 5, 'name': 'disk', 'path': 'x' * 513},
+        {'id': 5, 'name': 'disk', 'path': 'bad\u0000path'},
+        {'id': 5, 'name': 'disk', 'nested': <String, Object?>{}},
+        {for (var i = 0; i < 100; i++) 'field$i': 'value'},
+      ]) {
+        final pending = h.repository.invokeAdmin(
+          _request(h, method: 'iscsi.extent.get_instance', arguments: [5]),
+        );
+        h.transport.respond(await h.transport.next(), raw);
+        expect(await pending, isA<AdminFailed>());
+      }
+      final valid = h.repository.invokeAdmin(
+        _request(h, method: 'iscsi.extent.get_instance', arguments: [5]),
+      );
+      h.transport.respond(await h.transport.next(), {
+        'id': 5,
+        'name': 'disk',
+        'type': 'DISK',
+        'comment': 'old',
+        'enabled': true,
+        'ro': false,
+        'path': '/mnt/private',
+      });
+      expect(await valid, isA<AdminCompleted>());
+    },
+  );
+
   for (final method in [
     'alertservice.update',
     'alertservice.delete',

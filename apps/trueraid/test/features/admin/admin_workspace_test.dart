@@ -338,6 +338,8 @@ void main() {
     ('iscsi.global.update', IscsiPage),
     ('iscsi.portal.listen_ip_choices', IscsiPage),
     ('iscsi.portal.update', IscsiPage),
+    ('iscsi.extent.get_instance', IscsiPage),
+    ('iscsi.extent.update', IscsiPage),
     ('iscsi.initiator.update', IscsiPage),
   ]) {
     testWidgets(
@@ -910,6 +912,8 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       'iscsi.global.update': _metadata([]),
       'iscsi.portal.listen_ip_choices': _metadata([]),
       'iscsi.portal.update': _metadata([]),
+      'iscsi.extent.get_instance': _metadata([]),
+      'iscsi.extent.update': _metadata([]),
       'iscsi.initiator.update': _metadata([]),
       // Deliberately ordinary-looking metadata must not enable JSON execution.
       'config.save': _metadata([]),

@@ -46,6 +46,8 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'iscsi.global.update' ||
       'iscsi.portal.listen_ip_choices' ||
       'iscsi.portal.update' ||
+      'iscsi.extent.get_instance' ||
+      'iscsi.extent.update' ||
       'iscsi.initiator.update' => 'Use the dedicated iSCSI workflow.',
       _ => adminUnavailableReason(widget.operation, catalog),
     };
