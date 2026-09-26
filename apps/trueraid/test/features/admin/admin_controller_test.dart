@@ -39,6 +39,7 @@ void main() {
     'iscsi.portal.listen_ip_choices',
     'iscsi.extent.get_instance',
     'iscsi.extent.update',
+    'iscsi.target.validate_name',
     'disk.temperatures',
     'pool.scrub.query',
     'pool.scrub.create',
@@ -545,6 +546,7 @@ class _AdminManager
       'iscsi.portal.listen_ip_choices': _method(),
       'iscsi.extent.get_instance': _method(),
       'iscsi.extent.update': _method(),
+      'iscsi.target.validate_name': _method(),
       'alert.list': _method(),
       for (final name in [
         'cronjob.query',

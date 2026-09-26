@@ -15,6 +15,7 @@ import 'iscsi_initiator_comment_editor.dart';
 import 'iscsi_mapping_chart.dart';
 import 'iscsi_portal_comment_editor.dart';
 import 'iscsi_sessions_panel.dart';
+import 'iscsi_target_name_check.dart';
 import 'iscsi_threshold_editor.dart';
 
 final iscsiOverviewProvider = FutureProvider<IscsiOverview>((ref) async {
@@ -247,6 +248,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         IscsiInitiatorCommentEditor(overview: value),
         const SizedBox(height: 16),
         IscsiExtentCommentEditor(overview: value),
+        const SizedBox(height: 16),
+        const IscsiTargetNameCheck(),
         const SizedBox(height: 16),
         if (value.targets.isNotEmpty) ...[
           KeyedSubtree(
