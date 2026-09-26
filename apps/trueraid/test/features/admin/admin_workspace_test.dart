@@ -346,6 +346,7 @@ void main() {
     ('iscsi.target.update', IscsiPage),
     ('iscsi.target.get_instance', IscsiPage),
     ('iscsi.initiator.update', IscsiPage),
+    ('iscsi.initiator.create', IscsiPage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -925,6 +926,7 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       'iscsi.target.update': _metadata([]),
       'iscsi.target.get_instance': _metadata([]),
       'iscsi.initiator.update': _metadata([]),
+      'iscsi.initiator.create': _metadata([]),
       // Deliberately ordinary-looking metadata must not enable JSON execution.
       'config.save': _metadata([]),
       'config.upload': _metadata([]),
