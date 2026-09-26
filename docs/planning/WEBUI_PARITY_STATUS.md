@@ -1,8 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-Updated 2026-09-26. Target: every applicable TrueNAS WebUI workflow in the existing 88-row capability matrix, implemented as native application features. This is an implementation ledger, **not a claim of full parity, official affiliation, or production certification**.
+Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the existing 88-row capability matrix, implemented as native application features. This is an implementation ledger, **not a claim of full parity, official affiliation, or production certification**.
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
+
+## Current continuation: reviewed unassigned iSCSI initiator IQN replacement
+
+The native iSCSI page now replaces the sole explicit lowercase IQN in an existing, unreferenced initiator group. It requires a stopped iSCSI service, zero active sessions, bounded complete initiator and target inventories, no duplicate proposed IQN, a five-minute endpoint-bound review and exact old/new IQN confirmation. The write submits only `initiators` to `iscsi.initiator.update`. It checks the returned group and a fresh inventory for the new IQN, unchanged comment, other groups, target associations and service status. Ambiguous results fence further iSCSI writes until reconnection. Sequential reads cannot prevent another administrator's concurrent change, and readback is not a live client-access test. Only synthetic fake API and widget tests were used; no NAS write occurred. See the [TrueNAS 25.10 initiator update contract](https://api.truenas.com/v25.10/api_methods_iscsi.initiator.update.html). TD-036 remains partial.
 
 ## Current continuation: reviewed unreferenced iSCSI initiator group deletion
 
@@ -56,7 +60,7 @@ The target list also has a local, case-insensitive filter for target name, exact
 
 ## Current continuation: iSCSI initiator description
 
-The native iSCSI page now also edits an existing initiator group's descriptive `comment` only. It rereads the exact group ID, comment and allowed initiator list before submission; a five-minute endpoint-bound review and exact phrase are required. The write sends only `comment` to `iscsi.initiator.update` and separately rereads the group, checking the allowed list is unchanged. An uncertain result fences both native iSCSI editors until reconnection. The generic administration form cannot bypass this narrow workflow. This does not implement access-list editing, group creation/deletion, CHAP mutation or a claim that client access is unchanged under external concurrent administration. Synthetic fake-wire tests only; no NAS write was performed.
+The native iSCSI page also edits an existing initiator group's descriptive `comment` independently. It rereads the exact group ID, comment and allowed initiator list before submission; a five-minute endpoint-bound review and exact phrase are required. The write sends only `comment` to `iscsi.initiator.update` and separately rereads the group, checking the allowed list is unchanged. An uncertain result fences further iSCSI edits until reconnection. The generic administration form cannot bypass the native workflows. This comment editor does not change access lists or prove client access is unchanged under external concurrent administration. Synthetic fake-wire tests only; no NAS write was performed.
 
 ## Current continuation: reviewed iSCSI free-space threshold
 
