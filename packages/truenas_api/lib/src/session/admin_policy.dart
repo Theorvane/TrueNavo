@@ -719,6 +719,12 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
   ),
   AdminOperationDefinition.read(
     AdminDomain.shares,
+    'iscsi.target.get_instance',
+    'iSCSI target details',
+    'Read an exact target before a reviewed change.',
+  ),
+  AdminOperationDefinition.read(
+    AdminDomain.shares,
     'iscsi.target.validate_name',
     'Validate iSCSI target name',
     'Check a proposed new target name without creating it.',
