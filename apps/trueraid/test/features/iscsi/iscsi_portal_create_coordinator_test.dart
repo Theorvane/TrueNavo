@@ -6,13 +6,15 @@ import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/iscsi/iscsi_overview.dart';
 import 'package:trueraid/features/iscsi/iscsi_portal_create_coordinator.dart';
 import 'package:trueraid/features/iscsi/iscsi_portal_create_editor.dart';
+import 'package:trueraid/features/iscsi/iscsi_portal_listener_editor.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
-Map<String, Object?> _method({bool create = false}) => {
-  'accepts': create
+Map<String, Object?> _method({bool create = false, bool update = false}) => {
+  'accepts': create || update
       ? [
+          if (update) {'_name_': 'id', '_required_': true, 'type': 'integer'},
           {
             '_name_': 'data',
             '_required_': true,
@@ -50,6 +52,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
       metadata: {
         'iscsi.portal.query': _method(),
         'iscsi.portal.create': _method(create: true),
+        'iscsi.portal.update': _method(update: true),
         'iscsi.portal.listen_ip_choices': _method(),
         'iscsi.target.query': _method(),
         'service.query': _method(),
@@ -88,6 +91,8 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
   bool unknown = false;
   bool leavePortal = false;
   bool mutateTarget = false;
+  bool mutateComment = false;
+  bool mutatePort = false;
 
   @override
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
@@ -135,6 +140,21 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         if (!leavePortal) portals.add(created);
         if (mutateTarget) targets.single['name'] = 'changed';
         return AdminCompleted(request, value: created);
+      case 'iscsi.portal.update':
+        if (unknown) return AdminOutcomeUnknown(request);
+        final row = portals.singleWhere(
+          (row) => row['id'] == request.arguments.first,
+        );
+        final data = request.arguments[1] as Map;
+        final ip = ((data['listen'] as List).single as Map)['ip'];
+        if (!leavePortal) {
+          row['listen'] = [
+            {'ip': ip, 'port': mutatePort ? 3261 : 3260},
+          ];
+        }
+        if (mutateComment) row['comment'] = 'unexpected';
+        if (mutateTarget) targets.single['name'] = 'changed';
+        return AdminCompleted(request, value: Map<String, Object?>.from(row));
       default:
         throw StateError('Unexpected fake call');
     }
@@ -321,5 +341,214 @@ void main() {
     await tester.tap(find.byKey(const Key('iscsi-portal-create-submit')));
     await tester.pumpAndSettle();
     expect(h.writes, 1);
+  });
+
+  test(
+    'replaces only an unreferenced single listener with exact payload',
+    () async {
+      final h = _Harness();
+      final coordinator = IscsiPortalListenerCoordinator(
+        session: h.session,
+        api: h.api,
+        lock: ServerOperationLock(),
+        isCurrent: () => h.current,
+        now: () => h.clock,
+      );
+      final review = await coordinator.prepare(3, _Harness.ip);
+      expect(review.before, '192.0.2.10');
+      expect(review.port, 3260);
+      expect(
+        h.api.calls.where((call) => call.method.name == 'iscsi.portal.update'),
+        isEmpty,
+      );
+      final result = await coordinator.execute(review, review.confirmation);
+      expect(result.outcome, IscsiPortalListenerOutcome.completed);
+      expect(
+        h.api.calls
+            .singleWhere((call) => call.method.name == 'iscsi.portal.update')
+            .arguments,
+        [
+          3,
+          {
+            'listen': [
+              {'ip': _Harness.ip},
+            ],
+          },
+        ],
+      );
+      expect(h.api.portals.single['comment'], 'existing');
+      expect(
+        (await coordinator.execute(review, review.confirmation)).outcome,
+        IscsiPortalListenerOutcome.rejected,
+      );
+    },
+  );
+
+  test(
+    'listener change blocks referenced, multi-listener and unavailable IP',
+    () async {
+      final h = _Harness();
+      final coordinator = IscsiPortalListenerCoordinator(
+        session: h.session,
+        api: h.api,
+        lock: ServerOperationLock(),
+        isCurrent: () => h.current,
+        now: () => h.clock,
+      );
+      h.api.targets.single['groups'] = [
+        {'portal': 3, 'initiator': null, 'authmethod': 'NONE', 'auth': null},
+      ];
+      await expectLater(coordinator.prepare(3, _Harness.ip), throwsStateError);
+      h.api.targets.single['groups'] = <Object?>[];
+      h.api.portals.single['listen'] = [
+        {'ip': '192.0.2.10', 'port': 3260},
+        {'ip': '192.0.2.12', 'port': 3260},
+      ];
+      await expectLater(coordinator.prepare(3, _Harness.ip), throwsStateError);
+      h.api.portals.single['listen'] = [
+        {'ip': '192.0.2.10', 'port': 3260},
+      ];
+      h.api.choices.remove(_Harness.ip);
+      await expectLater(coordinator.prepare(3, _Harness.ip), throwsStateError);
+      h.api.choices[_Harness.ip] = 'new';
+      h.api.state = 'RUNNING';
+      await expectLater(coordinator.prepare(3, _Harness.ip), throwsStateError);
+      h.api.state = 'STOPPED';
+      h.api.sessions = true;
+      await expectLater(coordinator.prepare(3, _Harness.ip), throwsStateError);
+      expect(
+        h.api.calls.where((call) => call.method.name == 'iscsi.portal.update'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'listener review drift, phrase, expiry and session switch reject',
+    () async {
+      final h = _Harness();
+      final coordinator = IscsiPortalListenerCoordinator(
+        session: h.session,
+        api: h.api,
+        lock: ServerOperationLock(),
+        isCurrent: () => h.current,
+        now: () => h.clock,
+      );
+      var review = await coordinator.prepare(3, _Harness.ip);
+      expect(
+        (await coordinator.execute(review, 'wrong')).outcome,
+        IscsiPortalListenerOutcome.rejected,
+      );
+      review = await coordinator.prepare(3, _Harness.ip);
+      h.api.targets.single['name'] = 'changed';
+      expect(
+        (await coordinator.execute(review, review.confirmation)).outcome,
+        IscsiPortalListenerOutcome.rejected,
+      );
+      h.api.targets.single['name'] = 'target';
+      review = await coordinator.prepare(3, _Harness.ip);
+      h.clock = h.clock.add(const Duration(minutes: 5));
+      expect(
+        (await coordinator.execute(review, review.confirmation)).outcome,
+        IscsiPortalListenerOutcome.rejected,
+      );
+      review = await coordinator.prepare(3, _Harness.ip);
+      h.current = false;
+      expect(
+        (await coordinator.execute(review, review.confirmation)).outcome,
+        IscsiPortalListenerOutcome.rejected,
+      );
+      expect(
+        h.api.calls.where((call) => call.method.name == 'iscsi.portal.update'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'uncertain listener response and collateral change fence retry',
+    () async {
+      for (final failure in [0, 1, 2, 3]) {
+        final h = _Harness();
+        final coordinator = IscsiPortalListenerCoordinator(
+          session: h.session,
+          api: h.api,
+          lock: ServerOperationLock(),
+          isCurrent: () => h.current,
+          now: () => h.clock,
+        );
+        h.api.unknown = failure == 0;
+        h.api.leavePortal = failure == 1;
+        h.api.mutateComment = failure == 2;
+        h.api.mutatePort = failure == 3;
+        final review = await coordinator.prepare(3, _Harness.ip);
+        expect(
+          (await coordinator.execute(review, review.confirmation)).outcome,
+          IscsiPortalListenerOutcome.unknown,
+        );
+        expect(coordinator.locked, isTrue);
+        await expectLater(
+          coordinator.prepare(3, _Harness.ip),
+          throwsStateError,
+        );
+      }
+    },
+  );
+
+  testWidgets('listener editor requires review and exact confirmation', (
+    tester,
+  ) async {
+    final h = _Harness();
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: [],
+      targets: h.api.targets,
+      extents: [],
+      mappings: [],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiPortalListenerEditor(overview: overview),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-portal-listener-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Portal #3').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('iscsi-portal-listener-new')),
+      _Harness.ip,
+    );
+    await tester.tap(find.byKey(const Key('iscsi-portal-listener-review')));
+    await tester.pumpAndSettle();
+    expect(
+      h.api.calls.where((call) => call.method.name == 'iscsi.portal.update'),
+      isEmpty,
+    );
+    await tester.enterText(
+      find.byKey(const Key('iscsi-portal-listener-confirmation')),
+      'REPLACE ISCSI PORTAL #3 192.0.2.10 WITH ${_Harness.ip}',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-portal-listener-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-portal-listener-submit')));
+    await tester.pumpAndSettle();
+    expect(
+      h.api.calls.where((call) => call.method.name == 'iscsi.portal.update'),
+      hasLength(1),
+    );
   });
 }

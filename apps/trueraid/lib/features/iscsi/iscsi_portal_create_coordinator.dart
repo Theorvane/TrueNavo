@@ -105,7 +105,10 @@ final class IscsiPortalCreateCoordinator {
 
   AdminMethodSpec _method(String name) {
     final method = api.adminCatalog.method(name);
-    if (!available || method == null || !method.supported) {
+    if (session.endpoint == null ||
+        !api.adminCatalog.versionSupported ||
+        method == null ||
+        !method.supported) {
       throw StateError('Required iSCSI portal methods are unavailable.');
     }
     return method;
@@ -451,6 +454,296 @@ final class IscsiPortalCreateCoordinator {
     return const IscsiPortalCreateResult(
       IscsiPortalCreateOutcome.unknown,
       'Creation may have changed the server. Do not retry; inspect the server and reconnect.',
+    );
+  }
+}
+
+final iscsiPortalListenerCoordinatorProvider =
+    Provider<IscsiPortalListenerCoordinator?>((ref) {
+      final session = ref.watch(dashboardActiveSessionProvider);
+      if (session?.endpoint == null ||
+          session!.repository is! AuthenticatedAdminSession) {
+        return null;
+      }
+      return IscsiPortalListenerCoordinator(
+        session: session,
+        api: session.repository as AuthenticatedAdminSession,
+        lock: ref.read(serverOperationLockProvider),
+        isCurrent: () =>
+            identical(ref.read(dashboardActiveSessionProvider), session),
+      );
+    });
+
+enum IscsiPortalListenerOutcome { completed, rejected, unknown }
+
+final class IscsiPortalListenerResult {
+  const IscsiPortalListenerResult(this.outcome, this.message);
+  final IscsiPortalListenerOutcome outcome;
+  final String message;
+}
+
+final class IscsiPortalListenerReview {
+  IscsiPortalListenerReview._({
+    required this.endpoint,
+    required this.id,
+    required this.tag,
+    required this.before,
+    required this.proposed,
+    required this.port,
+    required this.comment,
+    required this.proof,
+    required this.issuedAt,
+  });
+  final String endpoint, before, proposed, comment, proof;
+  final int id, tag, port;
+  final DateTime issuedAt;
+  String get confirmation => 'REPLACE ISCSI PORTAL #$id $before WITH $proposed';
+}
+
+/// Changes only the address of an unreferenced one-listener portal. The
+/// topology reader is shared with portal creation to keep proof semantics
+/// identical; it never submits a create call from this workflow.
+final class IscsiPortalListenerCoordinator {
+  IscsiPortalListenerCoordinator({
+    required this.session,
+    required this.api,
+    required this.lock,
+    required this.isCurrent,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now,
+       _reader = IscsiPortalCreateCoordinator(
+         session: session,
+         api: api,
+         lock: lock,
+         isCurrent: isCurrent,
+         now: now,
+       );
+
+  final AuthenticatedSession session;
+  final AuthenticatedAdminSession api;
+  final ServerOperationLock lock;
+  final bool Function() isCurrent;
+  final DateTime Function() _now;
+  final IscsiPortalCreateCoordinator _reader;
+  final _issued = <IscsiPortalListenerReview>{};
+  bool _busy = false;
+
+  bool get locked => _busy || IscsiWriteFence.isUncertain(session);
+  bool get available =>
+      session.endpoint != null &&
+      api.adminCatalog.versionSupported &&
+      [
+        'iscsi.portal.query',
+        'iscsi.portal.update',
+        'iscsi.portal.listen_ip_choices',
+        'iscsi.target.query',
+        'service.query',
+        'iscsi.global.sessions',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
+
+  List<Object> _candidate(_Snapshot snapshot, int id, String proposed) {
+    final matches = snapshot.portals
+        .where((portal) => portal[0] == id)
+        .toList();
+    if (matches.length != 1) {
+      throw StateError('The portal is unavailable.');
+    }
+    final row = matches.single;
+    final listeners = (row[2] as List).cast<List<Object>>();
+    if (listeners.length != 1 ||
+        listeners.single[0] is! String ||
+        !IscsiPortalCreateCoordinator.validIp(listeners.single[0] as String)) {
+      throw StateError(
+        'Only a portal with one explicit IPv4 listener is supported.',
+      );
+    }
+    if (snapshot.references(id)) {
+      throw StateError(
+        'Remove target references independently before changing the listener.',
+      );
+    }
+    if (listeners.single[0] == proposed ||
+        !snapshot.choices.contains(proposed) ||
+        snapshot.usesIp(proposed)) {
+      throw StateError('Choose a different unused server-offered address.');
+    }
+    return row;
+  }
+
+  Future<IscsiPortalListenerReview> prepare(int id, String proposed) async {
+    _reader._guard();
+    if (!available ||
+        _busy ||
+        id < 1 ||
+        !IscsiPortalCreateCoordinator.validIp(proposed)) {
+      throw StateError('Choose a portal and one server-offered IPv4 address.');
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    try {
+      final snapshot = await _reader._snapshot();
+      final row = _candidate(snapshot, id, proposed);
+      final listener = ((row[2] as List).single as List<Object>);
+      final review = IscsiPortalListenerReview._(
+        endpoint: session.endpoint!,
+        id: id,
+        tag: row[1] as int,
+        before: listener[0] as String,
+        proposed: proposed,
+        port: listener[1] as int,
+        comment: row[3] as String,
+        proof: snapshot.proof,
+        issuedAt: _now().toUtc(),
+      );
+      _issued.add(review);
+      return review;
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError('The portal preflight failed. Nothing was sent.');
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  void cancel(IscsiPortalListenerReview review) => _issued.remove(review);
+
+  Future<IscsiPortalListenerResult> execute(
+    IscsiPortalListenerReview review,
+    String confirmation,
+  ) async {
+    final issued = _issued.remove(review);
+    final now = _now().toUtc();
+    if (!issued ||
+        _busy ||
+        !isCurrent() ||
+        IscsiWriteFence.isUncertain(session) ||
+        review.endpoint != session.endpoint ||
+        confirmation != review.confirmation ||
+        now.isBefore(review.issuedAt) ||
+        now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+      return const IscsiPortalListenerResult(
+        IscsiPortalListenerOutcome.rejected,
+        'Review expired or confirmation did not match. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      return const IscsiPortalListenerResult(
+        IscsiPortalListenerOutcome.rejected,
+        'Another server operation is in progress. Nothing was sent.',
+      );
+    }
+    _busy = true;
+    var sent = false;
+    try {
+      final before = await _reader._snapshot();
+      _candidate(before, review.id, review.proposed);
+      if (before.proof != review.proof) {
+        return const IscsiPortalListenerResult(
+          IscsiPortalListenerOutcome.rejected,
+          'Portal, target, address or service state changed since review. Nothing was sent.',
+        );
+      }
+      sent = true;
+      final result = await api.invokeAdmin(
+        AdminRequest(
+          method: _reader._method('iscsi.portal.update'),
+          arguments: [
+            review.id,
+            {
+              'listen': [
+                {'ip': review.proposed},
+              ],
+            },
+          ],
+        ),
+      );
+      if (result is AdminFailed && result.reason == AdminFailureReason.denied) {
+        return const IscsiPortalListenerResult(
+          IscsiPortalListenerOutcome.rejected,
+          'The server denied the update. No change was confirmed.',
+        );
+      }
+      if (result is! AdminCompleted || result.value is! Map) return _unknown();
+      final response = result.value as Map;
+      final expectedRow = <Object>[
+        review.id,
+        review.tag,
+        <List<Object>>[
+          [review.proposed, review.port],
+        ],
+        review.comment,
+      ];
+      final returned = _portalResponse(response);
+      if (returned == null || jsonEncode(returned) != jsonEncode(expectedRow)) {
+        return _unknown();
+      }
+      final after = await _reader._snapshot();
+      final expected = <List<Object>>[
+        for (final row in before.portals)
+          if (row[0] == review.id) expectedRow else row,
+      ];
+      if (jsonEncode(after.portals) != jsonEncode(expected) ||
+          jsonEncode(after.targets) != jsonEncode(before.targets) ||
+          jsonEncode(after.choices.toList()..sort()) !=
+              jsonEncode(before.choices.toList()..sort()) ||
+          after.service.state != before.service.state ||
+          after.service.enabledOnBoot != before.service.enabledOnBoot) {
+        return _unknown();
+      }
+      return IscsiPortalListenerResult(
+        IscsiPortalListenerOutcome.completed,
+        'Portal #${review.id} has the new listener in a fresh inventory; target associations were unchanged.',
+      );
+    } on Object {
+      return sent
+          ? _unknown()
+          : const IscsiPortalListenerResult(
+              IscsiPortalListenerOutcome.rejected,
+              'The portal preflight failed. Nothing was sent.',
+            );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  List<Object>? _portalResponse(Map response) {
+    final id = response['id'], tag = response['tag'];
+    final listen = response['listen'], comment = response['comment'];
+    if (id is! int ||
+        tag is! int ||
+        listen is! List ||
+        listen.length != 1 ||
+        listen.single is! Map ||
+        comment is! String) {
+      return null;
+    }
+    final listener = listen.single as Map;
+    final ip = listener['ip'], port = listener['port'];
+    if (ip is! String || port is! int || port < 1 || port > 65535) return null;
+    return <Object>[
+      id,
+      tag,
+      <List<Object>>[
+        [ip, port],
+      ],
+      comment,
+    ];
+  }
+
+  IscsiPortalListenerResult _unknown() {
+    IscsiWriteFence.markUncertain(session);
+    _issued.clear();
+    return const IscsiPortalListenerResult(
+      IscsiPortalListenerOutcome.unknown,
+      'The listener update may have changed the server. Do not retry; inspect the server and reconnect.',
     );
   }
 }
