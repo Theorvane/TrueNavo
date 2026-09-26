@@ -36,6 +36,7 @@ void main() {
     'disk.query',
     'disk.update',
     'iscsi.portal.update',
+    'iscsi.portal.listen_ip_choices',
     'disk.temperatures',
     'pool.scrub.query',
     'pool.scrub.create',
@@ -539,6 +540,7 @@ class _AdminManager
         ],
       },
       'iscsi.portal.update': _method(),
+      'iscsi.portal.listen_ip_choices': _method(),
       'alert.list': _method(),
       for (final name in [
         'cronjob.query',

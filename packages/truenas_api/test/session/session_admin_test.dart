@@ -84,6 +84,38 @@ Matcher _reason(AdminExceptionReason reason) =>
     isA<AdminException>().having((e) => e.reason, 'reason', reason);
 
 void main() {
+  test(
+    'listener IP choices reject incomplete maps before sanitization',
+    () async {
+      final h = await _connected(
+        metadata: {
+          'iscsi.portal.listen_ip_choices': _spec(
+            returns: {
+              'type': 'object',
+              'additionalProperties': {'type': 'string'},
+            },
+          ),
+        },
+      );
+      final oversized = h.repository.invokeAdmin(
+        _request(h, method: 'iscsi.portal.listen_ip_choices'),
+      );
+      h.transport.respond(await h.transport.next(), {
+        for (var i = 0; i < 101; i++) '192.0.2.$i': 'choice',
+      });
+      expect(await oversized, isA<AdminFailed>());
+
+      final valid = h.repository.invokeAdmin(
+        _request(h, method: 'iscsi.portal.listen_ip_choices'),
+      );
+      h.transport.respond(await h.transport.next(), {
+        for (var i = 0; i < 100; i++) '192.0.2.$i': 'choice',
+      });
+      final result = await valid as AdminCompleted;
+      expect((result.value as Map).length, 100);
+    },
+  );
+
   for (final method in [
     'alertservice.update',
     'alertservice.delete',

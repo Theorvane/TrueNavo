@@ -657,6 +657,12 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'iSCSI portals',
     'Configured target listening endpoints.',
   ),
+  AdminOperationDefinition.read(
+    AdminDomain.shares,
+    'iscsi.portal.listen_ip_choices',
+    'iSCSI listener address choices',
+    'Server-offered static addresses for portal listening.',
+  ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'iscsi.portal.create',

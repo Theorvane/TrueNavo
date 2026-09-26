@@ -62,6 +62,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('target-one'), findsOneWidget);
     expect(find.text('Configured access associations'), findsOneWidget);
+    expect(find.text('Portal listener address choices'), findsOneWidget);
     expect(find.text('Pool free-space alert threshold'), findsOneWidget);
     expect(find.text('Portal description'), findsOneWidget);
     expect(find.text('Initiator group description'), findsOneWidget);

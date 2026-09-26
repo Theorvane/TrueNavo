@@ -6,6 +6,7 @@ import 'package:truenas_api/truenas_api.dart';
 import '../dashboard/dashboard_controller.dart';
 import 'iscsi_access_audit.dart';
 import 'iscsi_overview.dart';
+import 'iscsi_listener_choices_panel.dart';
 import 'iscsi_auth_panel.dart';
 import 'iscsi_global_panel.dart';
 import 'iscsi_initiator_comment_editor.dart';
@@ -209,6 +210,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         IscsiMappingChart(overview: value),
         const SizedBox(height: 16),
         IscsiAccessAudit(overview: value),
+        const SizedBox(height: 16),
+        IscsiListenerChoicesPanel(overview: value),
         const SizedBox(height: 16),
         const IscsiGlobalPanel(),
         const SizedBox(height: 16),

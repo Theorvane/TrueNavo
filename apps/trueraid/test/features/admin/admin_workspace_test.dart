@@ -336,6 +336,7 @@ void main() {
     ('boot.environment.activate', BootEnvironmentsPage),
     ('boot.environment.destroy', BootEnvironmentsPage),
     ('iscsi.global.update', IscsiPage),
+    ('iscsi.portal.listen_ip_choices', IscsiPage),
     ('iscsi.portal.update', IscsiPage),
     ('iscsi.initiator.update', IscsiPage),
   ]) {
@@ -907,6 +908,7 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       'system.ntpserver.update': _metadata([]),
       'system.ntpserver.delete': _metadata([]),
       'iscsi.global.update': _metadata([]),
+      'iscsi.portal.listen_ip_choices': _metadata([]),
       'iscsi.portal.update': _metadata([]),
       'iscsi.initiator.update': _metadata([]),
       // Deliberately ordinary-looking metadata must not enable JSON execution.

@@ -933,6 +933,7 @@ class AdminOperationTile extends StatelessWidget {
     'iscsi.global.update' ||
     'iscsi.global.sessions' ||
     'iscsi.portal.query' ||
+    'iscsi.portal.listen_ip_choices' ||
     'iscsi.portal.update' ||
     'iscsi.initiator.query' ||
     'iscsi.initiator.update' ||

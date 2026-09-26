@@ -381,6 +381,12 @@ final class _SessionAdmin {
     try {
       final value = await _call(spec.name, request.arguments);
       if (!isCurrent()) return _unknown(redacted);
+      // The shared sanitizer caps maps at 100 entries. Never present a
+      // truncated address-choice map as a complete listener inventory.
+      if (spec.name == 'iscsi.portal.listen_ip_choices' &&
+          !_completeIscsiListenerChoices(value)) {
+        return AdminFailed(redacted, reason: AdminFailureReason.rejected);
+      }
       if (spec.isJob) {
         if (value is! int || value <= 0) return _unknown(redacted);
         final submitted = AdminJobSubmitted(redacted, jobId: value);
@@ -477,6 +483,23 @@ final class _SessionAdmin {
       return AdminOutcomeUnknown(job.request, jobId: job.jobId);
     }
   }
+}
+
+bool _completeIscsiListenerChoices(Object? raw) {
+  if (raw is! Map || raw.length > 100) return false;
+  for (final entry in raw.entries) {
+    final address = entry.key;
+    final description = entry.value;
+    if (address is! String ||
+        address.isEmpty ||
+        address.length > 64 ||
+        address.contains(RegExp(r'[\x00-\x20\x7f]')) ||
+        description is! String ||
+        description.length > 512) {
+      return false;
+    }
+  }
+  return true;
 }
 
 Object? _adminSanitize(
