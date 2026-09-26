@@ -4,6 +4,10 @@ Updated 2026-09-26. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: extent configuration graph and local search
+
+The native iSCSI page now charts the saved extent count by disk/file/unknown backing type and enabled/disabled/unknown status. Its denominator is the returned extent inventory, not capacity, live availability or I/O. The extent list has a local filter for name, exact ID or mapped target name; charts and summary remain unfiltered. The filter clears on inventory refresh. This increment used synthetic widget data only and made no NAS request or write. TD-036 remains partial.
+
 ## Current continuation: on-demand iSCSI listener choices
 
 The native iSCSI page can now request iscsi.portal.listen_ip_choices on demand and compare the returned IP keys with configured portal listener entries. A bounded parser discards the response descriptions, which may contain HA backing-address details. The SDK rejects responses over 100 entries before its generic sanitizer can truncate them, so the panel never presents a partial inventory as complete. The panel shows the current choice-list proportion and capped address lists; it does not equate a listed choice with network reachability or an unlisted configured address with disconnection. Changing listener bindings, service coordination and client-impact recovery remain unimplemented. This increment used synthetic responses only; no NAS request or write was performed. See the [TrueNAS 25.10 method contract](https://api.truenas.com/v25.10/api_methods_iscsi.portal.listen_ip_choices.html). TD-036 remains partial.

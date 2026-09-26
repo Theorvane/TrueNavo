@@ -5,6 +5,7 @@ import 'package:truenas_api/truenas_api.dart';
 
 import '../dashboard/dashboard_controller.dart';
 import 'iscsi_access_audit.dart';
+import 'iscsi_extent_chart.dart';
 import 'iscsi_overview.dart';
 import 'iscsi_listener_choices_panel.dart';
 import 'iscsi_auth_panel.dart';
@@ -130,12 +131,14 @@ class _IscsiContent extends StatefulWidget {
 
 class _IscsiContentState extends State<_IscsiContent> {
   String _targetFilter = '';
+  String _extentFilter = '';
 
   @override
   void didUpdateWidget(covariant _IscsiContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.value, widget.value)) {
       _targetFilter = '';
+      _extentFilter = '';
     }
   }
 
@@ -162,6 +165,25 @@ class _IscsiContentState extends State<_IscsiContent> {
             );
           }).toList();
     final mappedExtentIds = value.mappings.map((m) => m.extentId).toSet();
+    final extentQuery = _extentFilter.trim().toLowerCase();
+    final visibleExtents = extentQuery.isEmpty
+        ? value.extents
+        : value.extents.where((extent) {
+            if (extent.name.toLowerCase().contains(extentQuery) ||
+                extent.id.toString() == extentQuery) {
+              return true;
+            }
+            return value.mappings.any(
+              (mapping) =>
+                  mapping.extentId == extent.id &&
+                  (value
+                          .targetById(mapping.targetId)
+                          ?.name
+                          .toLowerCase()
+                          .contains(extentQuery) ??
+                      false),
+            );
+          }).toList();
     final unresolved = value.mappings
         .where(
           (mapping) =>
@@ -209,6 +231,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         const SizedBox(height: 16),
         IscsiMappingChart(overview: value),
         const SizedBox(height: 16),
+        IscsiExtentChart(overview: value),
+        const SizedBox(height: 16),
         IscsiAccessAudit(overview: value),
         const SizedBox(height: 16),
         IscsiListenerChoicesPanel(overview: value),
@@ -222,15 +246,18 @@ class _IscsiContentState extends State<_IscsiContent> {
         IscsiInitiatorCommentEditor(overview: value),
         const SizedBox(height: 16),
         if (value.targets.isNotEmpty) ...[
-          TextField(
-            key: const Key('iscsi-target-filter'),
-            maxLength: 120,
-            decoration: const InputDecoration(
-              labelText: 'Find targets',
-              hintText: 'Target name, ID or mapped extent name',
-              border: OutlineInputBorder(),
+          KeyedSubtree(
+            key: ValueKey(('target-filter', value)),
+            child: TextField(
+              key: const Key('iscsi-target-filter'),
+              maxLength: 120,
+              decoration: const InputDecoration(
+                labelText: 'Find targets',
+                hintText: 'Target name, ID or mapped extent name',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (text) => setState(() => _targetFilter = text),
             ),
-            onChanged: (text) => setState(() => _targetFilter = text),
           ),
           Text(
             'Showing ${visibleTargets.length} of ${value.targets.length} targets. '
@@ -288,7 +315,28 @@ class _IscsiContentState extends State<_IscsiContent> {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (final extent in value.extents)
+                    KeyedSubtree(
+                      key: ValueKey(('extent-filter', value)),
+                      child: TextField(
+                        key: const Key('iscsi-extent-filter'),
+                        maxLength: 120,
+                        decoration: const InputDecoration(
+                          labelText: 'Find extents',
+                          hintText: 'Extent name, ID or mapped target name',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (text) =>
+                            setState(() => _extentFilter = text),
+                      ),
+                    ),
+                    Text(
+                      'Showing ${visibleExtents.length} of ${value.extents.length} extents. '
+                      'Local filter only; charts and summary remain unfiltered.',
+                    ),
+                    const SizedBox(height: 12),
+                    if (visibleExtents.isEmpty)
+                      const Text('No extents match this local filter.'),
+                    for (final extent in visibleExtents)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: Text(

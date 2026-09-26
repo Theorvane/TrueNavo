@@ -62,6 +62,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('target-one'), findsOneWidget);
     expect(find.text('Configured access associations'), findsOneWidget);
+    expect(find.text('Extent configuration distribution'), findsOneWidget);
     expect(find.text('Portal listener address choices'), findsOneWidget);
     expect(find.text('Pool free-space alert threshold'), findsOneWidget);
     expect(find.text('Portal description'), findsOneWidget);
@@ -82,4 +83,86 @@ void main() {
     );
     expect(ratio.value, 1);
   });
+
+  testWidgets(
+    'extent filter finds names, IDs and mapped target names locally',
+    (tester) async {
+      var overview = IscsiOverview.parse(
+        portals: [],
+        initiators: [],
+        targets: [
+          {'id': 4, 'name': 'archive-target'},
+        ],
+        extents: [
+          {'id': 2, 'name': 'cold-disk', 'type': 'DISK'},
+          {'id': 3, 'name': 'hot-file', 'type': 'FILE'},
+        ],
+        mappings: [
+          {'id': 7, 'target': 4, 'extent': 2, 'lunid': 0},
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            iscsiOverviewProvider.overrideWith((ref) async => overview),
+          ],
+          child: MaterialApp(
+            theme: TrueRAIDTheme.dark(),
+            home: const IscsiPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final filter = find.byKey(const Key('iscsi-extent-filter'));
+      await tester.ensureVisible(filter);
+      await tester.enterText(filter, 'archive-target');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('cold-disk · Disk'), findsOneWidget);
+      expect(find.textContaining('hot-file · File'), findsNothing);
+      expect(
+        find.text(
+          'Showing 1 of 2 extents. Local filter only; charts and summary remain unfiltered.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(filter, '3');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('hot-file · File'), findsOneWidget);
+      expect(find.textContaining('cold-disk · Disk'), findsNothing);
+
+      await tester.enterText(filter, 'missing');
+      await tester.pumpAndSettle();
+      expect(find.text('No extents match this local filter.'), findsOneWidget);
+      expect(find.text('Extent configuration distribution'), findsOneWidget);
+
+      overview = IscsiOverview.parse(
+        portals: [],
+        initiators: [],
+        targets: [],
+        extents: [
+          {'id': 9, 'name': 'new-extent', 'type': 'DISK'},
+        ],
+        mappings: [],
+      );
+      ProviderScope.containerOf(tester.element(find.byType(IscsiPage)))
+          .invalidate(iscsiOverviewProvider);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Showing 1 of 1 extents. Local filter only; charts and summary remain unfiltered.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(of: filter, matching: find.byType(EditableText)),
+            )
+            .controller
+            .text,
+        isEmpty,
+      );
+    },
+  );
 }
