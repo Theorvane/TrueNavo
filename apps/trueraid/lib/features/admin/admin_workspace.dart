@@ -935,6 +935,7 @@ class AdminOperationTile extends StatelessWidget {
     'iscsi.portal.query' ||
     'iscsi.portal.listen_ip_choices' ||
     'iscsi.portal.update' ||
+    'iscsi.portal.create' ||
     'iscsi.portal.delete' ||
     'iscsi.initiator.query' ||
     'iscsi.initiator.update' ||

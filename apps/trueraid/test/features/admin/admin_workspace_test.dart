@@ -349,6 +349,7 @@ void main() {
     ('iscsi.initiator.create', IscsiPage),
     ('iscsi.initiator.delete', IscsiPage),
     ('iscsi.portal.delete', IscsiPage),
+    ('iscsi.portal.create', IscsiPage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -505,7 +506,7 @@ void main() {
   testWidgets('cancelled review erases secret inputs without sending', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('iscsi.portal.create'));
+    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-include-data.password');
     await tester.enterText(
@@ -522,7 +523,7 @@ void main() {
   testWidgets('oversized confirmation cannot acknowledge hidden changes', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('iscsi.portal.create'));
+    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
     await tester.enterText(_key('admin-value-data.name'), 'x' * 2049);
     await _tap(tester, 'admin-review-submit');
     expect(find.textContaining('too large or deeply nested'), findsOneWidget);
@@ -532,7 +533,7 @@ void main() {
   });
 
   testWidgets(
-    'offline native directory includes domains with disabled actions',
+    'offline native directory opens guarded workspaces without writes',
     (tester) async {
       await _pump(tester, const AdminWorkspace(), connected: false);
       expect(
@@ -556,12 +557,14 @@ void main() {
       final button = tester.widget<OutlinedButton>(
         _key('admin-open-iscsi.portal.create'),
       );
-      expect(button.onPressed, isNull);
-      expect(find.text('Connect to load server capabilities.'), findsOneWidget);
+      expect(button.onPressed, isNotNull);
+      await _tap(tester, 'admin-open-iscsi.portal.create');
+      expect(find.byType(IscsiPage), findsOneWidget);
+      expect(find.byType(AdminOperationPage), findsNothing);
     },
   );
 
-  testWidgets('connected search opens the reviewed schema operation', (
+  testWidgets('connected portal search opens the native workspace', (
     tester,
   ) async {
     final (_, api) = await _pump(tester, const AdminWorkspace());
@@ -571,12 +574,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _tap(tester, 'admin-open-iscsi.portal.create');
-    expect(find.byType(AdminOperationPage), findsOneWidget);
-    expect(_key('admin-value-data.name'), findsOneWidget);
+    expect(find.byType(IscsiPage), findsOneWidget);
+    expect(find.byType(AdminOperationPage), findsNothing);
     expect(
-      api.requests,
+      api.requests.where(
+        (request) => request.method.name == 'iscsi.portal.create',
+      ),
       isEmpty,
-      reason: 'Opening an operation never sends it.',
+      reason: 'Opening a workspace never creates a portal.',
     );
   });
 
@@ -609,7 +614,7 @@ void main() {
   testWidgets(
     'write action sends only after explicit review and acknowledgement',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('iscsi.portal.create'));
+      final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-review-submit');
       expect(api.requests, isEmpty);
@@ -628,7 +633,7 @@ void main() {
   );
 
   testWidgets('cancelling review does not submit changes', (tester) async {
-    final (_, api) = await _pump(tester, _page('iscsi.portal.create'));
+    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-review-submit');
     await tester.tap(find.text('Cancel'));
@@ -640,7 +645,7 @@ void main() {
   testWidgets('invalid native form cannot open review or send requests', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('iscsi.portal.create'));
+    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
     await _tap(tester, 'admin-review-submit');
     expect(find.byType(AdminReviewDialog), findsNothing);
     expect(find.textContaining('Check the highlighted fields'), findsOneWidget);
@@ -683,7 +688,7 @@ void main() {
   testWidgets(
     'confirmation redacts secrets while submitted request keeps value',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('iscsi.portal.create'));
+      final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-include-data.password');
       await tester.enterText(
@@ -717,7 +722,7 @@ void main() {
     (tester) async {
       final (container, api) = await _pump(
         tester,
-        _page('iscsi.portal.create'),
+        _page('iscsi.targetextent.create'),
       );
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-review-submit');
@@ -752,13 +757,10 @@ void main() {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
     await _reveal(tester, 'admin-directory-search');
-    await tester.enterText(
-      _key('admin-directory-search'),
-      'Create iSCSI portal',
-    );
+    await tester.enterText(_key('admin-directory-search'), 'Map target extent');
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await _tap(tester, 'admin-open-iscsi.portal.create');
+    await _tap(tester, 'admin-open-iscsi.targetextent.create');
     await _reveal(tester, 'admin-value-data.name');
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-review-submit');
@@ -937,6 +939,18 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       // Synthetic form metadata tests generic review behavior, not iSCSI's
       // real wire contract. SMB/NFS mutations now require native workspaces.
       'iscsi.portal.create': _metadata([
+        {
+          '_name_': 'data',
+          '_required_': true,
+          'type': 'object',
+          'required': ['name'],
+          'properties': {
+            'name': {'type': 'string', 'minLength': 1},
+            'password': {'type': 'string', 'secret': true, 'minLength': 1},
+          },
+        },
+      ]),
+      'iscsi.targetextent.create': _metadata([
         {
           '_name_': 'data',
           '_required_': true,
