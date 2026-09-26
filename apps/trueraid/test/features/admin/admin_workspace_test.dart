@@ -350,6 +350,7 @@ void main() {
     ('iscsi.initiator.delete', IscsiPage),
     ('iscsi.portal.delete', IscsiPage),
     ('iscsi.portal.create', IscsiPage),
+    ('iscsi.targetextent.delete', IscsiPage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -653,28 +654,6 @@ void main() {
   });
 
   testWidgets(
-    'delete requires exact untrimmed target and impact acknowledgement',
-    (tester) async {
-      final (_, api) = await _pump(tester, _page('iscsi.targetextent.delete'));
-      await tester.enterText(_key('admin-value-id'), '42');
-      await _tap(tester, 'admin-review-submit');
-      await tester.enterText(_key('admin-confirm-target'), '42');
-      await tester.pump();
-      expect(_sendButton(tester).onPressed, isNull);
-      await _tap(tester, 'admin-impact-acknowledge');
-      for (final invalid in ['', '4', ' 42', '42 ']) {
-        await tester.enterText(_key('admin-confirm-target'), invalid);
-        await tester.pump();
-        expect(_sendButton(tester).onPressed, isNull, reason: invalid);
-      }
-      await tester.enterText(_key('admin-confirm-target'), '42');
-      await tester.pump();
-      await _tap(tester, 'admin-confirm-send');
-      expect(api.requests.single.arguments, [42]);
-    },
-  );
-
-  testWidgets(
     'reboot cannot bypass native safety through no-argument metadata',
     (tester) async {
       final (_, api) = await _pump(tester, _page('system.reboot'));
@@ -966,6 +945,9 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
       ]),
       'iscsi.targetextent.delete': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
+      ]),
+      'iscsi.targetextent.update': _metadata([
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
       ]),
       'system.reboot': _metadata([]),

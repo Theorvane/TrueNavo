@@ -55,7 +55,8 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'iscsi.target.delete' ||
       'iscsi.target.update' ||
       'iscsi.target.get_instance' ||
-      'iscsi.initiator.update' => 'Use the dedicated iSCSI workflow.',
+      'iscsi.initiator.update' ||
+      'iscsi.targetextent.delete' => 'Use the dedicated iSCSI workflow.',
       'iscsi.initiator.create' => 'Use the dedicated iSCSI workflow.',
       'iscsi.initiator.delete' => 'Use the dedicated iSCSI workflow.',
       _ => adminUnavailableReason(widget.operation, catalog),
