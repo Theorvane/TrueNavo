@@ -69,6 +69,7 @@ void main() {
     expect(find.text('Initiator group description'), findsOneWidget);
     expect(find.text('Extent description'), findsOneWidget);
     expect(find.text('Check new target name'), findsOneWidget);
+    expect(find.text('Create an unbound iSCSI target'), findsOneWidget);
     expect(find.text('LUN 0 → extent-two'), findsOneWidget);
     expect(
       find.textContaining('extent-two · Disk · Enabled · Mapped'),
