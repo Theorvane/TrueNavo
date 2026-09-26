@@ -41,6 +41,7 @@ void main() {
     'iscsi.extent.update',
     'iscsi.target.validate_name',
     'iscsi.target.create',
+    'iscsi.target.delete',
     'disk.temperatures',
     'pool.scrub.query',
     'pool.scrub.create',
@@ -549,6 +550,7 @@ class _AdminManager
       'iscsi.extent.update': _method(),
       'iscsi.target.validate_name': _method(),
       'iscsi.target.create': _method(),
+      'iscsi.target.delete': _method(),
       'alert.list': _method(),
       for (final name in [
         'cronjob.query',

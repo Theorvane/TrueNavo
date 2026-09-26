@@ -940,6 +940,7 @@ class AdminOperationTile extends StatelessWidget {
     'iscsi.target.query' ||
     'iscsi.target.validate_name' ||
     'iscsi.target.create' ||
+    'iscsi.target.delete' ||
     'iscsi.extent.query' ||
     'iscsi.extent.get_instance' ||
     'iscsi.extent.update' ||

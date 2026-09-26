@@ -342,6 +342,7 @@ void main() {
     ('iscsi.extent.update', IscsiPage),
     ('iscsi.target.validate_name', IscsiPage),
     ('iscsi.target.create', IscsiPage),
+    ('iscsi.target.delete', IscsiPage),
     ('iscsi.initiator.update', IscsiPage),
   ]) {
     testWidgets(
@@ -918,6 +919,7 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       'iscsi.extent.update': _metadata([]),
       'iscsi.target.validate_name': _metadata([]),
       'iscsi.target.create': _metadata([]),
+      'iscsi.target.delete': _metadata([]),
       'iscsi.initiator.update': _metadata([]),
       // Deliberately ordinary-looking metadata must not enable JSON execution.
       'config.save': _metadata([]),
