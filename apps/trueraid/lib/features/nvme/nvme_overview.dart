@@ -182,14 +182,10 @@ String? _label(Object? value) {
   return value;
 }
 
-final nvmeOverviewProvider = FutureProvider.autoDispose<NvmeOverview>((
-  ref,
-) async {
-  final session = ref.watch(dashboardActiveSessionProvider);
-  final repository = session?.repository;
-  if (session?.endpoint == null || repository is! AuthenticatedAdminSession) {
-    throw StateError('Connect to inspect NVMe-oF.');
-  }
+Future<NvmeOverview> loadNvmeOverviewFromAdmin({
+  required AuthenticatedAdminSession api,
+  required bool Function() isCurrent,
+}) async {
   const names = [
     'nvmet.subsys.query',
     'nvmet.port.query',
@@ -202,7 +198,6 @@ final nvmeOverviewProvider = FutureProvider.autoDispose<NvmeOverview>((
     ['id', 'nsid', 'subsys.id', 'device_type', 'enabled', 'locked'],
     ['id', 'port.id', 'subsys.id'],
   ];
-  final api = repository as AuthenticatedAdminSession;
   final methods = [for (final name in names) api.adminCatalog.method(name)];
   if (!api.adminCatalog.versionSupported ||
       methods.any((method) => method == null || !method.supported)) {
@@ -212,6 +207,7 @@ final nvmeOverviewProvider = FutureProvider.autoDispose<NvmeOverview>((
   }
   final values = <Object?>[];
   for (var i = 0; i < methods.length; i++) {
+    if (!isCurrent()) throw StateError('The server connection changed.');
     final result = await api.invokeAdmin(
       AdminRequest(
         method: methods[i]!,
@@ -221,8 +217,7 @@ final nvmeOverviewProvider = FutureProvider.autoDispose<NvmeOverview>((
         ],
       ),
     );
-    if (!ref.mounted ||
-        !identical(session, ref.read(dashboardActiveSessionProvider))) {
+    if (!isCurrent()) {
       throw StateError('The server connection changed.');
     }
     if (result is! AdminCompleted) {
@@ -235,5 +230,21 @@ final nvmeOverviewProvider = FutureProvider.autoDispose<NvmeOverview>((
     ports: values[1],
     namespaces: values[2],
     portMappings: values[3],
+  );
+}
+
+final nvmeOverviewProvider = FutureProvider.autoDispose<NvmeOverview>((
+  ref,
+) async {
+  final session = ref.watch(dashboardActiveSessionProvider);
+  final repository = session?.repository;
+  if (session?.endpoint == null || repository is! AuthenticatedAdminSession) {
+    throw StateError('Connect to inspect NVMe-oF.');
+  }
+  return loadNvmeOverviewFromAdmin(
+    api: repository as AuthenticatedAdminSession,
+    isCurrent: () =>
+        ref.mounted &&
+        identical(session, ref.read(dashboardActiveSessionProvider)),
   );
 }, retry: (_, _) => null);

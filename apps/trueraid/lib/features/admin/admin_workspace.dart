@@ -30,6 +30,7 @@ import '../shares/shares_page.dart';
 import '../disks/disks_page.dart';
 import '../enclosures/enclosures_page.dart';
 import '../iscsi/iscsi_page.dart';
+import '../nvme/nvme_page.dart';
 import '../pool_maintenance/pool_maintenance_page.dart';
 import '../boot_environments/boot_environments_page.dart';
 import '../activity/activity_page.dart';
@@ -954,6 +955,7 @@ class AdminOperationTile extends StatelessWidget {
     'iscsi.targetextent.create' ||
     'iscsi.targetextent.delete' ||
     'iscsi.targetextent.update' => const IscsiPage(),
+    'nvmet.subsys.create' => const NvmePage(),
     'config.reset' => const ConfigurationResetPage(),
     'config.upload' => const ConfigurationRestorePage(),
     'config.save' => const ConfigurationBackupPage(),

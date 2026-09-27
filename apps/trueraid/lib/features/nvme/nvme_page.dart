@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 import 'nvme_overview.dart';
+import 'nvme_subsystem_create_editor.dart';
 
 class NvmePage extends ConsumerStatefulWidget {
   const NvmePage({super.key});
@@ -80,6 +81,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                     ),
                     _ => const Center(child: CircularProgressIndicator()),
                   },
+                  const SizedBox(height: 20),
+                  const NvmeSubsystemCreateEditor(),
                 ],
               ),
             ),

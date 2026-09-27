@@ -19,6 +19,7 @@ import 'package:trueraid/features/nfs_settings/nfs_settings_page.dart';
 import 'package:trueraid/features/cron_tasks/cron_tasks_page.dart';
 import 'package:trueraid/features/init_shutdown_tasks/init_shutdown_tasks_page.dart';
 import 'package:trueraid/features/iscsi/iscsi_page.dart';
+import 'package:trueraid/features/nvme/nvme_page.dart';
 import 'package:trueraid/features/zvols/zvols_page.dart';
 import 'package:trueraid/features/virtual_machines/virtual_machines_page.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
@@ -509,7 +510,7 @@ void main() {
   testWidgets('cancelled review erases secret inputs without sending', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.port.create'));
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-include-data.password');
     await tester.enterText(
@@ -526,7 +527,7 @@ void main() {
   testWidgets('oversized confirmation cannot acknowledge hidden changes', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.port.create'));
     await tester.enterText(_key('admin-value-data.name'), 'x' * 2049);
     await _tap(tester, 'admin-review-submit');
     expect(find.textContaining('too large or deeply nested'), findsOneWidget);
@@ -617,7 +618,7 @@ void main() {
   testWidgets(
     'write action sends only after explicit review and acknowledgement',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+      final (_, api) = await _pump(tester, _page('nvmet.port.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-review-submit');
       expect(api.requests, isEmpty);
@@ -636,7 +637,7 @@ void main() {
   );
 
   testWidgets('cancelling review does not submit changes', (tester) async {
-    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.port.create'));
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-review-submit');
     await tester.tap(find.text('Cancel'));
@@ -648,7 +649,7 @@ void main() {
   testWidgets('invalid native form cannot open review or send requests', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.port.create'));
     await _tap(tester, 'admin-review-submit');
     expect(find.byType(AdminReviewDialog), findsNothing);
     expect(find.textContaining('Check the highlighted fields'), findsOneWidget);
@@ -669,7 +670,7 @@ void main() {
   testWidgets(
     'confirmation redacts secrets while submitted request keeps value',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+      final (_, api) = await _pump(tester, _page('nvmet.port.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-include-data.password');
       await tester.enterText(
@@ -701,10 +702,7 @@ void main() {
   testWidgets(
     'connection change during review prevents sending to either server',
     (tester) async {
-      final (container, api) = await _pump(
-        tester,
-        _page('nvmet.subsys.create'),
-      );
+      final (container, api) = await _pump(tester, _page('nvmet.port.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-review-submit');
       container.read(_sessionProvider.notifier).select(null);
@@ -734,6 +732,16 @@ void main() {
     },
   );
 
+  testWidgets('NVMe subsystem generic route is blocked despite metadata', (
+    tester,
+  ) async {
+    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
+    expect(api.adminCatalog.method('nvmet.subsys.create'), isNotNull);
+    expect(find.text('This action is unavailable'), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
+    expect(api.requests, isEmpty);
+  });
+
   testWidgets('directory and review fit 320px with large text', (tester) async {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
@@ -745,11 +753,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await _tap(tester, 'admin-open-nvmet.subsys.create');
-    await _reveal(tester, 'admin-value-data.name');
-    await tester.enterText(_key('admin-value-data.name'), 'Media');
-    await _tap(tester, 'admin-review-submit');
+    expect(find.byType(NvmePage), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
     expect(tester.takeException(), isNull);
-    expect(find.byType(AdminReviewDialog), findsOneWidget);
   });
 
   testWidgets('native result list expands records without framework errors', (
@@ -935,6 +941,20 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
         },
       ]),
       'nvmet.subsys.create': _metadata([
+        {
+          '_name_': 'data',
+          '_required_': true,
+          'type': 'object',
+          'required': ['name'],
+          'properties': {
+            'name': {'type': 'string', 'minLength': 1},
+            'password': {'type': 'string', 'secret': true, 'minLength': 1},
+          },
+        },
+      ]),
+      // Synthetic generic-form fixture retained on a different NVMe method;
+      // subsystem creation now has a dedicated reviewed workflow.
+      'nvmet.port.create': _metadata([
         {
           '_name_': 'data',
           '_required_': true,
