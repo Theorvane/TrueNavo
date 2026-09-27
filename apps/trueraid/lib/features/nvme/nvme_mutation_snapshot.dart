@@ -39,9 +39,14 @@ final class NvmeMutationSnapshot {
     return NvmeMutationSnapshot(topology, hosts);
   }
 
-  String proof({int? omitPortMappingId, int? omitPortId}) {
+  String proof({
+    int? omitPortMappingId,
+    int? omitPortId,
+    int? omitSubsystemId,
+  }) {
     final subsystems =
         topology.subsystems
+            .where((s) => s.id != omitSubsystemId)
             .map(
               (s) => [
                 s.id,

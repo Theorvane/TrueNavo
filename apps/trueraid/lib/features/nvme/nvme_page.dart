@@ -13,6 +13,7 @@ import 'nvme_port_access_grant_editor.dart';
 import 'nvme_port_delete_editor.dart';
 import 'nvme_overview.dart';
 import 'nvme_subsystem_create_editor.dart';
+import 'nvme_subsystem_ana_editor.dart';
 import 'nvme_subsystem_delete_editor.dart';
 import 'nvme_subsystem_restrict_editor.dart';
 import 'nvme_subsystem_rename_editor.dart';
@@ -134,6 +135,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeSubsystemRestrictEditor(),
                   const SizedBox(height: 20),
                   const NvmeSubsystemRenameEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeSubsystemAnaEditor(),
                   const SizedBox(height: 20),
                   const NvmeHostAccessRevokeEditor(),
                   const SizedBox(height: 20),
