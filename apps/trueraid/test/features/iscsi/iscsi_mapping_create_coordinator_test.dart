@@ -173,6 +173,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         );
         row['lunid'] = (request.arguments[1] as Map)['lunid'];
         if (mutateTarget) targets.single['name'] = 'unexpected';
+        if (mutatePortal) portals.single['comment'] = 'unexpected';
         return AdminCompleted(request, value: Map<String, Object?>.from(row));
       default:
         throw StateError('Unexpected fake call');
@@ -679,6 +680,195 @@ void main() {
       IscsiMappingCreateOutcome.unknown,
     );
     expect(h.coordinator.locked, isTrue);
+  });
+
+  test('renumbers one bound additional LUN and preserves access', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    expect(h.coordinator.boundRenumberAvailable, isTrue);
+    await expectLater(h.coordinator.prepareRenumber(9, 2), throwsStateError);
+    final review = await h.coordinator.prepareBoundRenumber(9, 2);
+    expect(
+      review.confirmation,
+      'MOVE ISCSI LUN #9 1 TO 2 PORTAL #2 INITIATOR #4',
+    );
+    expect(h.updates, 0);
+    final result = await h.coordinator.executeBoundRenumber(
+      review,
+      review.confirmation,
+    );
+    expect(result.outcome, IscsiMappingCreateOutcome.completed);
+    expect(
+      h.api.calls
+          .singleWhere(
+            (call) => call.method.name == 'iscsi.targetextent.update',
+          )
+          .arguments,
+      [
+        9,
+        {'lunid': 2},
+      ],
+    );
+    expect(h.api.mappings, [
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 2},
+    ]);
+  });
+
+  test('bound renumber rejects CHAP, occupied LUN and access drift', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    await expectLater(
+      h.coordinator.prepareBoundRenumber(8, 2),
+      throwsStateError,
+    );
+    await expectLater(
+      h.coordinator.prepareBoundRenumber(9, 0),
+      throwsStateError,
+    );
+    await expectLater(
+      h.coordinator.prepareBoundRenumber(9, 1),
+      throwsStateError,
+    );
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 1},
+    ];
+    await expectLater(
+      h.coordinator.prepareBoundRenumber(9, 2),
+      throwsStateError,
+    );
+    _bindTarget(h);
+    final review = await h.coordinator.prepareBoundRenumber(9, 2);
+    h.api.portals.single['comment'] = 'changed';
+    expect(
+      (await h.coordinator.executeBoundRenumber(
+        review,
+        review.confirmation,
+      )).outcome,
+      IscsiMappingCreateOutcome.rejected,
+    );
+    expect(h.updates, 0);
+  });
+
+  test('bound renumber postread access drift fences session', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    final review = await h.coordinator.prepareBoundRenumber(9, 2);
+    h.api.mutatePortal = true;
+    expect(
+      (await h.coordinator.executeBoundRenumber(
+        review,
+        review.confirmation,
+      )).outcome,
+      IscsiMappingCreateOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
+  testWidgets('bound renumber editor reviews portal and initiator', (
+    tester,
+  ) async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingRenumberEditor(
+                overview: overview,
+                bound: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-select')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#9 target-a · LUN 1').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-review')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Portal #2 · initiator #4'), findsOneWidget);
+    expect(h.updates, 0);
+    await tester.enterText(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-confirmation')),
+      'MOVE ISCSI LUN #9 1 TO 2 PORTAL #2 INITIATOR #4',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-submit')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.updates, 1);
   });
 
   test(

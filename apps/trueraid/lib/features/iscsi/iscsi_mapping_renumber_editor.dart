@@ -8,8 +8,13 @@ import 'iscsi_overview.dart';
 import 'iscsi_page.dart' show iscsiOverviewProvider;
 
 class IscsiMappingRenumberEditor extends ConsumerStatefulWidget {
-  const IscsiMappingRenumberEditor({required this.overview, super.key});
+  const IscsiMappingRenumberEditor({
+    required this.overview,
+    this.bound = false,
+    super.key,
+  });
   final IscsiOverview overview;
+  final bool bound;
 
   @override
   ConsumerState<IscsiMappingRenumberEditor> createState() =>
@@ -24,6 +29,8 @@ class _IscsiMappingRenumberEditorState
   Object? _reviewSession;
   String? _message;
   bool _busy = false;
+  String _key(String suffix) =>
+      'iscsi-mapping-${widget.bound ? 'bound-' : ''}renumber-$suffix';
 
   @override
   void didUpdateWidget(covariant IscsiMappingRenumberEditor oldWidget) {
@@ -49,7 +56,9 @@ class _IscsiMappingRenumberEditorState
       _message = null;
     });
     try {
-      final review = await coordinator.prepareRenumber(_mapping!, _proposed!);
+      final review = widget.bound
+          ? await coordinator.prepareBoundRenumber(_mapping!, _proposed!)
+          : await coordinator.prepareRenumber(_mapping!, _proposed!);
       if (!mounted) return;
       setState(() {
         _review = review;
@@ -77,7 +86,9 @@ class _IscsiMappingRenumberEditorState
       _review = null;
       _message = null;
     });
-    final result = await coordinator.executeRenumber(review, phrase);
+    final result = widget.bound
+        ? await coordinator.executeBoundRenumber(review, phrase)
+        : await coordinator.executeRenumber(review, phrase);
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -111,30 +122,54 @@ class _IscsiMappingRenumberEditorState
     final review =
         identical(session, _reviewSession) &&
             _mapping == _review?.mappingId &&
-            _proposed == _review?.proposedLun
+            _proposed == _review?.proposedLun &&
+            widget.bound == _review?.bound
         ? _review
         : null;
     final enabled =
         !_busy &&
         coordinator != null &&
-        coordinator.renumberAvailable &&
+        (widget.bound
+            ? coordinator.boundRenumberAvailable
+            : coordinator.renumberAvailable) &&
         !coordinator.locked;
     final options = widget.overview.mappings
         .where(
           (mapping) =>
               mapping.lun >= 1 &&
               mapping.lun <= 31 &&
-              widget.overview.targetById(mapping.targetId)?.mode == 'iSCSI',
+              widget.overview.targetById(mapping.targetId)?.mode == 'iSCSI' &&
+              (widget.bound
+                  ? widget.overview
+                                .targetById(mapping.targetId)
+                                ?.groups
+                                .length ==
+                            1 &&
+                        widget.overview
+                                .targetById(mapping.targetId)
+                                ?.groups
+                                .single
+                                .authMethod ==
+                            'No CHAP'
+                  : widget.overview
+                            .targetById(mapping.targetId)
+                            ?.groups
+                            .isEmpty ==
+                        true),
         )
         .toList();
     return TdPanel(
-      title: 'Change an additional LUN number',
-      description: 'Moves one LUN 1–31 to a free number on the same unbound iSCSI target. LUN 0, target and extent IDs remain unchanged. Stop iSCSI and disconnect clients first.',
+      title: widget.bound
+          ? 'Change an access-bound additional LUN number'
+          : 'Change an additional LUN number',
+      description: widget.bound
+          ? 'Moves one LUN 1–31 to a free number on the same target with one explicit no-CHAP portal and initiator group. LUN 0 and access settings remain unchanged. Stop iSCSI and disconnect clients first.'
+          : 'Moves one LUN 1–31 to a free number on the same unbound iSCSI target. LUN 0, target and extent IDs remain unchanged. Stop iSCSI and disconnect clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DropdownButtonFormField<int>(
-            key: const Key('iscsi-mapping-renumber-select'),
+            key: Key(_key('select')),
             isExpanded: true,
             initialValue: options.any((item) => item.id == _mapping)
                 ? _mapping
@@ -178,7 +213,7 @@ class _IscsiMappingRenumberEditorState
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<int>(
-            key: const Key('iscsi-mapping-renumber-lun'),
+            key: Key(_key('lun')),
             initialValue: choices.contains(_proposed) ? _proposed : null,
             decoration: const InputDecoration(
               labelText: 'New LUN number',
@@ -198,7 +233,7 @@ class _IscsiMappingRenumberEditorState
           ),
           const SizedBox(height: 8),
           OutlinedButton(
-            key: const Key('iscsi-mapping-renumber-review'),
+            key: Key(_key('review')),
             onPressed:
                 enabled &&
                     _mapping != null &&
@@ -208,7 +243,10 @@ class _IscsiMappingRenumberEditorState
                 : null,
             child: const Text('Review LUN number change'),
           ),
-          if (coordinator == null || !coordinator.renumberAvailable)
+          if (coordinator == null ||
+              !(widget.bound
+                  ? coordinator.boundRenumberAvailable
+                  : coordinator.renumberAvailable))
             const Text(
               'This server does not expose the required LUN update methods.',
             ),
@@ -224,11 +262,15 @@ class _IscsiMappingRenumberEditorState
             ),
             Text('Target #${review.targetId}: ${review.targetName}'),
             Text('Extent #${review.extentId}: ${review.extentName}'),
+            if (review.bound)
+              Text(
+                'Portal #${review.portalId} · initiator #${review.initiatorId}',
+              ),
             const Text(
               'Only lunid is submitted. Complete inventories, service and sessions are rechecked; another administrator can still race these reads.',
             ),
             TextField(
-              key: const Key('iscsi-mapping-renumber-confirmation'),
+              key: Key(_key('confirmation')),
               controller: _confirmation,
               enabled: !_busy,
               decoration: InputDecoration(
@@ -237,7 +279,7 @@ class _IscsiMappingRenumberEditorState
               ),
             ),
             FilledButton(
-              key: const Key('iscsi-mapping-renumber-submit'),
+              key: Key(_key('submit')),
               onPressed: _busy ? null : () => _submit(coordinator, review),
               child: const Text('Change LUN number'),
             ),

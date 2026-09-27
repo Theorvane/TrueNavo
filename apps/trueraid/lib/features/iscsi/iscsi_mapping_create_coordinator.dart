@@ -68,14 +68,20 @@ final class IscsiMappingRenumberReview {
     this.extentName,
     this.beforeLun,
     this.proposedLun,
+    this.bound,
+    this.portalId,
+    this.initiatorId,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
   final int mappingId, targetId, extentId, beforeLun, proposedLun;
+  final bool bound;
+  final int? portalId, initiatorId;
   final DateTime issuedAt;
-  String get confirmation =>
-      'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun';
+  String get confirmation => bound
+      ? 'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun PORTAL #$portalId INITIATOR #$initiatorId'
+      : 'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun';
 }
 
 final class _Snapshot {
@@ -158,6 +164,12 @@ final class IscsiMappingCreateCoordinator {
       ].every((name) => api.adminCatalog.method(name)?.supported == true);
   bool get boundAvailable =>
       available &&
+      [
+        'iscsi.portal.query',
+        'iscsi.initiator.query',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
+  bool get boundRenumberAvailable =>
+      renumberAvailable &&
       [
         'iscsi.portal.query',
         'iscsi.initiator.query',
@@ -502,8 +514,9 @@ final class IscsiMappingCreateCoordinator {
   List<int> _renumberCandidate(
     _Snapshot snapshot,
     int mappingId,
-    int proposed,
-  ) {
+    int proposed, {
+    required bool bound,
+  }) {
     if (proposed < 1 || proposed > 31) {
       throw StateError('Choose a free LUN number from 1 to 31.');
     }
@@ -515,10 +528,13 @@ final class IscsiMappingCreateCoordinator {
     }
     final selected = matches.single;
     final targetId = selected[1], extentId = selected[2], oldLun = selected[3];
-    if (!snapshot.availableTargets.contains(targetId) ||
+    if (bound) {
+      _boundAccess(snapshot, targetId);
+    }
+    if ((!bound && !snapshot.availableTargets.contains(targetId)) ||
         !snapshot.availableExtents.contains(extentId)) {
       throw StateError(
-        'Only an unbound iSCSI target and unlocked active extent qualify.',
+        'Only an eligible iSCSI target and unlocked active extent qualify.',
       );
     }
     final targetMappings = snapshot.mappings
@@ -544,9 +560,20 @@ final class IscsiMappingCreateCoordinator {
   Future<IscsiMappingRenumberReview> prepareRenumber(
     int mappingId,
     int proposedLun,
-  ) async {
+  ) => _prepareRenumber(mappingId, proposedLun, bound: false);
+
+  Future<IscsiMappingRenumberReview> prepareBoundRenumber(
+    int mappingId,
+    int proposedLun,
+  ) => _prepareRenumber(mappingId, proposedLun, bound: true);
+
+  Future<IscsiMappingRenumberReview> _prepareRenumber(
+    int mappingId,
+    int proposedLun, {
+    required bool bound,
+  }) async {
     _guard();
-    if (!renumberAvailable ||
+    if (!(bound ? boundRenumberAvailable : renumberAvailable) ||
         _busy ||
         mappingId < 1 ||
         proposedLun < 1 ||
@@ -563,8 +590,14 @@ final class IscsiMappingCreateCoordinator {
     _issued.clear();
     _renumberIssued.clear();
     try {
-      final snapshot = await _snapshot();
-      final mapping = _renumberCandidate(snapshot, mappingId, proposedLun);
+      final snapshot = await _snapshot(includeAccess: bound);
+      final mapping = _renumberCandidate(
+        snapshot,
+        mappingId,
+        proposedLun,
+        bound: bound,
+      );
+      final access = bound ? _boundAccess(snapshot, mapping[1]) : null;
       final review = IscsiMappingRenumberReview._(
         session.endpoint!,
         mappingId,
@@ -574,6 +607,9 @@ final class IscsiMappingCreateCoordinator {
         snapshot.extents[mapping[2]]!,
         mapping[3],
         proposedLun,
+        bound,
+        access?.portalId,
+        access?.initiatorId,
         snapshot.proof,
         _now().toUtc(),
       );
@@ -595,10 +631,22 @@ final class IscsiMappingCreateCoordinator {
   Future<IscsiMappingCreateResult> executeRenumber(
     IscsiMappingRenumberReview review,
     String confirmation,
-  ) async {
+  ) => _executeRenumber(review, confirmation, bound: false);
+
+  Future<IscsiMappingCreateResult> executeBoundRenumber(
+    IscsiMappingRenumberReview review,
+    String confirmation,
+  ) => _executeRenumber(review, confirmation, bound: true);
+
+  Future<IscsiMappingCreateResult> _executeRenumber(
+    IscsiMappingRenumberReview review,
+    String confirmation, {
+    required bool bound,
+  }) async {
     final issued = _renumberIssued.remove(review);
     final now = _now().toUtc();
     if (!issued ||
+        review.bound != bound ||
         _busy ||
         !isCurrent() ||
         IscsiWriteFence.isUncertain(session) ||
@@ -621,8 +669,21 @@ final class IscsiMappingCreateCoordinator {
     _busy = true;
     var sent = false;
     try {
-      final before = await _snapshot();
-      _renumberCandidate(before, review.mappingId, review.proposedLun);
+      final before = await _snapshot(includeAccess: bound);
+      _renumberCandidate(
+        before,
+        review.mappingId,
+        review.proposedLun,
+        bound: bound,
+      );
+      final access = bound ? _boundAccess(before, review.targetId) : null;
+      if (access?.portalId != review.portalId ||
+          access?.initiatorId != review.initiatorId) {
+        return const IscsiMappingCreateResult(
+          IscsiMappingCreateOutcome.rejected,
+          'Target access changed since review. Nothing was sent.',
+        );
+      }
       if (before.proof != review.proof) {
         return const IscsiMappingCreateResult(
           IscsiMappingCreateOutcome.rejected,
@@ -656,7 +717,7 @@ final class IscsiMappingCreateCoordinator {
           response['lunid'] != review.proposedLun) {
         return _unknown();
       }
-      final after = await _snapshot();
+      final after = await _snapshot(includeAccess: bound);
       final expected = <List<int>>[
         for (final mapping in before.mappings)
           if (mapping[0] == review.mappingId)
@@ -666,6 +727,8 @@ final class IscsiMappingCreateCoordinator {
       ];
       if (after.targetDigest != before.targetDigest ||
           after.extentDigest != before.extentDigest ||
+          after.portalDigest != before.portalDigest ||
+          after.initiatorDigest != before.initiatorDigest ||
           jsonEncode(after.mappings) != jsonEncode(expected) ||
           after.service.state != before.service.state ||
           after.service.enabledOnBoot != before.service.enabledOnBoot) {

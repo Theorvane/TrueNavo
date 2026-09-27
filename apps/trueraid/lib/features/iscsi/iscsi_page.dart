@@ -286,6 +286,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         const SizedBox(height: 16),
         IscsiMappingRenumberEditor(overview: value),
         const SizedBox(height: 16),
+        IscsiMappingRenumberEditor(overview: value, bound: true),
+        const SizedBox(height: 16),
         IscsiExtentCommentEditor(overview: value),
         const SizedBox(height: 16),
         const IscsiTargetNameCheck(),
