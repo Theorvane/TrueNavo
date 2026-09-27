@@ -10,6 +10,7 @@ import 'package:trueraid/features/nvme/nvme_subsystem_delete_editor.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_restrict_coordinator.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_restrict_editor.dart';
 import 'package:trueraid/features/nvme/nvme_host_access_revoke_editor.dart';
+import 'package:trueraid/features/nvme/nvme_host_delete_editor.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
@@ -51,6 +52,7 @@ class _Fake
         if (advertiseDelete) 'nvmet.subsys.delete': _method(),
         'nvmet.subsys.update': _method(),
         'nvmet.host_subsys.delete': _method(),
+        'nvmet.host.delete': _method(),
       },
     );
   }
@@ -71,20 +73,23 @@ class _Fake
   bool unknownDelete = false;
   bool unknownUpdate = false;
   bool unknownHostDelete = false;
+  bool unknownOrphanDelete = false;
+  bool driftAfterOrphanDelete = false;
   bool driftAfterHostDelete = false;
   bool driftAfterUpdate = false;
   bool nqnDriftAfterUpdate = false;
   bool driftBeforeDelete = false;
   bool driftAfterDelete = false;
   int subsysReads = 0;
+  final hosts = <Map<String, Object?>>[
+    {'id': 8, 'hostnqn': 'nqn.fixture:host', 'dhchap_key': 'private-key'},
+  ];
 
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
     hostReads++;
     return NvmeHostPublicRows.project(
-      [
-        {'id': 8, 'hostnqn': 'nqn.fixture:host', 'dhchap_key': 'private-key'},
-      ],
+      [for (final row in hosts) Map.of(row)],
       [for (final row in hostMappings) Map.of(row)],
     );
   }
@@ -158,6 +163,18 @@ class _Fake
           });
         }
         return AdminCompleted(request, value: true);
+      case 'nvmet.host.delete':
+        if (unknownOrphanDelete) return AdminOutcomeUnknown(request);
+        final id = request.arguments.first;
+        hosts.removeWhere((row) => row['id'] == id);
+        if (driftAfterOrphanDelete) {
+          subsystems.add({
+            'id': 4,
+            'name': 'other-admin',
+            'allow_any_host': false,
+          });
+        }
+        return AdminCompleted(request, value: true);
       default:
         throw StateError('Unexpected fake call');
     }
@@ -200,6 +217,14 @@ class _Harness {
       isCurrent: () => current,
       now: () => clock,
     );
+    hostDeleteCoordinator = NvmeHostDeleteCoordinator(
+      session: session,
+      api: api,
+      hostsApi: api,
+      lock: ServerOperationLock(),
+      isCurrent: () => current,
+      now: () => clock,
+    );
   }
 
   final _Fake api;
@@ -207,6 +232,7 @@ class _Harness {
   late final NvmeSubsystemDeleteCoordinator coordinator;
   late final NvmeSubsystemRestrictCoordinator restrictCoordinator;
   late final NvmeHostAccessRevokeCoordinator hostRevokeCoordinator;
+  late final NvmeHostDeleteCoordinator hostDeleteCoordinator;
   bool current = true;
   DateTime clock = DateTime.utc(2026);
   int get writes => api.calls
@@ -218,6 +244,8 @@ class _Harness {
   int get hostRevokes => api.calls
       .where((call) => call.method.name == 'nvmet.host_subsys.delete')
       .length;
+  int get hostDeletes =>
+      api.calls.where((call) => call.method.name == 'nvmet.host.delete').length;
 }
 
 void main() {
@@ -759,4 +787,117 @@ void main() {
     expect(h.hostRevokes, 1);
     expect(tester.takeException(), isNull);
   });
+
+  test(
+    'unassociated host deletion uses force false and verified readback',
+    () async {
+      final h = _Harness();
+      final review = await h.hostDeleteCoordinator.prepare(8);
+      expect(review.confirmation, 'DELETE NVME HOST 8 nqn.fixture:host');
+      expect(h.hostDeletes, 0);
+      final result = await h.hostDeleteCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmeHostDeleteOutcome.completed);
+      expect(h.hostDeletes, 1);
+      expect(h.api.calls[8].arguments, [
+        8,
+        {'force': false},
+      ]);
+      expect(h.api.hostReads, 3);
+      expect(h.api.hosts, isEmpty);
+    },
+  );
+
+  test(
+    'association, missing identity, wrong phrase and drift block host deletion',
+    () async {
+      final associated = _Harness();
+      associated.api.hostMappings.add({
+        'id': 9,
+        'host': {'id': 8},
+        'subsys': {'id': 1},
+      });
+      await expectLater(
+        associated.hostDeleteCoordinator.prepare(8),
+        throwsStateError,
+      );
+      final missing = _Harness();
+      await expectLater(
+        missing.hostDeleteCoordinator.prepare(9),
+        throwsStateError,
+      );
+      final h = _Harness();
+      final first = await h.hostDeleteCoordinator.prepare(8);
+      expect(
+        (await h.hostDeleteCoordinator.execute(first, 'wrong')).outcome,
+        NvmeHostDeleteOutcome.rejected,
+      );
+      final second = await h.hostDeleteCoordinator.prepare(8);
+      h.api.hosts.first['hostnqn'] = 'nqn.fixture:changed';
+      expect(
+        (await h.hostDeleteCoordinator.execute(
+          second,
+          second.confirmation,
+        )).outcome,
+        NvmeHostDeleteOutcome.rejected,
+      );
+      expect(associated.hostDeletes + missing.hostDeletes + h.hostDeletes, 0);
+    },
+  );
+
+  test('ambiguous or divergent host deletion fences NVMe edits', () async {
+    for (final drift in [false, true]) {
+      final h = _Harness();
+      final review = await h.hostDeleteCoordinator.prepare(8);
+      h.api.unknownOrphanDelete = !drift;
+      h.api.driftAfterOrphanDelete = drift;
+      final result = await h.hostDeleteCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmeHostDeleteOutcome.unknown);
+      expect(h.hostDeletes, 1);
+      expect(h.hostDeleteCoordinator.locked, true);
+      expect(NvmeWriteFence.isUncertain(h.session), true);
+    }
+  });
+
+  testWidgets(
+    'host deletion editor shows public NQN only and requires phrase',
+    (tester) async {
+      final h = _Harness();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          ],
+          child: MaterialApp(
+            theme: TrueRAIDTheme.dark(),
+            home: const Scaffold(
+              body: SingleChildScrollView(child: NvmeHostDeleteEditor()),
+            ),
+          ),
+        ),
+      );
+      await tester.enterText(find.byKey(const Key('nvme-host-delete-id')), '8');
+      await tester.tap(find.byKey(const Key('nvme-host-delete-review')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('nqn.fixture:host'), findsWidgets);
+      expect(find.textContaining('private-key'), findsNothing);
+      expect(h.hostDeletes, 0);
+      await tester.enterText(
+        find.byKey(const Key('nvme-host-delete-confirmation')),
+        'DELETE NVME HOST 8 nqn.fixture:host',
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('nvme-host-delete-submit')),
+      );
+      await tester.tap(find.byKey(const Key('nvme-host-delete-submit')));
+      await tester.pumpAndSettle();
+      expect(h.hostDeletes, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

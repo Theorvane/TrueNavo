@@ -603,3 +603,269 @@ String _proofWithoutHostMapping(_Snapshot snapshot, int mappingId) {
   );
   return _proof(_Snapshot(snapshot.topology, hosts));
 }
+
+final nvmeHostDeleteCoordinatorProvider = Provider<NvmeHostDeleteCoordinator?>((
+  ref,
+) {
+  final session = ref.watch(dashboardActiveSessionProvider);
+  final repository = session?.repository;
+  if (session?.endpoint == null ||
+      repository is! AuthenticatedAdminSession ||
+      repository is! AuthenticatedNvmeHostSession) {
+    return null;
+  }
+  return NvmeHostDeleteCoordinator(
+    session: session!,
+    api: repository as AuthenticatedAdminSession,
+    hostsApi: repository as AuthenticatedNvmeHostSession,
+    lock: ref.read(serverOperationLockProvider),
+    isCurrent: () =>
+        identical(ref.read(dashboardActiveSessionProvider), session),
+  );
+});
+
+enum NvmeHostDeleteOutcome { completed, rejected, unknown }
+
+final class NvmeHostDeleteResult {
+  const NvmeHostDeleteResult(this.outcome, this.message);
+  final NvmeHostDeleteOutcome outcome;
+  final String message;
+}
+
+final class NvmeHostDeleteReview {
+  NvmeHostDeleteReview._({
+    required this.endpoint,
+    required this.id,
+    required this.nqn,
+    required this.proof,
+    required this.issuedAt,
+  });
+  final String endpoint, nqn, proof;
+  final int id;
+  final DateTime issuedAt;
+  String get confirmation => 'DELETE NVME HOST $id $nqn';
+}
+
+/// Deletes only a host with no returned subsystem association. Sequential
+/// reads cannot exclude an association created by another administrator.
+final class NvmeHostDeleteCoordinator {
+  NvmeHostDeleteCoordinator({
+    required this.session,
+    required this.api,
+    required this.hostsApi,
+    required this.lock,
+    required this.isCurrent,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+
+  final AuthenticatedSession session;
+  final AuthenticatedAdminSession api;
+  final AuthenticatedNvmeHostSession hostsApi;
+  final ServerOperationLock lock;
+  final bool Function() isCurrent;
+  final DateTime Function() _now;
+  final _issued = <NvmeHostDeleteReview>{};
+  bool _busy = false;
+
+  bool get locked => _busy || NvmeWriteFence.isUncertain(session);
+  bool get available =>
+      session.endpoint != null &&
+      api.adminCatalog.versionSupported &&
+      api.adminCatalog.method('nvmet.host.query') != null &&
+      api.adminCatalog.method('nvmet.host_subsys.query')?.supported == true &&
+      [
+        'nvmet.subsys.query',
+        'nvmet.port.query',
+        'nvmet.namespace.query',
+        'nvmet.port_subsys.query',
+        'nvmet.host.delete',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
+
+  void _guard() {
+    if (!isCurrent() || session.endpoint == null) {
+      throw StateError('The server connection changed.');
+    }
+    if (NvmeWriteFence.isUncertain(session)) {
+      throw StateError(
+        'An NVMe-oF change is unverified. Reconnect before editing.',
+      );
+    }
+  }
+
+  Future<_Snapshot> _snapshot() async {
+    final topology = await loadNvmeOverviewFromAdmin(
+      api: api,
+      isCurrent: () => isCurrent() && session.endpoint != null,
+    );
+    _guard();
+    final rows = await hostsApi.loadNvmeHostReferences();
+    _guard();
+    final hosts = NvmeHostOverview.parse(
+      hosts: rows.hosts,
+      mappings: rows.mappings,
+    );
+    if (topology.unresolvedReferences != 0 ||
+        hosts.unresolvedReferences(
+              topology.subsystems.map((s) => s.id).toSet(),
+            ) !=
+            0) {
+      throw StateError('NVMe-oF references are unresolved. Nothing was sent.');
+    }
+    return _Snapshot(topology, hosts);
+  }
+
+  NvmeHost _target(_Snapshot snapshot, int id) {
+    final host = snapshot.hosts.hosts.where((h) => h.id == id).singleOrNull;
+    if (host == null || snapshot.hosts.mappings.any((m) => m.hostId == id)) {
+      throw StateError(
+        'Only an existing host without subsystem associations can be deleted. Nothing was sent.',
+      );
+    }
+    return host;
+  }
+
+  Future<NvmeHostDeleteReview> prepare(int id) async {
+    _guard();
+    if (!available || _busy || id <= 0) {
+      throw StateError(
+        'Select a positive host ID on a supported server. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    try {
+      final before = await _snapshot();
+      final host = _target(before, id);
+      final review = NvmeHostDeleteReview._(
+        endpoint: session.endpoint!,
+        id: host.id,
+        nqn: host.nqn,
+        proof: _proof(before),
+        issuedAt: _now().toUtc(),
+      );
+      _issued.add(review);
+      return review;
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError(
+        'NVMe-oF host delete preflight failed. Nothing was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  void cancel(NvmeHostDeleteReview review) => _issued.remove(review);
+
+  Future<NvmeHostDeleteResult> execute(
+    NvmeHostDeleteReview review,
+    String confirmation,
+  ) async {
+    final issued = _issued.remove(review);
+    final now = _now().toUtc();
+    if (!issued ||
+        _busy ||
+        !isCurrent() ||
+        NvmeWriteFence.isUncertain(session) ||
+        review.endpoint != session.endpoint ||
+        confirmation != review.confirmation ||
+        now.isBefore(review.issuedAt) ||
+        now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+      return const NvmeHostDeleteResult(
+        NvmeHostDeleteOutcome.rejected,
+        'Review expired or confirmation did not match. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      return const NvmeHostDeleteResult(
+        NvmeHostDeleteOutcome.rejected,
+        'Another server operation is in progress. Nothing was sent.',
+      );
+    }
+    _busy = true;
+    var sent = false;
+    try {
+      final before = await _snapshot();
+      final host = _target(before, review.id);
+      if (host.nqn != review.nqn || _proof(before) != review.proof) {
+        return const NvmeHostDeleteResult(
+          NvmeHostDeleteOutcome.rejected,
+          'NVMe-oF configuration changed since review. Nothing was sent.',
+        );
+      }
+      final method = api.adminCatalog.method('nvmet.host.delete');
+      if (method == null || !method.supported) {
+        return const NvmeHostDeleteResult(
+          NvmeHostDeleteOutcome.rejected,
+          'Host delete method is unavailable. Nothing was sent.',
+        );
+      }
+      sent = true;
+      final response = await api.invokeAdmin(
+        AdminRequest(
+          method: method,
+          arguments: [
+            review.id,
+            {'force': false},
+          ],
+        ),
+      );
+      if (response is AdminFailed &&
+          response.reason == AdminFailureReason.denied) {
+        return const NvmeHostDeleteResult(
+          NvmeHostDeleteOutcome.rejected,
+          'The server denied deletion. No change was confirmed.',
+        );
+      }
+      if (response is! AdminCompleted || response.value != true) {
+        return _unknown();
+      }
+      final after = await _snapshot();
+      if (after.hosts.hosts.any((h) => h.id == review.id) ||
+          after.hosts.hosts.length != before.hosts.hosts.length - 1 ||
+          _proof(after) != _proofWithoutHost(before, review.id)) {
+        return _unknown();
+      }
+      return NvmeHostDeleteResult(
+        NvmeHostDeleteOutcome.completed,
+        'Unassociated host #${review.id} is absent in a fresh read. Client activity was not measured.',
+      );
+    } on Object {
+      return sent
+          ? _unknown()
+          : const NvmeHostDeleteResult(
+              NvmeHostDeleteOutcome.rejected,
+              'NVMe-oF host delete preflight failed. Nothing was sent.',
+            );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  NvmeHostDeleteResult _unknown() {
+    NvmeWriteFence.markUncertain(session);
+    _issued.clear();
+    return const NvmeHostDeleteResult(
+      NvmeHostDeleteOutcome.unknown,
+      'Host deletion may have changed the server. Do not retry; inspect the original server and reconnect.',
+    );
+  }
+}
+
+String _proofWithoutHost(_Snapshot snapshot, int hostId) => _proof(
+  _Snapshot(
+    snapshot.topology,
+    NvmeHostOverview(
+      hosts: snapshot.hosts.hosts.where((h) => h.id != hostId).toList(),
+      mappings: snapshot.hosts.mappings,
+    ),
+  ),
+);

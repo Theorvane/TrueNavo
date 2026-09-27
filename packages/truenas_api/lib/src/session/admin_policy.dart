@@ -908,6 +908,13 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'Permitted NVMe initiators; credentials require a protected viewer.',
     blockedReason: _secretFlow,
   ),
+  AdminOperationDefinition.destructive(
+    AdminDomain.shares,
+    'nvmet.host.delete',
+    'Delete NVMe host',
+    'Remove an unassociated NVMe initiator identity.',
+    warning: _shareDeleteWarning,
+  ),
   AdminOperationDefinition.read(
     AdminDomain.shares,
     'nvmet.host_subsys.query',
