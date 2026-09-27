@@ -958,7 +958,8 @@ class AdminOperationTile extends StatelessWidget {
     'nvmet.subsys.create' ||
     'nvmet.subsys.delete' ||
     'nvmet.subsys.update' ||
-    'nvmet.host_subsys.delete' => const NvmePage(),
+    'nvmet.host_subsys.delete' ||
+    'nvmet.host_subsys.create' => const NvmePage(),
     'config.reset' => const ConfigurationResetPage(),
     'config.upload' => const ConfigurationRestorePage(),
     'config.save' => const ConfigurationBackupPage(),

@@ -6,6 +6,39 @@ abstract interface class AuthenticatedNvmeHostSession {
   Future<NvmeHostPublicRows> loadNvmeHostReferences();
 }
 
+/// Dedicated write path: only IDs leave the SDK even when middleware embeds
+/// DH-CHAP key fields in the created association response.
+abstract interface class AuthenticatedNvmeHostAccessSession {
+  Future<NvmeHostAssociationCreated> createNvmeHostAssociation({
+    required int hostId,
+    required int subsystemId,
+  });
+}
+
+final class NvmeHostAssociationCreated {
+  const NvmeHostAssociationCreated(this.id, this.hostId, this.subsystemId);
+  final int id, hostId, subsystemId;
+
+  factory NvmeHostAssociationCreated.project(Object? raw) {
+    if (raw is! Map ||
+        raw['id'] is! int ||
+        (raw['id'] as int) <= 0 ||
+        raw['host'] is! Map ||
+        (raw['host'] as Map)['id'] is! int ||
+        ((raw['host'] as Map)['id'] as int) <= 0 ||
+        raw['subsys'] is! Map ||
+        (raw['subsys'] as Map)['id'] is! int ||
+        ((raw['subsys'] as Map)['id'] as int) <= 0) {
+      throw const FormatException('Invalid NVMe host association result');
+    }
+    return NvmeHostAssociationCreated(
+      raw['id'] as int,
+      (raw['host'] as Map)['id'] as int,
+      (raw['subsys'] as Map)['id'] as int,
+    );
+  }
+}
+
 final class NvmeHostPublicRows {
   NvmeHostPublicRows._(this.hosts, this.mappings);
 

@@ -171,6 +171,52 @@ void main() {
       isEmpty,
     );
   });
+
+  test(
+    'NVMe association create projects only IDs from a secret-bearing response',
+    () async {
+      final wire = _Wire(advertiseNvme: true, advertiseNvmeCreate: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final created = await repo.createNvmeHostAssociation(
+        hostId: 3,
+        subsystemId: 2,
+      );
+      expect([created.id, created.hostId, created.subsystemId], [9, 3, 2]);
+      expect(created.toString(), isNot(contains(_secret)));
+      final call = wire.requests.singleWhere(
+        (r) => r['method'] == 'nvmet.host_subsys.create',
+      );
+      expect(call['params'], [
+        {'host_id': 3, 'subsys_id': 2},
+      ]);
+      expect(call.toString(), isNot(contains(_secret)));
+    },
+  );
+
+  test('unadvertised NVMe association create sends no write', () async {
+    final wire = _Wire(advertiseNvme: true);
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    await expectLater(
+      repo.createNvmeHostAssociation(hostId: 3, subsystemId: 2),
+      throwsA(isA<NvmeHostException>()),
+    );
+    expect(
+      wire.requests.where((r) => r['method'] == 'nvmet.host_subsys.create'),
+      isEmpty,
+    );
+  });
 }
 
 final class _Connector implements RpcConnector {
@@ -185,9 +231,11 @@ final class _Wire implements RpcTransport {
     this.advertiseAuth = true,
     this.advertiseNvme = false,
     this.advertiseNvmeMapping = true,
+    this.advertiseNvmeCreate = false,
   });
   final bool advertiseAuth;
   final bool advertiseNvme, advertiseNvmeMapping;
+  final bool advertiseNvmeCreate;
   bool malformed = false;
   final _incoming = StreamController<String>();
   final requests = <Map<String, dynamic>>[];
@@ -220,6 +268,7 @@ final class _Wire implements RpcTransport {
         if (advertiseNvme) 'nvmet.host.query': _nvmeMetadata,
         if (advertiseNvme && advertiseNvmeMapping)
           'nvmet.host_subsys.query': _nvmeMetadata,
+        if (advertiseNvmeCreate) 'nvmet.host_subsys.create': _nvmeMetadata,
       },
       'iscsi.auth.query' =>
         malformed
@@ -248,6 +297,11 @@ final class _Wire implements RpcTransport {
           'subsys': {'id': 2},
         },
       ],
+      'nvmet.host_subsys.create' => {
+        'id': 9,
+        'host': {'id': 3, 'dhchap_key': _secret},
+        'subsys': {'id': 2, 'serial': _secret},
+      },
       _ => throw StateError('Unexpected fixture method'),
     };
     _incoming.add(

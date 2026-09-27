@@ -145,7 +145,8 @@ final class TrueNasSessionRepository
         AuthenticatedAuditSettingsSession,
         AuthenticatedAuditExportSession,
         AuthenticatedIscsiAuthSession,
-        AuthenticatedNvmeHostSession {
+        AuthenticatedNvmeHostSession,
+        AuthenticatedNvmeHostAccessSession {
   TrueNasSessionRepository({
     required RpcConnector connector,
     CredentialVault? credentialVault,
@@ -1644,6 +1645,40 @@ final class TrueNasSessionRepository
           .timeout(managementRequestTimeout);
       if (!management.isCurrent()) throw const NvmeHostException();
       return NvmeHostPublicRows.project(hosts, mappings);
+    } on Object {
+      throw const NvmeHostException();
+    }
+  }
+
+  @override
+  Future<NvmeHostAssociationCreated> createNvmeHostAssociation({
+    required int hostId,
+    required int subsystemId,
+  }) async {
+    final management = _management;
+    final client = _client;
+    if (hostId <= 0 ||
+        subsystemId <= 0 ||
+        management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !management.isCurrent() ||
+        !management.methods.contains('nvmet.host_subsys.create') ||
+        client == null ||
+        !client.isOpen) {
+      throw const NvmeHostException();
+    }
+    try {
+      final raw = await client
+          .call(
+            'nvmet.host_subsys.create',
+            id: _id(),
+            params: [
+              {'host_id': hostId, 'subsys_id': subsystemId},
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      return NvmeHostAssociationCreated.project(raw);
     } on Object {
       throw const NvmeHostException();
     }
