@@ -6,18 +6,22 @@ import 'package:truenas_api/truenas_api.dart';
 import '../connection/connection_controller.dart';
 import '../dashboard/dashboard_controller.dart';
 import '../management/server_operation_lock.dart';
+import 'nvme_host_overview.dart';
 import 'nvme_overview.dart';
 
 final nvmeSubsystemCreateCoordinatorProvider =
     Provider<NvmeSubsystemCreateCoordinator?>((ref) {
       final session = ref.watch(dashboardActiveSessionProvider);
+      final repository = session?.repository;
       if (session?.endpoint == null ||
-          session!.repository is! AuthenticatedAdminSession) {
+          repository is! AuthenticatedAdminSession ||
+          repository is! AuthenticatedNvmeHostSession) {
         return null;
       }
       return NvmeSubsystemCreateCoordinator(
-        session: session,
-        api: session.repository as AuthenticatedAdminSession,
+        session: session!,
+        api: repository as AuthenticatedAdminSession,
+        hostsApi: repository as AuthenticatedNvmeHostSession,
         lock: ref.read(serverOperationLockProvider),
         isCurrent: () =>
             identical(ref.read(dashboardActiveSessionProvider), session),
@@ -53,13 +57,20 @@ final class NvmeCreateReview {
   String get confirmation => 'CREATE NVME SUBSYSTEM $name';
 }
 
-/// Requests only an unbound subsystem. Port and namespace associations are
-/// checked in readback; host associations are not queried or claimed absent.
+final class _Snapshot {
+  const _Snapshot(this.topology, this.hosts);
+  final NvmeOverview topology;
+  final NvmeHostOverview hosts;
+}
+
+/// Requests only an unbound subsystem. Host, port and namespace associations
+/// are checked in readback with separate bounded inventories.
 /// It never uses a generic schema form and never changes existing objects.
 final class NvmeSubsystemCreateCoordinator {
   NvmeSubsystemCreateCoordinator({
     required this.session,
     required this.api,
+    required this.hostsApi,
     required this.lock,
     required this.isCurrent,
     DateTime Function()? now,
@@ -67,6 +78,7 @@ final class NvmeSubsystemCreateCoordinator {
 
   final AuthenticatedSession session;
   final AuthenticatedAdminSession api;
+  final AuthenticatedNvmeHostSession hostsApi;
   final ServerOperationLock lock;
   final bool Function() isCurrent;
   final DateTime Function() _now;
@@ -77,6 +89,8 @@ final class NvmeSubsystemCreateCoordinator {
   bool get available =>
       session.endpoint != null &&
       api.adminCatalog.versionSupported &&
+      api.adminCatalog.method('nvmet.host.query') != null &&
+      api.adminCatalog.method('nvmet.host_subsys.query')?.supported == true &&
       [
         'nvmet.subsys.query',
         'nvmet.port.query',
@@ -96,17 +110,28 @@ final class NvmeSubsystemCreateCoordinator {
     }
   }
 
-  Future<NvmeOverview> _snapshot() => loadNvmeOverviewFromAdmin(
-    api: api,
-    isCurrent: () => isCurrent() && session.endpoint != null,
-  );
-
-  void _requireConsistent(NvmeOverview value) {
-    if (value.unresolvedReferences != 0) {
+  Future<_Snapshot> _snapshot() async {
+    final topology = await loadNvmeOverviewFromAdmin(
+      api: api,
+      isCurrent: () => isCurrent() && session.endpoint != null,
+    );
+    _guard();
+    final rows = await hostsApi.loadNvmeHostReferences();
+    _guard();
+    final hosts = NvmeHostOverview.parse(
+      hosts: rows.hosts,
+      mappings: rows.mappings,
+    );
+    if (topology.unresolvedReferences != 0 ||
+        hosts.unresolvedReferences(
+              topology.subsystems.map((s) => s.id).toSet(),
+            ) !=
+            0) {
       throw StateError(
         'NVMe-oF references are unresolved. Reload before editing.',
       );
     }
+    return _Snapshot(topology, hosts);
   }
 
   Future<NvmeCreateReview> prepare(String name) async {
@@ -130,13 +155,12 @@ final class NvmeSubsystemCreateCoordinator {
     try {
       final before = await _snapshot();
       _guard();
-      _requireConsistent(before);
-      if (before.subsystems.length >= 99) {
+      if (before.topology.subsystems.length >= 99) {
         throw StateError(
           'The bounded subsystem inventory cannot verify another create.',
         );
       }
-      if (before.subsystems.any(
+      if (before.topology.subsystems.any(
         (row) => row.name.toLowerCase() == name.toLowerCase(),
       )) {
         throw StateError('A subsystem with this name is already configured.');
@@ -192,8 +216,8 @@ final class NvmeSubsystemCreateCoordinator {
     try {
       final before = await _snapshot();
       _guard();
-      _requireConsistent(before);
-      if (before.subsystems.length >= 99 || _proof(before) != review.proof) {
+      if (before.topology.subsystems.length >= 99 ||
+          _proof(before) != review.proof) {
         return const NvmeCreateResult(
           NvmeCreateOutcome.rejected,
           'NVMe-oF configuration changed since review. Nothing was sent.',
@@ -235,23 +259,24 @@ final class NvmeSubsystemCreateCoordinator {
       }
       final after = await _snapshot();
       _guard();
-      _requireConsistent(after);
-      if (after.subsystems.length != before.subsystems.length + 1 ||
-          after.subsystems
+      if (after.topology.subsystems.length !=
+              before.topology.subsystems.length + 1 ||
+          after.topology.subsystems
                   .where(
                     (s) =>
                         s.id == id && s.name == review.name && !s.allowAnyHost,
                   )
                   .length !=
               1 ||
-          after.namespaces.any((n) => n.subsystemId == id) ||
-          after.portMappings.any((m) => m.subsystemId == id) ||
+          after.topology.namespaces.any((n) => n.subsystemId == id) ||
+          after.topology.portMappings.any((m) => m.subsystemId == id) ||
+          after.hosts.mappings.any((m) => m.subsystemId == id) ||
           _proofWithout(after, id) != _proof(before)) {
         return _unknown();
       }
       return NvmeCreateResult(
         NvmeCreateOutcome.completed,
-        'Unbound subsystem #$id was found in a fresh read. No port or namespace was attached; client access was not tested.',
+        'Unbound subsystem #$id was found in fresh reads. No host, port or namespace association was returned; client access was not tested.',
       );
     } on Object {
       return sent
@@ -276,9 +301,10 @@ final class NvmeSubsystemCreateCoordinator {
   }
 }
 
-String _proof(NvmeOverview value) => _proofWithout(value, null);
+String _proof(_Snapshot value) => _proofWithout(value, null);
 
-String _proofWithout(NvmeOverview value, int? omitSubsystemId) {
+String _proofWithout(_Snapshot snapshot, int? omitSubsystemId) {
+  final value = snapshot.topology;
   final subsystems =
       value.subsystems
           .where((s) => s.id != omitSubsystemId)
@@ -304,5 +330,19 @@ String _proofWithout(NvmeOverview value, int? omitSubsystemId) {
   final mappings =
       value.portMappings.map((m) => [m.id, m.portId, m.subsystemId]).toList()
         ..sort((a, b) => a[0].compareTo(b[0]));
-  return jsonEncode([subsystems, ports, namespaces, mappings]);
+  final hosts = snapshot.hosts.hosts.map((h) => [h.id, h.nqn]).toList()
+    ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
+  final hostMappings =
+      snapshot.hosts.mappings
+          .map((m) => [m.id, m.hostId, m.subsystemId])
+          .toList()
+        ..sort((a, b) => a[0].compareTo(b[0]));
+  return jsonEncode([
+    subsystems,
+    ports,
+    namespaces,
+    mappings,
+    hosts,
+    hostMappings,
+  ]);
 }

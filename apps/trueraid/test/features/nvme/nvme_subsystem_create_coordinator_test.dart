@@ -42,18 +42,25 @@ Map<String, Object?> _method({bool create = false}) => {
   'roles': ['FULL_ADMIN'],
 };
 
-class _Fake implements SessionRepository, AuthenticatedAdminSession {
-  _Fake({this.advertiseCreate = true}) {
+class _Fake
+    implements
+        SessionRepository,
+        AuthenticatedAdminSession,
+        AuthenticatedNvmeHostSession {
+  _Fake({this.advertiseCreate = true, this.advertiseHostMappings = true}) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
       metadata: {
         for (final name in _queries) name: _method(),
+        'nvmet.host.query': _method(),
+        if (advertiseHostMappings) 'nvmet.host_subsys.query': _method(),
         if (advertiseCreate) 'nvmet.subsys.create': _method(create: true),
       },
     );
   }
 
   final bool advertiseCreate;
+  final bool advertiseHostMappings;
   @override
   late final AdminCatalog adminCatalog;
   final calls = <AdminRequest>[];
@@ -61,10 +68,24 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
     {'id': 1, 'name': 'existing', 'allow_any_host': false},
   ];
   final mappings = <Map<String, Object?>>[];
+  final hostMappings = <Map<String, Object?>>[];
   bool unknownCreate = false;
   bool attachAfterCreate = false;
+  bool attachHostAfterCreate = false;
   int subsysReads = 0;
+  int hostReads = 0;
   bool driftOnSecondRead = false;
+
+  @override
+  Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    hostReads++;
+    return NvmeHostPublicRows.project(
+      [
+        {'id': 8, 'hostnqn': 'nqn.2026-09.example:host'},
+      ],
+      [for (final row in hostMappings) Map.of(row)],
+    );
+  }
 
   @override
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
@@ -104,6 +125,13 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
             'subsys': {'id': 7},
           });
         }
+        if (attachHostAfterCreate) {
+          hostMappings.add({
+            'id': 10,
+            'host': {'id': 8},
+            'subsys': {'id': 7},
+          });
+        }
         return AdminCompleted(request, value: Map.of(row));
       default:
         throw StateError('Unexpected fake call');
@@ -115,8 +143,11 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
 }
 
 class _Harness {
-  _Harness({bool advertiseCreate = true})
-    : api = _Fake(advertiseCreate: advertiseCreate) {
+  _Harness({bool advertiseCreate = true, bool advertiseHostMappings = true})
+    : api = _Fake(
+        advertiseCreate: advertiseCreate,
+        advertiseHostMappings: advertiseHostMappings,
+      ) {
     session = AuthenticatedSession(
       profileId: 'fixture',
       repository: api,
@@ -126,6 +157,7 @@ class _Harness {
     coordinator = NvmeSubsystemCreateCoordinator(
       session: session,
       api: api,
+      hostsApi: api,
       lock: ServerOperationLock(),
       isCurrent: () => current,
       now: () => clock,
@@ -153,6 +185,7 @@ void main() {
       final result = await h.coordinator.execute(review, review.confirmation);
       expect(result.outcome, NvmeCreateOutcome.completed);
       expect(h.writes, 1);
+      expect(h.api.hostReads, 3);
       expect(h.api.calls.map((call) => call.method.name), [
         ..._queries,
         ..._queries,
@@ -175,6 +208,12 @@ void main() {
       final missing = _Harness(advertiseCreate: false);
       expect(missing.coordinator.available, false);
       await expectLater(missing.coordinator.prepare('new'), throwsStateError);
+      final noHostInventory = _Harness(advertiseHostMappings: false);
+      expect(noHostInventory.coordinator.available, false);
+      await expectLater(
+        noHostInventory.coordinator.prepare('new'),
+        throwsStateError,
+      );
       final h = _Harness();
       await expectLater(h.coordinator.prepare('EXISTING'), throwsStateError);
       h.api.mappings.add({
@@ -218,6 +257,24 @@ void main() {
   });
 
   test(
+    'host association change after review blocks the create request',
+    () async {
+      final h = _Harness();
+      final review = await h.coordinator.prepare('new');
+      h.api.hostMappings.add({
+        'id': 11,
+        'host': {'id': 8},
+        'subsys': {'id': 1},
+      });
+      expect(
+        (await h.coordinator.execute(review, review.confirmation)).outcome,
+        NvmeCreateOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    },
+  );
+
+  test(
     'ambiguous result or postwrite association fences the connection',
     () async {
       final h = _Harness();
@@ -242,6 +299,18 @@ void main() {
         NvmeCreateOutcome.unknown,
       );
       expect(other.coordinator.locked, true);
+
+      final linked = _Harness();
+      linked.api.attachHostAfterCreate = true;
+      final linkedReview = await linked.coordinator.prepare('new');
+      expect(
+        (await linked.coordinator.execute(
+          linkedReview,
+          linkedReview.confirmation,
+        )).outcome,
+        NvmeCreateOutcome.unknown,
+      );
+      expect(linked.coordinator.locked, true);
     },
   );
 

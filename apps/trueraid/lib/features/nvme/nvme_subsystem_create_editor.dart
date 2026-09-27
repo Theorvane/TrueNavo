@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 import '../dashboard/dashboard_controller.dart';
+import 'nvme_host_overview.dart';
 import 'nvme_overview.dart';
 import 'nvme_subsystem_create_coordinator.dart';
 
@@ -88,6 +89,7 @@ class _NvmeSubsystemCreateEditorState
       _name.clear();
       _confirmation.clear();
       ref.invalidate(nvmeOverviewProvider);
+      ref.invalidate(nvmeHostOverviewProvider);
     }
   }
 
@@ -108,7 +110,7 @@ class _NvmeSubsystemCreateEditorState
         !coordinator.locked;
     return TdPanel(
       title: 'Create an unbound NVMe-oF subsystem',
-      description: 'Requests a subsystem without port, namespace or host mappings. Port and namespace absence are checked afterward; host mappings are not inspected. This does not test client access.',
+      description: 'Requests a subsystem without port, namespace or host mappings. All three association types are checked in fresh reads afterward. This does not test client access.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -130,7 +132,7 @@ class _NvmeSubsystemCreateEditorState
           ),
           if (coordinator == null || !coordinator.available)
             const Text(
-              'This server does not expose the required NVMe-oF methods.',
+              'This server does not expose the required NVMe-oF methods and protected host inventory.',
             ),
           if (coordinator?.locked == true)
             const Text(
