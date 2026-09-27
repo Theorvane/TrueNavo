@@ -282,7 +282,7 @@ String _proofWithout(NvmeOverview value, int? omitSubsystemId) {
   final subsystems =
       value.subsystems
           .where((s) => s.id != omitSubsystemId)
-          .map((s) => [s.id, s.name, s.allowAnyHost])
+          .map((s) => [s.id, s.name, s.subnqn, s.allowAnyHost])
           .toList()
         ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
   final ports = value.ports.map((p) => [p.id, p.transport, p.enabled]).toList()

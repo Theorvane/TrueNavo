@@ -58,17 +58,25 @@ final class NvmeOverview {
 }
 
 final class NvmeSubsystem {
-  const NvmeSubsystem(this.id, this.name, this.allowAnyHost);
+  const NvmeSubsystem(this.id, this.name, this.allowAnyHost, this.subnqn);
   final int id;
   final String name;
   final bool allowAnyHost;
+  final String? subnqn;
 
   static NvmeSubsystem? parse(Map row) {
     final id = _id(row['id']);
     final name = _label(row['name']);
     final allowAnyHost = row['allow_any_host'];
-    if (id == null || name == null || allowAnyHost is! bool) return null;
-    return NvmeSubsystem(id, name, allowAnyHost);
+    final rawNqn = row['subnqn'];
+    final subnqn = rawNqn == null ? null : _nqn(rawNqn);
+    if (id == null ||
+        name == null ||
+        allowAnyHost is! bool ||
+        (rawNqn != null && subnqn == null)) {
+      return null;
+    }
+    return NvmeSubsystem(id, name, allowAnyHost, subnqn);
   }
 }
 
@@ -182,6 +190,17 @@ String? _label(Object? value) {
   return value;
 }
 
+String? _nqn(Object? value) {
+  if (value is! String ||
+      value.length < 11 ||
+      value.length > 223 ||
+      !value.startsWith('nqn.') ||
+      value.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+    return null;
+  }
+  return value;
+}
+
 Future<NvmeOverview> loadNvmeOverviewFromAdmin({
   required AuthenticatedAdminSession api,
   required bool Function() isCurrent,
@@ -193,7 +212,7 @@ Future<NvmeOverview> loadNvmeOverviewFromAdmin({
     'nvmet.port_subsys.query',
   ];
   const fields = [
-    ['id', 'name', 'allow_any_host'],
+    ['id', 'name', 'subnqn', 'allow_any_host'],
     ['id', 'addr_trtype', 'enabled'],
     ['id', 'nsid', 'subsys.id', 'device_type', 'enabled', 'locked'],
     ['id', 'port.id', 'subsys.id'],

@@ -305,6 +305,7 @@ class _Content extends StatelessWidget {
     final visible = value.subsystems.where((subsystem) {
       if (query.isEmpty ||
           subsystem.name.toLowerCase().contains(query) ||
+          (subsystem.subnqn?.toLowerCase().contains(query) ?? false) ||
           subsystem.id.toString() == query) {
         return true;
       }
@@ -369,7 +370,7 @@ class _Content extends StatelessWidget {
                 key: const Key('nvme-filter'),
                 controller: filter,
                 decoration: const InputDecoration(
-                  labelText: 'Find subsystem or namespace ID',
+                  labelText: 'Find subsystem, NQN or namespace ID',
                   prefixIcon: Icon(Icons.search),
                 ),
                 onChanged: (_) => onChanged(),
@@ -392,6 +393,13 @@ class _Content extends StatelessWidget {
                       'Subsystem #${subsystem.id} · ${subsystem.allowAnyHost ? 'Any host allowed' : 'Host access restricted (host list not loaded)'}',
                     ),
                     children: [
+                      ListTile(
+                        title: const Text('Subsystem NQN'),
+                        subtitle: Text(
+                          subsystem.subnqn ?? 'Not returned by this server',
+                          key: Key('nvme-subsystem-nqn-${subsystem.id}'),
+                        ),
+                      ),
                       for (final namespace in value.namespaces.where(
                         (n) => n.subsystemId == subsystem.id,
                       ))

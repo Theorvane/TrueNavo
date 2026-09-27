@@ -86,6 +86,7 @@ class _Fake
         {
           'id': 1,
           'name': 'finance',
+          'subnqn': 'nqn.2026-09.example:finance',
           'allow_any_host': false,
           'serial': 'hidden-serial',
         },
@@ -207,6 +208,7 @@ void main() {
     expect(result.exposedSubsystems, 1);
     expect(result.unresolvedReferences, 0);
     expect(result.namespaces.single.deviceType, 'ZVOL');
+    expect(result.subsystems.single.subnqn, isNull);
     expect(
       result.namespaces.single.toString(),
       isNot(contains('/mnt/private')),
@@ -220,6 +222,22 @@ void main() {
             (i) => {'id': i + 1, 'name': 'x', 'allow_any_host': false},
           ),
           '[additional items omitted]',
+        ],
+        ports: [],
+        namespaces: [],
+        portMappings: [],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => NvmeOverview.parse(
+        subsystems: [
+          {
+            'id': 1,
+            'name': 'one',
+            'allow_any_host': false,
+            'subnqn': 'invalid-nqn',
+          },
         ],
         ports: [],
         namespaces: [],
@@ -300,6 +318,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(fake.calls.map((c) => c.method.name).toList(), _names);
+      expect((fake.calls.first.arguments[1] as Map)['select'], [
+        'id',
+        'name',
+        'subnqn',
+        'allow_any_host',
+      ]);
       for (final call in fake.calls) {
         expect(call.arguments.first, isEmpty);
         expect((call.arguments[1] as Map)['limit'], 101);
@@ -335,6 +359,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Namespace 1 · ZVOL'), findsOneWidget);
       expect(find.text('Port #3 · TCP'), findsOneWidget);
+      expect(find.text('nqn.2026-09.example:finance'), findsOneWidget);
       await tester.tap(find.byKey(const Key('nvme-refresh')));
       await tester.pumpAndSettle();
       expect(fake.calls.length, 8);

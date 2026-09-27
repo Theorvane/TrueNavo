@@ -69,6 +69,7 @@ class _Fake
   bool unknownDelete = false;
   bool unknownUpdate = false;
   bool driftAfterUpdate = false;
+  bool nqnDriftAfterUpdate = false;
   bool driftBeforeDelete = false;
   bool driftAfterDelete = false;
   int subsysReads = 0;
@@ -129,6 +130,9 @@ class _Fake
         final payload = request.arguments[1] as Map;
         final row = subsystems.singleWhere((row) => row['id'] == id);
         row['allow_any_host'] = payload['allow_any_host'];
+        if (nqnDriftAfterUpdate) {
+          row['subnqn'] = 'nqn.2026-09.example:unexpected';
+        }
         if (driftAfterUpdate) {
           subsystems.add({
             'id': 4,
@@ -506,6 +510,20 @@ void main() {
         NvmeRestrictOutcome.unknown,
       );
       expect(other.restrictCoordinator.locked, true);
+
+      final nqnDrift = _Harness();
+      nqnDrift.api.subsystems[0]['allow_any_host'] = true;
+      nqnDrift.api.subsystems[0]['subnqn'] = 'nqn.2026-09.example:stable';
+      nqnDrift.api.nqnDriftAfterUpdate = true;
+      final nqnReview = await nqnDrift.restrictCoordinator.prepare(1);
+      expect(
+        (await nqnDrift.restrictCoordinator.execute(
+          nqnReview,
+          nqnReview.confirmation,
+        )).outcome,
+        NvmeRestrictOutcome.unknown,
+      );
+      expect(nqnDrift.restrictCoordinator.locked, true);
     },
   );
 

@@ -283,7 +283,7 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
   final subsystems =
       topology.subsystems
           .where((s) => s.id != omitSubsystemId)
-          .map((s) => [s.id, s.name, s.allowAnyHost])
+          .map((s) => [s.id, s.name, s.subnqn, s.allowAnyHost])
           .toList()
         ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
   final ports =
