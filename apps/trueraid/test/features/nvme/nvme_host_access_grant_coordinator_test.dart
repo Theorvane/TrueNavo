@@ -1,8 +1,14 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
+import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid/features/nvme/nvme_host_access_grant_coordinator.dart';
+import 'package:trueraid/features/nvme/nvme_port_access_grant_coordinator.dart';
+import 'package:trueraid/features/nvme/nvme_port_access_grant_editor.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_create_coordinator.dart';
+import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
 const _queries = [
@@ -33,8 +39,9 @@ class _Fake
         SessionRepository,
         AuthenticatedAdminSession,
         AuthenticatedNvmeHostSession,
-        AuthenticatedNvmeHostAccessSession {
-  _Fake({this.advertiseCreate = true}) {
+        AuthenticatedNvmeHostAccessSession,
+        AuthenticatedNvmePortAccessSession {
+  _Fake({this.advertiseCreate = true, this.advertisePortCreate = true}) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
       metadata: {
@@ -42,11 +49,13 @@ class _Fake
         'nvmet.host.query': _method(),
         'nvmet.host_subsys.query': _method(),
         if (advertiseCreate) 'nvmet.host_subsys.create': _method(),
+        if (advertisePortCreate) 'nvmet.port_subsys.create': _method(),
       },
     );
   }
 
   final bool advertiseCreate;
+  final bool advertisePortCreate;
   @override
   late final AdminCatalog adminCatalog;
   final calls = <AdminRequest>[];
@@ -64,9 +73,12 @@ class _Fake
   final hostMappings = <Map<String, Object?>>[];
   int hostReads = 0;
   int writes = 0;
+  int portWrites = 0;
   bool unknown = false;
   bool driftAfterWrite = false;
   bool driftBeforeWrite = false;
+  bool unknownPortWrite = false;
+  bool driftAfterPortWrite = false;
 
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
@@ -116,12 +128,31 @@ class _Fake
   }
 
   @override
+  Future<NvmePortAssociationCreated> createNvmePortAssociation({
+    required int portId,
+    required int subsystemId,
+  }) async {
+    portWrites++;
+    if (unknownPortWrite) throw StateError('lost response');
+    portMappings.add({
+      'id': 11,
+      'port': {'id': portId},
+      'subsys': {'id': subsystemId},
+    });
+    if (driftAfterPortWrite) subsystems.first['name'] = 'changed';
+    return NvmePortAssociationCreated(11, portId, subsystemId);
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _Harness {
-  _Harness({bool advertiseCreate = true})
-    : api = _Fake(advertiseCreate: advertiseCreate) {
+  _Harness({bool advertiseCreate = true, bool advertisePortCreate = true})
+    : api = _Fake(
+        advertiseCreate: advertiseCreate,
+        advertisePortCreate: advertisePortCreate,
+      ) {
     session = AuthenticatedSession(
       profileId: 'fixture',
       repository: api,
@@ -137,11 +168,21 @@ class _Harness {
       isCurrent: () => current,
       now: () => clock,
     );
+    portCoordinator = NvmePortAccessGrantCoordinator(
+      session: session,
+      api: api,
+      hostsApi: api,
+      accessApi: api,
+      lock: ServerOperationLock(),
+      isCurrent: () => current,
+      now: () => clock,
+    );
   }
 
   final _Fake api;
   late final AuthenticatedSession session;
   late final NvmeHostAccessGrantCoordinator coordinator;
+  late final NvmePortAccessGrantCoordinator portCoordinator;
   bool current = true;
   DateTime clock = DateTime.utc(2026);
 }
@@ -241,5 +282,158 @@ void main() {
       expect(NvmeWriteFence.isUncertain(h.session), isTrue);
       expect(h.coordinator.locked, isTrue);
     }
+  });
+
+  test(
+    'maps one disabled unused port to an empty restricted subsystem',
+    () async {
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      final review = await h.portCoordinator.prepare(7, 1);
+      expect(review.confirmation, 'MAP NVME PORT 7 TO SUBSYSTEM 1');
+      expect(h.api.portWrites, 0);
+      final result = await h.portCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmePortGrantOutcome.completed);
+      expect(h.api.portWrites, 1);
+      expect(h.api.hostReads, 3);
+      expect(h.api.portMappings.single['id'], 11);
+    },
+  );
+
+  test('enabled or mapped port, namespace, host grant and unavailable method block mapping', () async {
+    final enabled = _Harness();
+    enabled.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': true});
+    await expectLater(enabled.portCoordinator.prepare(7, 1), throwsStateError);
+    final mapped = _Harness();
+    mapped.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+    mapped.api.portMappings.add({
+      'id': 5,
+      'port': {'id': 7},
+      'subsys': {'id': 1},
+    });
+    await expectLater(mapped.portCoordinator.prepare(7, 1), throwsStateError);
+    final namespace = _Harness();
+    namespace.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+    namespace.api.namespaces.add({
+      'id': 5,
+      'nsid': 1,
+      'subsys': {'id': 1},
+      'device_type': 'ZVOL',
+      'enabled': true,
+    });
+    await expectLater(
+      namespace.portCoordinator.prepare(7, 1),
+      throwsStateError,
+    );
+    final host = _Harness();
+    host.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+    host.api.hostMappings.add({
+      'id': 5,
+      'host': {'id': 8},
+      'subsys': {'id': 1},
+    });
+    await expectLater(host.portCoordinator.prepare(7, 1), throwsStateError);
+    final missing = _Harness(advertisePortCreate: false);
+    missing.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+    expect(missing.portCoordinator.available, false);
+    await expectLater(missing.portCoordinator.prepare(7, 1), throwsStateError);
+    expect(
+      enabled.api.portWrites +
+          mapped.api.portWrites +
+          namespace.api.portWrites +
+          host.api.portWrites +
+          missing.api.portWrites,
+      0,
+    );
+  });
+
+  test(
+    'port mapping confirmation, expiry and prewrite drift prevent writes',
+    () async {
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      final first = await h.portCoordinator.prepare(7, 1);
+      expect(
+        (await h.portCoordinator.execute(first, 'wrong')).outcome,
+        NvmePortGrantOutcome.rejected,
+      );
+      final second = await h.portCoordinator.prepare(7, 1);
+      h.clock = h.clock.add(const Duration(minutes: 5));
+      expect(
+        (await h.portCoordinator.execute(second, second.confirmation)).outcome,
+        NvmePortGrantOutcome.rejected,
+      );
+      final third = await h.portCoordinator.prepare(7, 1);
+      h.api.ports.first['enabled'] = true;
+      expect(
+        (await h.portCoordinator.execute(third, third.confirmation)).outcome,
+        NvmePortGrantOutcome.rejected,
+      );
+      expect(h.api.portWrites, 0);
+    },
+  );
+
+  test('ambiguous port mapping or divergent readback fences edits', () async {
+    for (final drift in [false, true]) {
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      final review = await h.portCoordinator.prepare(7, 1);
+      h.api.unknownPortWrite = !drift;
+      h.api.driftAfterPortWrite = drift;
+      final result = await h.portCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmePortGrantOutcome.unknown);
+      expect(h.api.portWrites, 1);
+      expect(h.portCoordinator.locked, true);
+      expect(NvmeWriteFence.isUncertain(h.session), true);
+    }
+  });
+
+  testWidgets('port mapping editor requires exact phrase and hides secrets', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: NvmePortAccessGrantEditor()),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-grant-port-id')),
+      '7',
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-grant-subsystem-id')),
+      '1',
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-grant-review')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Disabled port #7'), findsOneWidget);
+    expect(find.textContaining('nqn.2026-09.example:empty'), findsOneWidget);
+    expect(find.textContaining('secret'), findsNothing);
+    expect(h.api.portWrites, 0);
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-grant-confirmation')),
+      'MAP NVME PORT 7 TO SUBSYSTEM 1',
+    );
+    await tester.ensureVisible(find.byKey(const Key('nvme-port-grant-submit')));
+    await tester.tap(find.byKey(const Key('nvme-port-grant-submit')));
+    await tester.pumpAndSettle();
+    expect(h.api.portWrites, 1);
+    expect(tester.takeException(), isNull);
   });
 }

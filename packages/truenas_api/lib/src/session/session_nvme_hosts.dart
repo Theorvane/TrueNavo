@@ -15,6 +15,39 @@ abstract interface class AuthenticatedNvmeHostAccessSession {
   });
 }
 
+/// Dedicated port association write. Embedded port/subsystem response fields
+/// are reduced to their IDs before crossing into the application.
+abstract interface class AuthenticatedNvmePortAccessSession {
+  Future<NvmePortAssociationCreated> createNvmePortAssociation({
+    required int portId,
+    required int subsystemId,
+  });
+}
+
+final class NvmePortAssociationCreated {
+  const NvmePortAssociationCreated(this.id, this.portId, this.subsystemId);
+  final int id, portId, subsystemId;
+
+  factory NvmePortAssociationCreated.project(Object? raw) {
+    if (raw is! Map ||
+        raw['id'] is! int ||
+        (raw['id'] as int) <= 0 ||
+        raw['port'] is! Map ||
+        (raw['port'] as Map)['id'] is! int ||
+        ((raw['port'] as Map)['id'] as int) <= 0 ||
+        raw['subsys'] is! Map ||
+        (raw['subsys'] as Map)['id'] is! int ||
+        ((raw['subsys'] as Map)['id'] as int) <= 0) {
+      throw const FormatException('Invalid NVMe port association result');
+    }
+    return NvmePortAssociationCreated(
+      raw['id'] as int,
+      (raw['port'] as Map)['id'] as int,
+      (raw['subsys'] as Map)['id'] as int,
+    );
+  }
+}
+
 final class NvmeHostAssociationCreated {
   const NvmeHostAssociationCreated(this.id, this.hostId, this.subsystemId);
   final int id, hostId, subsystemId;

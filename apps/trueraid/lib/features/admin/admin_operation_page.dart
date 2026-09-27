@@ -50,6 +50,7 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'nvmet.host_subsys.create' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.host.delete' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.port_subsys.delete' => 'Use the dedicated NVMe-oF workflow.',
+      'nvmet.port_subsys.create' => 'Use the dedicated NVMe-oF workflow.',
       'iscsi.global.update' ||
       'iscsi.portal.listen_ip_choices' ||
       'iscsi.portal.update' ||

@@ -217,6 +217,48 @@ void main() {
       isEmpty,
     );
   });
+
+  test('NVMe port association create returns only public IDs', () async {
+    final wire = _Wire(advertiseNvmePortCreate: true);
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    final created = await repo.createNvmePortAssociation(
+      portId: 7,
+      subsystemId: 2,
+    );
+    expect([created.id, created.portId, created.subsystemId], [10, 7, 2]);
+    expect(created.toString(), isNot(contains(_secret)));
+    final call = wire.requests.singleWhere(
+      (r) => r['method'] == 'nvmet.port_subsys.create',
+    );
+    expect(call['params'], [
+      {'port_id': 7, 'subsys_id': 2},
+    ]);
+  });
+
+  test('unadvertised NVMe port association create sends no write', () async {
+    final wire = _Wire();
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    await expectLater(
+      repo.createNvmePortAssociation(portId: 7, subsystemId: 2),
+      throwsA(isA<NvmeHostException>()),
+    );
+    expect(
+      wire.requests.where((r) => r['method'] == 'nvmet.port_subsys.create'),
+      isEmpty,
+    );
+  });
 }
 
 final class _Connector implements RpcConnector {
@@ -232,10 +274,12 @@ final class _Wire implements RpcTransport {
     this.advertiseNvme = false,
     this.advertiseNvmeMapping = true,
     this.advertiseNvmeCreate = false,
+    this.advertiseNvmePortCreate = false,
   });
   final bool advertiseAuth;
   final bool advertiseNvme, advertiseNvmeMapping;
   final bool advertiseNvmeCreate;
+  final bool advertiseNvmePortCreate;
   bool malformed = false;
   final _incoming = StreamController<String>();
   final requests = <Map<String, dynamic>>[];
@@ -269,6 +313,7 @@ final class _Wire implements RpcTransport {
         if (advertiseNvme && advertiseNvmeMapping)
           'nvmet.host_subsys.query': _nvmeMetadata,
         if (advertiseNvmeCreate) 'nvmet.host_subsys.create': _nvmeMetadata,
+        if (advertiseNvmePortCreate) 'nvmet.port_subsys.create': _nvmeMetadata,
       },
       'iscsi.auth.query' =>
         malformed
@@ -300,6 +345,11 @@ final class _Wire implements RpcTransport {
       'nvmet.host_subsys.create' => {
         'id': 9,
         'host': {'id': 3, 'dhchap_key': _secret},
+        'subsys': {'id': 2, 'serial': _secret},
+      },
+      'nvmet.port_subsys.create' => {
+        'id': 10,
+        'port': {'id': 7, 'addr_traddr': _secret},
         'subsys': {'id': 2, 'serial': _secret},
       },
       _ => throw StateError('Unexpected fixture method'),
