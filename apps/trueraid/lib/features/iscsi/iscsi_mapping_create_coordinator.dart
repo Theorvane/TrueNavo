@@ -486,8 +486,7 @@ final class IscsiMappingCreateCoordinator {
         .where((mapping) => mapping[1] == targetId)
         .toList();
     final usedLuns = targetMappings.map((mapping) => mapping[3]).toSet();
-    if ((bound && targetMappings.isNotEmpty) ||
-        targetMappings.length >= 32 ||
+    if (targetMappings.length >= 32 ||
         targetMappings.any((mapping) => mapping[3] > 31) ||
         usedLuns.length != targetMappings.length ||
         (targetMappings.isEmpty && lun != 0) ||
@@ -695,8 +694,11 @@ final class IscsiMappingCreateCoordinator {
     int lun = 0,
   }) => _prepare(targetId, extentId, lun: lun, bound: false);
 
-  Future<IscsiMappingCreateReview> prepareBound(int targetId, int extentId) =>
-      _prepare(targetId, extentId, lun: 0, bound: true);
+  Future<IscsiMappingCreateReview> prepareBound(
+    int targetId,
+    int extentId, {
+    int lun = 0,
+  }) => _prepare(targetId, extentId, lun: lun, bound: true);
 
   Future<IscsiMappingCreateReview> _prepare(
     int targetId,

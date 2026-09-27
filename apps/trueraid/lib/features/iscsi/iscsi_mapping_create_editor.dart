@@ -59,7 +59,7 @@ class _IscsiMappingCreateEditorState
     });
     try {
       final review = widget.bound
-          ? await coordinator.prepareBound(_target!, _extent!)
+          ? await coordinator.prepareBound(_target!, _extent!, lun: _lun!)
           : await coordinator.prepare(_target!, _extent!, lun: _lun!);
       if (!mounted) return;
       setState(() {
@@ -129,9 +129,7 @@ class _IscsiMappingCreateEditorState
         .where((mapping) => mapping.targetId == _target)
         .toList();
     final usedLuns = targetMappings.map((mapping) => mapping.lun).toSet();
-    final lunChoices = widget.bound
-        ? (targetMappings.isEmpty ? const <int>[0] : const <int>[])
-        : targetMappings.isEmpty
+    final lunChoices = targetMappings.isEmpty
         ? const <int>[0]
         : usedLuns.contains(0) && usedLuns.length == targetMappings.length
         ? [
@@ -145,10 +143,7 @@ class _IscsiMappingCreateEditorState
               target.mode == 'iSCSI' &&
               (widget.bound
                   ? target.groups.length == 1 &&
-                        target.groups.single.authMethod == 'No CHAP' &&
-                        !widget.overview.mappings.any(
-                          (mapping) => mapping.targetId == target.id,
-                        )
+                        target.groups.single.authMethod == 'No CHAP'
                   : target.groups.isEmpty),
         )
         .toList();
@@ -163,10 +158,10 @@ class _IscsiMappingCreateEditorState
         .toList();
     return TdPanel(
       title: widget.bound
-          ? 'Map LUN 0 to an access-bound target'
+          ? 'Map an unused extent to an access-bound target'
           : 'Map an unused extent to a LUN',
       description: widget.bound
-          ? 'For an iSCSI-only target with exactly one explicit no-CHAP portal/initiator group, no authorized networks and no LUNs. The group and extent backing stay unchanged. Stop iSCSI and disconnect all clients first.'
+          ? 'First mapping uses LUN 0; subsequent mappings use a free LUN 1–31. The iSCSI-only target must have exactly one explicit no-CHAP portal/initiator group and no authorized networks. The access group and extent backing stay unchanged. Stop iSCSI and disconnect all clients first.'
           : 'First mapping uses LUN 0; subsequent mappings use a free LUN 1–31. Only an unbound iSCSI-only target and enabled, unlocked, unused extent qualify. Stop iSCSI and disconnect all clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -200,9 +195,7 @@ class _IscsiMappingCreateEditorState
                         .where((mapping) => mapping.targetId == id)
                         .map((mapping) => mapping.lun)
                         .toSet();
-                    _lun = widget.bound
-                        ? 0
-                        : used.isEmpty
+                    _lun = used.isEmpty
                         ? 0
                         : used.contains(0)
                         ? [

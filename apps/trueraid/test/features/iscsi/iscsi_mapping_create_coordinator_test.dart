@@ -219,6 +219,45 @@ void _bindTarget(_Harness h) {
 }
 
 void main() {
+  test('maps a free additional LUN on the access-bound target', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+    final review = await h.coordinator.prepareBound(3, 6, lun: 2);
+    expect(
+      review.confirmation,
+      'MAP ISCSI TARGET #3 PORTAL #2 INITIATOR #4 EXTENT #6 LUN 2',
+    );
+    expect(h.writes, 0);
+    final result = await h.coordinator.executeBound(
+      review,
+      review.confirmation,
+    );
+    expect(result.outcome, IscsiMappingCreateOutcome.completed);
+    expect(
+      h.api.calls
+          .singleWhere(
+            (call) => call.method.name == 'iscsi.targetextent.create',
+          )
+          .arguments,
+      [
+        {'target': 3, 'extent': 6, 'lunid': 2},
+      ],
+    );
+    expect(h.api.mappings, [
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 7, 'target': 3, 'extent': 6, 'lunid': 2},
+    ]);
+  });
+
   test('maps initial LUN 0 on one explicit access-bound target', () async {
     final h = _Harness();
     _bindTarget(h);
@@ -253,24 +292,45 @@ void main() {
     );
   });
 
-  test('bound mapping rejects CHAP, wildcard and existing LUNs', () async {
-    final h = _Harness();
-    _bindTarget(h);
-    h.api.targets.single['groups'] = [
-      {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 7},
-    ];
-    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
-    _bindTarget(h);
-    h.api.initiators.single['initiators'] = ['ALL'];
-    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
-    h.api.initiators.single['initiators'] = ['iqn.2026-09.example:client'];
-    (h.api.portals.single['listen'] as List).single['ip'] = '0.0.0.0';
-    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
-    (h.api.portals.single['listen'] as List).single['ip'] = '192.0.2.10';
-    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
-    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
-    expect(h.writes, 0);
-  });
+  test(
+    'bound mapping rejects CHAP, wildcard and invalid additional LUNs',
+    () async {
+      final h = _Harness();
+      _bindTarget(h);
+      h.api.targets.single['groups'] = [
+        {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 7},
+      ];
+      await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+      _bindTarget(h);
+      h.api.initiators.single['initiators'] = ['ALL'];
+      await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+      h.api.initiators.single['initiators'] = ['iqn.2026-09.example:client'];
+      (h.api.portals.single['listen'] as List).single['ip'] = '0.0.0.0';
+      await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+      (h.api.portals.single['listen'] as List).single['ip'] = '192.0.2.10';
+      h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+      await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+      h.api.extents.add({
+        'id': 6,
+        'name': 'disk-b',
+        'type': 'DISK',
+        'path': 'zvol/tank/second',
+        'enabled': true,
+        'locked': false,
+      });
+      await expectLater(h.coordinator.prepareBound(3, 6), throwsStateError);
+      await expectLater(
+        h.coordinator.prepareBound(3, 6, lun: 32),
+        throwsStateError,
+      );
+      h.api.mappings.single['lunid'] = 1;
+      await expectLater(
+        h.coordinator.prepareBound(3, 6, lun: 2),
+        throwsStateError,
+      );
+      expect(h.writes, 0);
+    },
+  );
 
   test(
     'bound dependency drift rejects before write and unknown fences',
@@ -355,6 +415,79 @@ void main() {
     await tester.enterText(
       find.byKey(const Key('iscsi-mapping-bound-create-confirmation')),
       'MAP ISCSI TARGET #3 PORTAL #2 INITIATOR #4 EXTENT #5 LUN 0',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-mapping-bound-create-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-submit')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.writes, 1);
+  });
+
+  testWidgets('bound mapping editor selects a free additional LUN', (
+    tester,
+  ) async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingCreateEditor(overview: overview, bound: true),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-target')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#3 target-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-bound-create-lun')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LUN 2').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-extent')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#6 disk-b').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-review')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.writes, 0);
+    await tester.enterText(
+      find.byKey(const Key('iscsi-mapping-bound-create-confirmation')),
+      'MAP ISCSI TARGET #3 PORTAL #2 INITIATOR #4 EXTENT #6 LUN 2',
     );
     await tester.ensureVisible(
       find.byKey(const Key('iscsi-mapping-bound-create-submit')),
