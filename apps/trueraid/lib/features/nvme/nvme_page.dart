@@ -17,6 +17,7 @@ import 'nvme_subsystem_create_editor.dart';
 import 'nvme_subsystem_ana_editor.dart';
 import 'nvme_subsystem_pi_editor.dart';
 import 'nvme_subsystem_qid_editor.dart';
+import 'nvme_subsystem_oui_editor.dart';
 import 'nvme_subsystem_delete_editor.dart';
 import 'nvme_subsystem_restrict_editor.dart';
 import 'nvme_subsystem_rename_editor.dart';
@@ -144,6 +145,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeSubsystemPiEditor(),
                   const SizedBox(height: 20),
                   const NvmeSubsystemQidEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeSubsystemOuiEditor(),
                   const SizedBox(height: 20),
                   const NvmeHostAccessRevokeEditor(),
                   const SizedBox(height: 20),
