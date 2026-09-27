@@ -34,6 +34,24 @@ final class IscsiMappingCreateResult {
   final String message;
 }
 
+typedef IscsiAccessPair = ({int portalId, int initiatorId});
+
+String _accessPhrase(List<IscsiAccessPair> groups) {
+  if (groups.length == 1) {
+    final group = groups.single;
+    return 'PORTAL #${group.portalId} INITIATOR #${group.initiatorId}';
+  }
+  return 'GROUPS ${groups.map((group) => 'PORTAL #${group.portalId} INITIATOR #${group.initiatorId}').join(' ; ')}';
+}
+
+bool _sameAccess(List<IscsiAccessPair> a, List<IscsiAccessPair> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 final class IscsiMappingCreateReview {
   IscsiMappingCreateReview._(
     this.endpoint,
@@ -43,18 +61,17 @@ final class IscsiMappingCreateReview {
     this.extentName,
     this.lun,
     this.bound,
-    this.portalId,
-    this.initiatorId,
+    this.accessGroups,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
   final int targetId, extentId, lun;
   final bool bound;
-  final int? portalId, initiatorId;
+  final List<IscsiAccessPair> accessGroups;
   final DateTime issuedAt;
   String get confirmation => bound
-      ? 'MAP ISCSI TARGET #$targetId PORTAL #$portalId INITIATOR #$initiatorId EXTENT #$extentId LUN $lun'
+      ? 'MAP ISCSI TARGET #$targetId ${_accessPhrase(accessGroups)} EXTENT #$extentId LUN $lun'
       : 'MAP ISCSI TARGET #$targetId EXTENT #$extentId LUN $lun';
 }
 
@@ -69,18 +86,17 @@ final class IscsiMappingRenumberReview {
     this.beforeLun,
     this.proposedLun,
     this.bound,
-    this.portalId,
-    this.initiatorId,
+    this.accessGroups,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
   final int mappingId, targetId, extentId, beforeLun, proposedLun;
   final bool bound;
-  final int? portalId, initiatorId;
+  final List<IscsiAccessPair> accessGroups;
   final DateTime issuedAt;
   String get confirmation => bound
-      ? 'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun PORTAL #$portalId INITIATOR #$initiatorId'
+      ? 'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun ${_accessPhrase(accessGroups)}'
       : 'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun';
 }
 
@@ -389,74 +405,79 @@ final class IscsiMappingCreateCoordinator {
     return snapshot;
   }
 
-  ({int portalId, int initiatorId}) _boundAccess(
-    _Snapshot snapshot,
-    int targetId,
-  ) {
+  List<IscsiAccessPair> _boundAccess(_Snapshot snapshot, int targetId) {
     final target = snapshot.targetRows[targetId];
     final groups = target?['groups'];
     final networks = target?['auth_networks'];
     if (target?['mode'] != 'ISCSI' ||
         groups is! List ||
-        groups.length != 1 ||
-        groups.single is! Map ||
+        groups.isEmpty ||
+        groups.length > 8 ||
         networks is! List ||
         networks.isNotEmpty) {
       throw StateError(
-        'Choose a target with one explicit no-CHAP access group.',
+        'Choose a target with 1–8 explicit no-CHAP access groups.',
       );
     }
-    final group = groups.single as Map;
-    final portalId = group['portal'], initiatorId = group['initiator'];
-    if (group.keys.any(
-          (key) => !const {
-            'portal',
-            'initiator',
-            'authmethod',
-            'auth',
-          }.contains(key),
-        ) ||
-        portalId is! int ||
-        portalId < 1 ||
-        initiatorId is! int ||
-        initiatorId < 1 ||
-        group['authmethod'] != 'NONE' ||
-        group['auth'] != null) {
-      throw StateError(
-        'Choose a target with one explicit no-CHAP access group.',
-      );
+    final access = <IscsiAccessPair>[];
+    for (final raw in groups) {
+      if (raw is! Map) {
+        throw StateError('Choose explicit no-CHAP access groups.');
+      }
+      final portalId = raw['portal'], initiatorId = raw['initiator'];
+      if (raw.keys.any(
+            (key) => !const {
+              'portal',
+              'initiator',
+              'authmethod',
+              'auth',
+            }.contains(key),
+          ) ||
+          portalId is! int ||
+          portalId < 1 ||
+          initiatorId is! int ||
+          initiatorId < 1 ||
+          raw['authmethod'] != 'NONE' ||
+          raw['auth'] != null ||
+          access.any(
+            (item) =>
+                item.portalId == portalId && item.initiatorId == initiatorId,
+          )) {
+        throw StateError('Choose distinct explicit no-CHAP access groups.');
+      }
+      final portal = snapshot.portalRows?[portalId];
+      final initiator = snapshot.initiatorRows?[initiatorId];
+      final listeners = portal?['listen'];
+      final names = initiator?['initiators'];
+      if (listeners is! List ||
+          listeners.length != 1 ||
+          listeners.single is! Map ||
+          names is! List ||
+          names.isEmpty ||
+          names.length > 10 ||
+          names.any(
+            (name) =>
+                name is! String ||
+                name.length > 223 ||
+                !RegExp(r'^(iqn\.|eui\.|naa\.)[a-z0-9.:-]+$').hasMatch(name),
+          ) ||
+          names.cast<String>().toSet().length != names.length) {
+        throw StateError(
+          'The portal or explicit initiator inventory is incomplete.',
+        );
+      }
+      final listener = listeners.single as Map;
+      final ip = listener['ip'], port = listener['port'];
+      if (ip is! String ||
+          !_explicitIpv4(ip) ||
+          port is! int ||
+          port < 1 ||
+          port > 65535) {
+        throw StateError('Choose portals with one explicit IPv4 listener.');
+      }
+      access.add((portalId: portalId, initiatorId: initiatorId));
     }
-    final portal = snapshot.portalRows?[portalId];
-    final initiator = snapshot.initiatorRows?[initiatorId];
-    final listeners = portal?['listen'];
-    final names = initiator?['initiators'];
-    if (listeners is! List ||
-        listeners.length != 1 ||
-        listeners.single is! Map ||
-        names is! List ||
-        names.isEmpty ||
-        names.length > 10 ||
-        names.any(
-          (name) =>
-              name is! String ||
-              name.length > 223 ||
-              !RegExp(r'^(iqn\.|eui\.|naa\.)[a-z0-9.:-]+$').hasMatch(name),
-        ) ||
-        names.cast<String>().toSet().length != names.length) {
-      throw StateError(
-        'The portal or explicit initiator inventory is incomplete.',
-      );
-    }
-    final listener = listeners.single as Map;
-    final ip = listener['ip'], port = listener['port'];
-    if (ip is! String ||
-        !_explicitIpv4(ip) ||
-        port is! int ||
-        port < 1 ||
-        port > 65535) {
-      throw StateError('Choose a portal with one explicit IPv4 listener.');
-    }
-    return (portalId: portalId, initiatorId: initiatorId);
+    return List.unmodifiable(access);
   }
 
   bool _explicitIpv4(String ip) {
@@ -608,8 +629,7 @@ final class IscsiMappingCreateCoordinator {
         mapping[3],
         proposedLun,
         bound,
-        access?.portalId,
-        access?.initiatorId,
+        access ?? const <IscsiAccessPair>[],
         snapshot.proof,
         _now().toUtc(),
       );
@@ -677,8 +697,10 @@ final class IscsiMappingCreateCoordinator {
         bound: bound,
       );
       final access = bound ? _boundAccess(before, review.targetId) : null;
-      if (access?.portalId != review.portalId ||
-          access?.initiatorId != review.initiatorId) {
+      if (!_sameAccess(
+        access ?? const <IscsiAccessPair>[],
+        review.accessGroups,
+      )) {
         return const IscsiMappingCreateResult(
           IscsiMappingCreateOutcome.rejected,
           'Target access changed since review. Nothing was sent.',
@@ -797,8 +819,7 @@ final class IscsiMappingCreateCoordinator {
         snapshot.extents[extentId]!,
         lun,
         bound,
-        access?.portalId,
-        access?.initiatorId,
+        access ?? const <IscsiAccessPair>[],
         snapshot.proof,
         _now().toUtc(),
       );
@@ -867,8 +888,7 @@ final class IscsiMappingCreateCoordinator {
       );
       if (bound) {
         final access = _boundAccess(before, review.targetId);
-        if (access.portalId != review.portalId ||
-            access.initiatorId != review.initiatorId) {
+        if (!_sameAccess(access, review.accessGroups)) {
           return const IscsiMappingCreateResult(
             IscsiMappingCreateOutcome.rejected,
             'The access group changed since review. Nothing was sent.',

@@ -141,16 +141,22 @@ class _IscsiMappingRenumberEditorState
               widget.overview.targetById(mapping.targetId)?.mode == 'iSCSI' &&
               (widget.bound
                   ? widget.overview
-                                .targetById(mapping.targetId)
-                                ?.groups
-                                .length ==
-                            1 &&
+                            .targetById(mapping.targetId)!
+                            .groups
+                            .isNotEmpty &&
                         widget.overview
-                                .targetById(mapping.targetId)
-                                ?.groups
-                                .single
-                                .authMethod ==
-                            'No CHAP'
+                                .targetById(mapping.targetId)!
+                                .groups
+                                .length <=
+                            8 &&
+                        widget.overview
+                            .targetById(mapping.targetId)!
+                            .groups
+                            .every(
+                              (group) =>
+                                  group.authMethod == 'No CHAP' &&
+                                  group.initiatorId != null,
+                            )
                   : widget.overview
                             .targetById(mapping.targetId)
                             ?.groups
@@ -163,7 +169,7 @@ class _IscsiMappingRenumberEditorState
           ? 'Change an access-bound additional LUN number'
           : 'Change an additional LUN number',
       description: widget.bound
-          ? 'Moves one LUN 1–31 to a free number on the same target with one explicit no-CHAP portal and initiator group. LUN 0 and access settings remain unchanged. Stop iSCSI and disconnect clients first.'
+          ? 'Moves one LUN 1–31 to a free number on the same target with 1–8 distinct explicit no-CHAP portal/initiator groups. LUN 0 and access settings remain unchanged. Stop iSCSI and disconnect clients first.'
           : 'Moves one LUN 1–31 to a free number on the same unbound iSCSI target. LUN 0, target and extent IDs remain unchanged. Stop iSCSI and disconnect clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,19 +268,20 @@ class _IscsiMappingRenumberEditorState
             ),
             Text('Target #${review.targetId}: ${review.targetName}'),
             Text('Extent #${review.extentId}: ${review.extentName}'),
-            if (review.bound)
+            for (var i = 0; i < review.accessGroups.length; i++)
               Text(
-                'Portal #${review.portalId} · initiator #${review.initiatorId}',
+                '${review.accessGroups.length == 1 ? '' : 'Group ${i + 1}: '}Portal #${review.accessGroups[i].portalId} · initiator #${review.accessGroups[i].initiatorId}',
               ),
             const Text(
               'Only lunid is submitted. Complete inventories, service and sessions are rechecked; another administrator can still race these reads.',
             ),
+            SelectableText(review.confirmation),
             TextField(
               key: Key(_key('confirmation')),
               controller: _confirmation,
               enabled: !_busy,
               decoration: InputDecoration(
-                labelText: 'Type ${review.confirmation}',
+                labelText: 'Type the exact phrase above',
                 border: const OutlineInputBorder(),
               ),
             ),

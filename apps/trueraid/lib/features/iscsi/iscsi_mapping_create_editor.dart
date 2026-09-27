@@ -142,8 +142,13 @@ class _IscsiMappingCreateEditorState
           (target) =>
               target.mode == 'iSCSI' &&
               (widget.bound
-                  ? target.groups.length == 1 &&
-                        target.groups.single.authMethod == 'No CHAP'
+                  ? target.groups.isNotEmpty &&
+                        target.groups.length <= 8 &&
+                        target.groups.every(
+                          (group) =>
+                              group.authMethod == 'No CHAP' &&
+                              group.initiatorId != null,
+                        )
                   : target.groups.isEmpty),
         )
         .toList();
@@ -161,7 +166,7 @@ class _IscsiMappingCreateEditorState
           ? 'Map an unused extent to an access-bound target'
           : 'Map an unused extent to a LUN',
       description: widget.bound
-          ? 'First mapping uses LUN 0; subsequent mappings use a free LUN 1–31. The iSCSI-only target must have exactly one explicit no-CHAP portal/initiator group and no authorized networks. The access group and extent backing stay unchanged. Stop iSCSI and disconnect all clients first.'
+          ? 'First mapping uses LUN 0; subsequent mappings use a free LUN 1–31. The iSCSI-only target must have 1–8 distinct explicit no-CHAP portal/initiator groups and no authorized networks. Access groups and extent backing stay unchanged. Stop iSCSI and disconnect all clients first.'
           : 'First mapping uses LUN 0; subsequent mappings use a free LUN 1–31. Only an unbound iSCSI-only target and enabled, unlocked, unused extent qualify. Stop iSCSI and disconnect all clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -288,20 +293,21 @@ class _IscsiMappingCreateEditorState
             const Divider(),
             Text('Server: ${review.endpoint}'),
             Text('Target #${review.targetId}: ${review.targetName}'),
-            if (review.bound)
+            for (var i = 0; i < review.accessGroups.length; i++)
               Text(
-                'Access group: portal #${review.portalId} · initiator #${review.initiatorId} · no CHAP',
+                'Access group ${i + 1}: portal #${review.accessGroups[i].portalId} · initiator #${review.accessGroups[i].initiatorId} · no CHAP',
               ),
             Text('Extent #${review.extentId}: ${review.extentName}'),
             Text(
               'Assign exact LUN ${review.lun}. No target, extent or existing mapping is edited. Complete inventories, service and sessions are checked again; external administrators can still race these reads.',
             ),
+            SelectableText(review.confirmation),
             TextField(
               key: Key(_key('confirmation')),
               controller: _confirmation,
               enabled: !_busy,
               decoration: InputDecoration(
-                labelText: 'Type ${review.confirmation}',
+                labelText: 'Type the exact phrase above',
                 border: const OutlineInputBorder(),
               ),
             ),

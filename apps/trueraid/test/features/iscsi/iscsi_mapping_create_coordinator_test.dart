@@ -110,6 +110,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
   bool unknown = false;
   bool mutateTarget = false;
   bool mutatePortal = false;
+  bool mutateLastPortal = false;
   String state = 'STOPPED';
 
   @override
@@ -165,6 +166,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         mappings.add(row);
         if (mutateTarget) targets.single['name'] = 'unexpected';
         if (mutatePortal) portals.single['comment'] = 'unexpected';
+        if (mutateLastPortal) portals.last['comment'] = 'unexpected';
         return AdminCompleted(request, value: Map<String, Object?>.from(row));
       case 'iscsi.targetextent.update':
         if (unknown) return AdminOutcomeUnknown(request);
@@ -174,6 +176,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         row['lunid'] = (request.arguments[1] as Map)['lunid'];
         if (mutateTarget) targets.single['name'] = 'unexpected';
         if (mutatePortal) portals.single['comment'] = 'unexpected';
+        if (mutateLastPortal) portals.last['comment'] = 'unexpected';
         return AdminCompleted(request, value: Map<String, Object?>.from(row));
       default:
         throw StateError('Unexpected fake call');
@@ -219,7 +222,169 @@ void _bindTarget(_Harness h) {
   ];
 }
 
+void _bindMultiTarget(_Harness h) {
+  h.api.portals.add({
+    'id': 3,
+    'tag': 2,
+    'comment': '',
+    'listen': [
+      {'ip': '192.0.2.11', 'port': 3260},
+    ],
+  });
+  h.api.initiators.add({
+    'id': 5,
+    'comment': '',
+    'initiators': ['iqn.2026-09.example:second'],
+  });
+  h.api.targets.single['groups'] = [
+    {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    {'portal': 3, 'initiator': 5, 'authmethod': 'NONE', 'auth': null},
+  ];
+}
+
 void main() {
+  test('maps initial LUN on target with two no-CHAP groups', () async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    final review = await h.coordinator.prepareBound(3, 5);
+    expect(review.accessGroups, [
+      (portalId: 2, initiatorId: 4),
+      (portalId: 3, initiatorId: 5),
+    ]);
+    expect(
+      review.confirmation,
+      'MAP ISCSI TARGET #3 GROUPS PORTAL #2 INITIATOR #4 ; PORTAL #3 INITIATOR #5 EXTENT #5 LUN 0',
+    );
+    expect(h.writes, 0);
+    expect(
+      (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+      IscsiMappingCreateOutcome.completed,
+    );
+    expect(
+      h.api.calls
+          .singleWhere(
+            (call) => call.method.name == 'iscsi.targetextent.create',
+          )
+          .arguments,
+      [
+        {'target': 3, 'extent': 5, 'lunid': 0},
+      ],
+    );
+  });
+
+  test('maps additional LUN on target with two no-CHAP groups', () async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+    final review = await h.coordinator.prepareBound(3, 6, lun: 2);
+    expect(
+      (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+      IscsiMappingCreateOutcome.completed,
+    );
+    expect(h.api.mappings, [
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 7, 'target': 3, 'extent': 6, 'lunid': 2},
+    ]);
+  });
+
+  test('multi-group mapping blocks duplicate pair and mixed CHAP', () async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    (h.api.targets.single['groups'] as List)[1] = {
+      'portal': 2,
+      'initiator': 4,
+      'authmethod': 'NONE',
+      'auth': null,
+    };
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    (h.api.targets.single['groups'] as List)[1] = {
+      'portal': 3,
+      'initiator': 5,
+      'authmethod': 'CHAP',
+      'auth': 1,
+    };
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    h.api.targets.single['groups'] = [
+      for (var i = 0; i < 9; i++)
+        {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    expect(h.writes, 0);
+  });
+
+  test('second portal postread drift fences multi-group mapping', () async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    final review = await h.coordinator.prepareBound(3, 5);
+    h.api.mutateLastPortal = true;
+    expect(
+      (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+      IscsiMappingCreateOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
+  testWidgets('multi-group mapping editor reviews every pair', (tester) async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingCreateEditor(overview: overview, bound: true),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-target')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#3 target-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-extent')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#5 disk-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-review')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Access group 1: portal #2 · initiator #4 · no CHAP'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Access group 2: portal #3 · initiator #5 · no CHAP'),
+      findsOneWidget,
+    );
+    expect(h.writes, 0);
+  });
+
   test('maps a free additional LUN on the access-bound target', () async {
     final h = _Harness();
     _bindTarget(h);
@@ -799,6 +964,136 @@ void main() {
       IscsiMappingCreateOutcome.unknown,
     );
     expect(h.coordinator.locked, isTrue);
+  });
+
+  test('renumbers additional LUN on multi-group no-CHAP target', () async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    final review = await h.coordinator.prepareBoundRenumber(9, 2);
+    expect(review.accessGroups, [
+      (portalId: 2, initiatorId: 4),
+      (portalId: 3, initiatorId: 5),
+    ]);
+    expect(
+      review.confirmation,
+      'MOVE ISCSI LUN #9 1 TO 2 GROUPS PORTAL #2 INITIATOR #4 ; PORTAL #3 INITIATOR #5',
+    );
+    expect(
+      (await h.coordinator.executeBoundRenumber(
+        review,
+        review.confirmation,
+      )).outcome,
+      IscsiMappingCreateOutcome.completed,
+    );
+    expect(
+      h.api.calls
+          .singleWhere(
+            (call) => call.method.name == 'iscsi.targetextent.update',
+          )
+          .arguments,
+      [
+        9,
+        {'lunid': 2},
+      ],
+    );
+  });
+
+  test(
+    'multi-group renumber rejects second portal drift before write',
+    () async {
+      final h = _Harness();
+      _bindMultiTarget(h);
+      h.api.extents.add({
+        'id': 6,
+        'name': 'disk-b',
+        'type': 'DISK',
+        'path': 'zvol/tank/second',
+        'enabled': true,
+        'locked': false,
+      });
+      h.api.mappings.addAll([
+        {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+        {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+      ]);
+      final review = await h.coordinator.prepareBoundRenumber(9, 2);
+      h.api.portals.last['comment'] = 'changed';
+      expect(
+        (await h.coordinator.executeBoundRenumber(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiMappingCreateOutcome.rejected,
+      );
+      expect(h.updates, 0);
+    },
+  );
+
+  testWidgets('multi-group renumber editor reviews every pair', (tester) async {
+    final h = _Harness();
+    _bindMultiTarget(h);
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingRenumberEditor(
+                overview: overview,
+                bound: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-select')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#9 target-a · LUN 1').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-renumber-review')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Group 1: Portal #2 · initiator #4'), findsOneWidget);
+    expect(find.text('Group 2: Portal #3 · initiator #5'), findsOneWidget);
+    expect(h.updates, 0);
   });
 
   testWidgets('bound renumber editor reviews portal and initiator', (
