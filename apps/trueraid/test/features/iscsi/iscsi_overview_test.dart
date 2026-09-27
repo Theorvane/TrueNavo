@@ -54,6 +54,7 @@ void main() {
       expect(overview.targetById(4)?.groups.single.portalId, 3);
       expect(overview.targetById(4)?.groups.single.initiatorId, 6);
       expect(overview.targetById(4)?.groups.single.authMethod, 'CHAP');
+      expect(overview.targetById(4)?.groups.single.authId, 7);
       expect(overview.targetById(4)?.toString(), isNot(contains('auth: 7')));
       expect(overview.extentById(8)?.enabled, true);
       expect(overview.mappings.single.lun, 2);
@@ -75,6 +76,24 @@ void main() {
           targets: [
             {'id': 1, 'name': 'one'},
             {'id': 1, 'name': 'two'},
+          ],
+          extents: [],
+          mappings: [],
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => IscsiOverview.parse(
+          portals: [],
+          initiators: [],
+          targets: [
+            {
+              'id': 1,
+              'name': 'bad-auth',
+              'groups': [
+                {'portal': 2, 'authmethod': 'CHAP', 'auth': '[redacted]'},
+              ],
+            },
           ],
           extents: [],
           mappings: [],

@@ -5,6 +5,8 @@ import 'package:truenas_api/truenas_api.dart';
 
 import '../connection/connection_controller.dart';
 import '../dashboard/dashboard_controller.dart';
+import 'iscsi_auth_usage.dart';
+import 'iscsi_overview.dart';
 
 final iscsiAuthReferencesProvider =
     FutureProvider.autoDispose<IscsiAuthInventory>((ref) async {
@@ -24,7 +26,9 @@ final iscsiAuthReferencesProvider =
     }, retry: (_, _) => null);
 
 class IscsiAuthPanel extends ConsumerStatefulWidget {
-  const IscsiAuthPanel({super.key});
+  const IscsiAuthPanel({this.overview, super.key});
+
+  final IscsiOverview? overview;
 
   @override
   ConsumerState<IscsiAuthPanel> createState() => _IscsiAuthPanelState();
@@ -79,7 +83,10 @@ class _IscsiAuthPanelState extends ConsumerState<IscsiAuthPanel> {
             const CircularProgressIndicator()
           else
             switch (state) {
-              AsyncData(:final value) => _References(inventory: value),
+              AsyncData(:final value) => _References(
+                inventory: value,
+                overview: widget.overview,
+              ),
               AsyncError() => const Text(
                 'CHAP references are unavailable or incomplete for this account.',
               ),
@@ -92,12 +99,16 @@ class _IscsiAuthPanelState extends ConsumerState<IscsiAuthPanel> {
 }
 
 class _References extends StatelessWidget {
-  const _References({required this.inventory});
+  const _References({required this.inventory, this.overview});
   final IscsiAuthInventory inventory;
+  final IscsiOverview? overview;
 
   @override
   Widget build(BuildContext context) {
     final records = inventory.references;
+    final usage = overview == null
+        ? null
+        : IscsiAuthUsage.from(inventory, overview!);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -110,9 +121,10 @@ class _References extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              'Tag ${record.tag} · ${record.user}${record.peerUser.isEmpty ? '' : ' ↔ ${record.peerUser}'} · Discovery ${record.discoveryAuth}',
+              'Tag ${record.tag} · ${record.user}${record.peerUser.isEmpty ? '' : ' ↔ ${record.peerUser}'} · Discovery ${record.discoveryAuth}${usage == null ? '' : ' · ${usage.targetUses[record.id] ?? 0} target(s)'}',
             ),
           ),
+        if (usage != null) IscsiAuthUsageChart(usage: usage),
         const Text(
           'Only references are shown; access cannot be inferred from these rows.',
         ),

@@ -129,7 +129,12 @@ class IscsiPage extends ConsumerWidget {
                 const SizedBox(height: 16),
                 const IscsiSessionsPanel(),
                 const SizedBox(height: 16),
-                const IscsiAuthPanel(),
+                IscsiAuthPanel(
+                  overview: switch (state) {
+                    AsyncData(:final value) => value,
+                    _ => null,
+                  },
+                ),
               ],
             ),
           ),

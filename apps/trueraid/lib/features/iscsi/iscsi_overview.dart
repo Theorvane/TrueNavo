@@ -1,5 +1,6 @@
 /// Bounded, read-only projection of five TrueNAS 25.10 iSCSI queries.
-/// Authentication material, extent paths and serials are never retained.
+/// CHAP secrets, extent paths and serials are never retained; target groups
+/// keep only credential IDs needed for a separate, on-demand reference audit.
 final class IscsiOverview {
   const IscsiOverview({
     required this.portals,
@@ -149,16 +150,25 @@ final class IscsiInitiator {
 }
 
 final class IscsiTargetGroup {
-  const IscsiTargetGroup(this.portalId, this.initiatorId, this.authMethod);
+  const IscsiTargetGroup(
+    this.portalId,
+    this.initiatorId,
+    this.authMethod, {
+    this.authId,
+  });
   final int portalId;
-  final int? initiatorId;
+  final int? initiatorId, authId;
   final String authMethod;
 
   static IscsiTargetGroup? parse(Map raw) {
     final portal = _id(raw['portal']);
     final rawInitiator = raw['initiator'];
     final initiator = rawInitiator == null ? null : _id(rawInitiator);
-    if (portal == null || (rawInitiator != null && initiator == null)) {
+    final rawAuth = raw['auth'];
+    final authId = rawAuth == null ? null : _id(rawAuth);
+    if (portal == null ||
+        (rawInitiator != null && initiator == null) ||
+        (rawAuth != null && authId == null)) {
       return null;
     }
     final authMethod = switch (raw['authmethod']) {
@@ -167,7 +177,7 @@ final class IscsiTargetGroup {
       'CHAP_MUTUAL' => 'Mutual CHAP',
       _ => 'Authentication unknown',
     };
-    return IscsiTargetGroup(portal, initiator, authMethod);
+    return IscsiTargetGroup(portal, initiator, authMethod, authId: authId);
   }
 }
 
