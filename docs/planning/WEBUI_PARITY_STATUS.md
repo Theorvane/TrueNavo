@@ -4,6 +4,10 @@ Updated 2026-09-28. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: shared NVMe-oF port PI chart
+
+The NVMe-oF detail page and Shares dashboard now show a four-segment port PI doughnut alongside the existing saved-configuration charts. It counts explicit on, explicit off, returned server default and field-not-returned ports separately with exact legends, including zero-count categories. The chart uses the existing bounded port inventory and adds no API request or write path. It describes saved configuration only, not data-integrity verification or active client behavior. Synthetic widget tests cover both screens and zero-port state; no live NAS write occurred. Editing port PI remains unsupported. TD-033 and TD-037 remain partial.
+
 ## Current continuation: bounded NVMe-oF port settings projection
 
 The native port inventory now selects and displays nullable `inline_data_size`, `max_queue_size` and `pi_enable` alongside ID, transport and configured enablement. It distinguishes an explicit returned value, returned server default (`null`) and a field not returned; malformed or oversized numeric values fail the complete inventory projection. The dependency snapshot proof includes values and field presence, so unrelated port-setting drift during guarded NVMe-oF workflows is not silently accepted. Enable/disable readback additionally checks the target port's projected settings stay unchanged. Bind addresses, service ports, hardware details and client state remain excluded. These are saved settings, not proof of live listener performance or data protection. Synthetic parser, page and fake-mutation tests only; no live NAS write occurred. See the TrueNAS 25.10 [port entry schema](https://api.truenas.com/v25.10/api_methods_nvmet.port.get_instance.html). TD-037 remains partial.

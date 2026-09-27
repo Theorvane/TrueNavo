@@ -46,6 +46,15 @@ class NvmeSettingCharts extends StatelessWidget {
     final fileNamespaces = value.namespaces
         .where((n) => n.deviceType == 'FILE')
         .length;
+    final portPiOn = value.ports
+        .where((p) => p.piReported && p.piEnable == true)
+        .length;
+    final portPiOff = value.ports
+        .where((p) => p.piReported && p.piEnable == false)
+        .length;
+    final portPiDefault = value.ports
+        .where((p) => p.piReported && p.piEnable == null)
+        .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -90,6 +99,18 @@ class NvmeSettingCharts extends StatelessWidget {
               unit: 'namespaces',
               labels: const ['ZVOL', 'FILE'],
               counts: [zvolNamespaces, fileNamespaces],
+            ),
+            _SettingDonut(
+              chartKey: Key('$keyPrefix-port-pi-donut'),
+              title: 'Port PI',
+              unit: 'ports',
+              labels: const ['on', 'off', 'server default', 'not returned'],
+              counts: [
+                portPiOn,
+                portPiOff,
+                portPiDefault,
+                value.ports.length - portPiOn - portPiOff - portPiDefault,
+              ],
             ),
           ],
         ),

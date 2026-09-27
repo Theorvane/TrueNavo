@@ -369,6 +369,7 @@ void main() {
             'id': 3,
             'addr_trtype': 'TCP',
             'enabled': true,
+            'pi_enable': false,
             'addr_traddr': 'private-address',
           },
         ],
@@ -441,6 +442,9 @@ void main() {
       find.byKey(const Key('shares-nvme-namespace-type-donut')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('shares-nvme-port-pi-donut')), findsOneWidget);
+    expect(find.text('Port PI'), findsOneWidget);
+    expect(find.text('off: 1'), findsOneWidget);
     expect(find.text('TCP: 1'), findsOneWidget);
     expect(find.text('ZVOL: 2'), findsOneWidget);
     expect(find.text('FILE: 0'), findsOneWidget);
@@ -470,7 +474,7 @@ void main() {
     await _pump(tester, h);
     expect(find.text('not returned: 1'), findsNWidgets(2));
     expect(find.text('inherit: 0'), findsOneWidget);
-    expect(find.text('server default: 0'), findsOneWidget);
+    expect(find.text('server default: 0'), findsNWidgets(2));
     expect(find.byKey(const Key('shares-nvme-ana-donut')), findsOneWidget);
     expect(find.byKey(const Key('shares-nvme-pi-donut')), findsOneWidget);
     expect(
@@ -481,6 +485,7 @@ void main() {
       find.byKey(const Key('shares-nvme-namespace-type-donut')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('shares-nvme-port-pi-donut')), findsOneWidget);
     expect(find.text('TCP: 0'), findsOneWidget);
     expect(find.text('ZVOL: 0'), findsOneWidget);
     expect(h.api.mutations, 0);

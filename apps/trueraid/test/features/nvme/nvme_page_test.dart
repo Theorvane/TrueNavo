@@ -660,6 +660,9 @@ void main() {
         find.byKey(const Key('nvme-namespace-type-donut')),
         findsOneWidget,
       );
+      expect(find.byKey(const Key('nvme-port-pi-donut')), findsOneWidget);
+      expect(find.text('Port PI'), findsOneWidget);
+      expect(find.text('off: 1'), findsOneWidget);
       expect(find.text('Port transports'), findsOneWidget);
       expect(find.text('Namespace types'), findsOneWidget);
       expect(find.text('TCP: 1'), findsOneWidget);
@@ -735,6 +738,8 @@ void main() {
       expect(find.text('Inline data size: Not returned'), findsOneWidget);
       expect(find.text('Maximum queue size: Not returned'), findsOneWidget);
       expect(find.text('Port PI: Not returned'), findsOneWidget);
+      expect(find.byKey(const Key('nvme-port-pi-donut')), findsOneWidget);
+      expect(find.text('not returned: 1'), findsOneWidget);
       expect(find.text('TCP: 1'), findsOneWidget);
       expect(find.text('RDMA: 1'), findsOneWidget);
       expect(find.textContaining('private-address'), findsNothing);
