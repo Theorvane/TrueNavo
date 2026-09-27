@@ -4,7 +4,11 @@ Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
-## Current continuation: host-association verification for NVMe-oF creation
+## Current continuation: reviewed NVMe-oF host access revocation
+
+The native page now permits removal of one verified host–subsystem association by its ID, only when the subsystem has `allow_any_host: false`; deleting an association on an any-host subsystem would not revoke access. A five-minute endpoint-bound review shows the host NQN and subsystem name and requires the exact host/subsystem/association IDs. Bounded topology and protected secret-stripping host inventories are checked at review, before the single `nvmet.host_subsys.delete(id)` call, and afterward. Success requires only that association to disappear; ambiguous outcomes or divergent readback fence further NVMe-oF edits until reconnection. Revocation can disconnect an active client, but the app cannot verify live sessions or exclude a concurrent administrator's race. The generic delete form routes to this dedicated page and cannot submit. Synthetic fake API/widget tests only; no live NAS write occurred. See the TrueNAS 25.10 [host association delete contract](https://api.truenas.com/v25.10.0/api_methods_nvmet.host_subsys.delete.html). TD-037 remains partial.
+
+## Previous continuation: host-association verification for NVMe-oF creation
 
 The reviewed unbound-subsystem create path now requires the protected, secret-stripping host inventory as well as the four bounded topology reads at review, immediately before submission and afterward. Snapshot proofs include public host NQNs and associations, and successful readback requires no host, port or namespace association to the new subsystem. An unexpected host association or incomplete inventory fences further NVMe-oF edits as uncertain rather than claiming an unbound result. The submitted payload remains only `{name, allow_any_host: false}`. These sequential reads cannot exclude another administrator's race or prove client inactivity. Synthetic fake API/widget tests only; no live NAS read or write occurred. See the TrueNAS 25.10 [host association query](https://api.truenas.com/v25.10/api_methods_nvmet.host_subsys.query.html) contract. TD-037 remains partial.
 

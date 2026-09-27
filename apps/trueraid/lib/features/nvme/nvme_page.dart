@@ -4,6 +4,7 @@ import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 import '../dashboard/dashboard_controller.dart';
 import 'nvme_host_overview.dart';
+import 'nvme_host_access_revoke_editor.dart';
 import 'nvme_overview.dart';
 import 'nvme_subsystem_create_editor.dart';
 import 'nvme_subsystem_delete_editor.dart';
@@ -124,6 +125,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeSubsystemRestrictEditor(),
                   const SizedBox(height: 20),
                   const NvmeSubsystemRenameEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeHostAccessRevokeEditor(),
                 ],
               ),
             ),

@@ -320,3 +320,286 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
     hostMappings,
   ]);
 }
+
+final nvmeHostAccessRevokeCoordinatorProvider =
+    Provider<NvmeHostAccessRevokeCoordinator?>((ref) {
+      final session = ref.watch(dashboardActiveSessionProvider);
+      final repository = session?.repository;
+      if (session?.endpoint == null ||
+          repository is! AuthenticatedAdminSession ||
+          repository is! AuthenticatedNvmeHostSession) {
+        return null;
+      }
+      return NvmeHostAccessRevokeCoordinator(
+        session: session!,
+        api: repository as AuthenticatedAdminSession,
+        hostsApi: repository as AuthenticatedNvmeHostSession,
+        lock: ref.read(serverOperationLockProvider),
+        isCurrent: () =>
+            identical(ref.read(dashboardActiveSessionProvider), session),
+      );
+    });
+
+enum NvmeHostRevokeOutcome { completed, rejected, unknown }
+
+final class NvmeHostRevokeResult {
+  const NvmeHostRevokeResult(this.outcome, this.message);
+  final NvmeHostRevokeOutcome outcome;
+  final String message;
+}
+
+final class NvmeHostRevokeReview {
+  NvmeHostRevokeReview._({
+    required this.endpoint,
+    required this.mappingId,
+    required this.hostId,
+    required this.hostNqn,
+    required this.subsystemId,
+    required this.subsystemName,
+    required this.proof,
+    required this.issuedAt,
+  });
+  final String endpoint, hostNqn, subsystemName, proof;
+  final int mappingId, hostId, subsystemId;
+  final DateTime issuedAt;
+  String get confirmation =>
+      'REVOKE NVME HOST $hostId FROM SUBSYSTEM $subsystemId MAPPING $mappingId';
+}
+
+/// Revokes one reviewed host grant from a restricted subsystem. This can
+/// disconnect clients; the public inventories cannot prove live sessions.
+final class NvmeHostAccessRevokeCoordinator {
+  NvmeHostAccessRevokeCoordinator({
+    required this.session,
+    required this.api,
+    required this.hostsApi,
+    required this.lock,
+    required this.isCurrent,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+
+  final AuthenticatedSession session;
+  final AuthenticatedAdminSession api;
+  final AuthenticatedNvmeHostSession hostsApi;
+  final ServerOperationLock lock;
+  final bool Function() isCurrent;
+  final DateTime Function() _now;
+  final _issued = <NvmeHostRevokeReview>{};
+  bool _busy = false;
+
+  bool get locked => _busy || NvmeWriteFence.isUncertain(session);
+  bool get available =>
+      session.endpoint != null &&
+      api.adminCatalog.versionSupported &&
+      api.adminCatalog.method('nvmet.host.query') != null &&
+      api.adminCatalog.method('nvmet.host_subsys.query')?.supported == true &&
+      [
+        'nvmet.subsys.query',
+        'nvmet.port.query',
+        'nvmet.namespace.query',
+        'nvmet.port_subsys.query',
+        'nvmet.host_subsys.delete',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
+
+  void _guard() {
+    if (!isCurrent() || session.endpoint == null) {
+      throw StateError('The server connection changed.');
+    }
+    if (NvmeWriteFence.isUncertain(session)) {
+      throw StateError(
+        'An NVMe-oF change is unverified. Reconnect before editing.',
+      );
+    }
+  }
+
+  Future<_Snapshot> _snapshot() async {
+    final topology = await loadNvmeOverviewFromAdmin(
+      api: api,
+      isCurrent: () => isCurrent() && session.endpoint != null,
+    );
+    _guard();
+    final rows = await hostsApi.loadNvmeHostReferences();
+    _guard();
+    final hosts = NvmeHostOverview.parse(
+      hosts: rows.hosts,
+      mappings: rows.mappings,
+    );
+    if (topology.unresolvedReferences != 0 ||
+        hosts.unresolvedReferences(
+              topology.subsystems.map((s) => s.id).toSet(),
+            ) !=
+            0) {
+      throw StateError('NVMe-oF references are unresolved. Nothing was sent.');
+    }
+    return _Snapshot(topology, hosts);
+  }
+
+  (NvmeHostMapping, NvmeHost, NvmeSubsystem) _target(
+    _Snapshot snapshot,
+    int mappingId,
+  ) {
+    final mapping = snapshot.hosts.mappings
+        .where((m) => m.id == mappingId)
+        .singleOrNull;
+    if (mapping == null) {
+      throw StateError('Host association was not found. Nothing was sent.');
+    }
+    final host = snapshot.hosts.hosts
+        .where((h) => h.id == mapping.hostId)
+        .singleOrNull;
+    final subsystem = snapshot.topology.subsystems
+        .where((s) => s.id == mapping.subsystemId)
+        .singleOrNull;
+    if (host == null || subsystem == null || subsystem.allowAnyHost) {
+      throw StateError(
+        'Only a verified association on a host-restricted subsystem can be revoked. Nothing was sent.',
+      );
+    }
+    return (mapping, host, subsystem);
+  }
+
+  Future<NvmeHostRevokeReview> prepare(int mappingId) async {
+    _guard();
+    if (!available || _busy || mappingId <= 0) {
+      throw StateError(
+        'Select a positive host association ID on a supported server. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    try {
+      final before = await _snapshot();
+      final (mapping, host, subsystem) = _target(before, mappingId);
+      final review = NvmeHostRevokeReview._(
+        endpoint: session.endpoint!,
+        mappingId: mapping.id,
+        hostId: host.id,
+        hostNqn: host.nqn,
+        subsystemId: subsystem.id,
+        subsystemName: subsystem.name,
+        proof: _proof(before),
+        issuedAt: _now().toUtc(),
+      );
+      _issued.add(review);
+      return review;
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError(
+        'NVMe-oF host revocation preflight failed. Nothing was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  void cancel(NvmeHostRevokeReview review) => _issued.remove(review);
+
+  Future<NvmeHostRevokeResult> execute(
+    NvmeHostRevokeReview review,
+    String confirmation,
+  ) async {
+    final issued = _issued.remove(review);
+    final now = _now().toUtc();
+    if (!issued ||
+        _busy ||
+        !isCurrent() ||
+        NvmeWriteFence.isUncertain(session) ||
+        review.endpoint != session.endpoint ||
+        confirmation != review.confirmation ||
+        now.isBefore(review.issuedAt) ||
+        now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+      return const NvmeHostRevokeResult(
+        NvmeHostRevokeOutcome.rejected,
+        'Review expired or confirmation did not match. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      return const NvmeHostRevokeResult(
+        NvmeHostRevokeOutcome.rejected,
+        'Another server operation is in progress. Nothing was sent.',
+      );
+    }
+    _busy = true;
+    var sent = false;
+    try {
+      final before = await _snapshot();
+      final (mapping, host, subsystem) = _target(before, review.mappingId);
+      if (host.id != review.hostId ||
+          host.nqn != review.hostNqn ||
+          subsystem.id != review.subsystemId ||
+          subsystem.name != review.subsystemName ||
+          mapping.id != review.mappingId ||
+          _proof(before) != review.proof) {
+        return const NvmeHostRevokeResult(
+          NvmeHostRevokeOutcome.rejected,
+          'NVMe-oF configuration changed since review. Nothing was sent.',
+        );
+      }
+      final method = api.adminCatalog.method('nvmet.host_subsys.delete');
+      if (method == null || !method.supported) {
+        return const NvmeHostRevokeResult(
+          NvmeHostRevokeOutcome.rejected,
+          'Host association delete method is unavailable. Nothing was sent.',
+        );
+      }
+      sent = true;
+      final response = await api.invokeAdmin(
+        AdminRequest(method: method, arguments: [review.mappingId]),
+      );
+      if (response is AdminFailed &&
+          response.reason == AdminFailureReason.denied) {
+        return const NvmeHostRevokeResult(
+          NvmeHostRevokeOutcome.rejected,
+          'The server denied revocation. No change was confirmed.',
+        );
+      }
+      if (response is! AdminCompleted || response.value != true) {
+        return _unknown();
+      }
+      final after = await _snapshot();
+      if (after.hosts.mappings.any((m) => m.id == review.mappingId) ||
+          after.hosts.mappings.length != before.hosts.mappings.length - 1 ||
+          _proof(after) != _proofWithoutHostMapping(before, review.mappingId)) {
+        return _unknown();
+      }
+      return NvmeHostRevokeResult(
+        NvmeHostRevokeOutcome.completed,
+        'Host association #${review.mappingId} is absent in a fresh read. Active client disconnection was not measured.',
+      );
+    } on Object {
+      return sent
+          ? _unknown()
+          : const NvmeHostRevokeResult(
+              NvmeHostRevokeOutcome.rejected,
+              'NVMe-oF host revocation preflight failed. Nothing was sent.',
+            );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  NvmeHostRevokeResult _unknown() {
+    NvmeWriteFence.markUncertain(session);
+    _issued.clear();
+    return const NvmeHostRevokeResult(
+      NvmeHostRevokeOutcome.unknown,
+      'Host access may have changed. Do not retry; inspect the original server and reconnect.',
+    );
+  }
+}
+
+String _proofWithoutHostMapping(_Snapshot snapshot, int mappingId) {
+  final hosts = NvmeHostOverview(
+    hosts: snapshot.hosts.hosts,
+    mappings: snapshot.hosts.mappings.where((m) => m.id != mappingId).toList(),
+  );
+  return _proof(_Snapshot(snapshot.topology, hosts));
+}

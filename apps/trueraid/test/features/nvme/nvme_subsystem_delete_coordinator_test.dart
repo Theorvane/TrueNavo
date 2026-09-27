@@ -9,6 +9,7 @@ import 'package:trueraid/features/nvme/nvme_subsystem_delete_coordinator.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_delete_editor.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_restrict_coordinator.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_restrict_editor.dart';
+import 'package:trueraid/features/nvme/nvme_host_access_revoke_editor.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
@@ -49,6 +50,7 @@ class _Fake
         'nvmet.host_subsys.query': _method(),
         if (advertiseDelete) 'nvmet.subsys.delete': _method(),
         'nvmet.subsys.update': _method(),
+        'nvmet.host_subsys.delete': _method(),
       },
     );
   }
@@ -68,6 +70,8 @@ class _Fake
   final hostMappings = <Map<String, Object?>>[];
   bool unknownDelete = false;
   bool unknownUpdate = false;
+  bool unknownHostDelete = false;
+  bool driftAfterHostDelete = false;
   bool driftAfterUpdate = false;
   bool nqnDriftAfterUpdate = false;
   bool driftBeforeDelete = false;
@@ -141,6 +145,19 @@ class _Fake
           });
         }
         return AdminCompleted(request, value: Map.of(row));
+      case 'nvmet.host_subsys.delete':
+        if (unknownHostDelete) return AdminOutcomeUnknown(request);
+        hostMappings.removeWhere(
+          (row) => row['id'] == request.arguments.single,
+        );
+        if (driftAfterHostDelete) {
+          subsystems.add({
+            'id': 4,
+            'name': 'other-admin',
+            'allow_any_host': false,
+          });
+        }
+        return AdminCompleted(request, value: true);
       default:
         throw StateError('Unexpected fake call');
     }
@@ -175,12 +192,21 @@ class _Harness {
       isCurrent: () => current,
       now: () => clock,
     );
+    hostRevokeCoordinator = NvmeHostAccessRevokeCoordinator(
+      session: session,
+      api: api,
+      hostsApi: api,
+      lock: ServerOperationLock(),
+      isCurrent: () => current,
+      now: () => clock,
+    );
   }
 
   final _Fake api;
   late final AuthenticatedSession session;
   late final NvmeSubsystemDeleteCoordinator coordinator;
   late final NvmeSubsystemRestrictCoordinator restrictCoordinator;
+  late final NvmeHostAccessRevokeCoordinator hostRevokeCoordinator;
   bool current = true;
   DateTime clock = DateTime.utc(2026);
   int get writes => api.calls
@@ -188,6 +214,9 @@ class _Harness {
       .length;
   int get updates => api.calls
       .where((call) => call.method.name == 'nvmet.subsys.update')
+      .length;
+  int get hostRevokes => api.calls
+      .where((call) => call.method.name == 'nvmet.host_subsys.delete')
       .length;
 }
 
@@ -562,5 +591,172 @@ void main() {
     await tester.pumpAndSettle();
     expect(h.updates, 1);
     expect(h.api.subsystems[0]['allow_any_host'], false);
+  });
+
+  test(
+    'revokes only one reviewed host association from a restricted subsystem',
+    () async {
+      final h = _Harness();
+      h.api.hostMappings.addAll([
+        {
+          'id': 10,
+          'host': {'id': 8},
+          'subsys': {'id': 1},
+        },
+        {
+          'id': 11,
+          'host': {'id': 8},
+          'subsys': {'id': 2},
+        },
+      ]);
+      final review = await h.hostRevokeCoordinator.prepare(10);
+      expect(review.hostNqn, 'nqn.fixture:host');
+      expect(review.subsystemName, 'empty');
+      expect(h.hostRevokes, 0);
+      final result = await h.hostRevokeCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmeHostRevokeOutcome.completed);
+      expect(h.hostRevokes, 1);
+      expect(h.api.hostReads, 3);
+      expect(
+        h.api.calls
+            .where((c) => c.method.name == 'nvmet.host_subsys.delete')
+            .single
+            .arguments,
+        [10],
+      );
+      expect(h.api.hostMappings.single['id'], 11);
+      expect(
+        (await h.hostRevokeCoordinator.execute(
+          review,
+          review.confirmation,
+        )).outcome,
+        NvmeHostRevokeOutcome.rejected,
+      );
+    },
+  );
+
+  test(
+    'host revoke rejects missing mapping, any-host policy and prewrite drift',
+    () async {
+      final missing = _Harness();
+      await expectLater(
+        missing.hostRevokeCoordinator.prepare(10),
+        throwsStateError,
+      );
+      final anyHost = _Harness();
+      anyHost.api.subsystems.first['allow_any_host'] = true;
+      anyHost.api.hostMappings.add({
+        'id': 10,
+        'host': {'id': 8},
+        'subsys': {'id': 1},
+      });
+      await expectLater(
+        anyHost.hostRevokeCoordinator.prepare(10),
+        throwsStateError,
+      );
+      final h = _Harness();
+      h.api.hostMappings.add({
+        'id': 10,
+        'host': {'id': 8},
+        'subsys': {'id': 1},
+      });
+      final wrong = await h.hostRevokeCoordinator.prepare(10);
+      expect(
+        (await h.hostRevokeCoordinator.execute(wrong, 'wrong')).outcome,
+        NvmeHostRevokeOutcome.rejected,
+      );
+      final changed = await h.hostRevokeCoordinator.prepare(10);
+      h.api.subsystems.first['name'] = 'changed';
+      expect(
+        (await h.hostRevokeCoordinator.execute(
+          changed,
+          changed.confirmation,
+        )).outcome,
+        NvmeHostRevokeOutcome.rejected,
+      );
+      expect(h.hostRevokes, 0);
+    },
+  );
+
+  test('ambiguous host revoke and readback drift fence NVMe writes', () async {
+    final unknown = _Harness();
+    unknown.api.hostMappings.add({
+      'id': 10,
+      'host': {'id': 8},
+      'subsys': {'id': 1},
+    });
+    unknown.api.unknownHostDelete = true;
+    final review = await unknown.hostRevokeCoordinator.prepare(10);
+    expect(
+      (await unknown.hostRevokeCoordinator.execute(
+        review,
+        review.confirmation,
+      )).outcome,
+      NvmeHostRevokeOutcome.unknown,
+    );
+    expect(unknown.hostRevokeCoordinator.locked, true);
+    expect(unknown.coordinator.locked, true);
+
+    final drift = _Harness();
+    drift.api.hostMappings.add({
+      'id': 10,
+      'host': {'id': 8},
+      'subsys': {'id': 1},
+    });
+    drift.api.driftAfterHostDelete = true;
+    final next = await drift.hostRevokeCoordinator.prepare(10);
+    expect(
+      (await drift.hostRevokeCoordinator.execute(
+        next,
+        next.confirmation,
+      )).outcome,
+      NvmeHostRevokeOutcome.unknown,
+    );
+    expect(drift.hostRevokeCoordinator.locked, true);
+  });
+
+  testWidgets('host revoke editor requires exact association confirmation', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.hostMappings.add({
+      'id': 10,
+      'host': {'id': 8},
+      'subsys': {'id': 1},
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: NvmeHostAccessRevokeEditor()),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(find.byKey(const Key('nvme-host-revoke-id')), '10');
+    await tester.tap(find.byKey(const Key('nvme-host-revoke-review')));
+    await tester.pumpAndSettle();
+    expect(find.text('Association #10'), findsOneWidget);
+    expect(find.textContaining('nqn.fixture:host'), findsOneWidget);
+    expect(find.textContaining('private-key'), findsNothing);
+    expect(h.hostRevokes, 0);
+    await tester.enterText(
+      find.byKey(const Key('nvme-host-revoke-confirmation')),
+      'REVOKE NVME HOST 8 FROM SUBSYSTEM 1 MAPPING 10',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-host-revoke-submit')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-host-revoke-submit')));
+    await tester.pumpAndSettle();
+    expect(h.hostRevokes, 1);
+    expect(tester.takeException(), isNull);
   });
 }
