@@ -8,8 +8,13 @@ import 'iscsi_page.dart' show iscsiOverviewProvider;
 import 'iscsi_target_access_coordinator.dart';
 
 class IscsiTargetAccessEditor extends ConsumerStatefulWidget {
-  const IscsiTargetAccessEditor({required this.overview, super.key});
+  const IscsiTargetAccessEditor({
+    required this.overview,
+    this.detach = false,
+    super.key,
+  });
   final IscsiOverview overview;
+  final bool detach;
 
   @override
   ConsumerState<IscsiTargetAccessEditor> createState() =>
@@ -24,11 +29,14 @@ class _IscsiTargetAccessEditorState
   Object? _reviewSession;
   String? _message;
   bool _busy = false;
+  String _key(String suffix) =>
+      'iscsi-access-${widget.detach ? 'detach-' : ''}$suffix';
 
   @override
   void didUpdateWidget(covariant IscsiTargetAccessEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.overview, widget.overview)) {
+    if (!identical(oldWidget.overview, widget.overview) ||
+        oldWidget.detach != widget.detach) {
       _target = null;
       _portal = null;
       _initiator = null;
@@ -50,7 +58,9 @@ class _IscsiTargetAccessEditorState
       _message = null;
     });
     try {
-      final review = await coordinator.prepare(_target!, _portal!, _initiator!);
+      final review = widget.detach
+          ? await coordinator.prepareDetach(_target!, _portal!, _initiator!)
+          : await coordinator.prepare(_target!, _portal!, _initiator!);
       if (!mounted) return;
       setState(() {
         _review = review;
@@ -78,7 +88,9 @@ class _IscsiTargetAccessEditorState
       _review = null;
       _message = null;
     });
-    final result = await coordinator.execute(review, phrase);
+    final result = widget.detach
+        ? await coordinator.executeDetach(review, phrase)
+        : await coordinator.execute(review, phrase);
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -101,7 +113,8 @@ class _IscsiTargetAccessEditorState
         identical(session, _reviewSession) &&
             _target == _review?.targetId &&
             _portal == _review?.portalId &&
-            _initiator == _review?.initiatorId
+            _initiator == _review?.initiatorId &&
+            widget.detach == _review?.detach
         ? _review
         : null;
     final enabled =
@@ -115,7 +128,10 @@ class _IscsiTargetAccessEditorState
     final targets = widget.overview.targets.where(
       (item) =>
           item.mode == 'iSCSI' &&
-          item.groups.isEmpty &&
+          (widget.detach
+              ? item.groups.length == 1 &&
+                    item.groups.single.authMethod == 'No CHAP'
+              : item.groups.isEmpty) &&
           !mapped.contains(item.id),
     );
     final portals = widget.overview.portals.where(
@@ -128,20 +144,24 @@ class _IscsiTargetAccessEditorState
       (item) => item.names.isNotEmpty && !item.names.contains('ALL'),
     );
     return TdPanel(
-      title: 'Attach a portal and initiator to an unbound target',
-      description: 'For a target with no access groups, authorized networks or LUNs. Only one explicit portal and initiator group are attached, without CHAP or a LUN. Stop iSCSI and disconnect clients first.',
+      title: widget.detach
+          ? 'Detach portal and initiator from a LUN-free target'
+          : 'Attach a portal and initiator to an unbound target',
+      description: widget.detach
+          ? 'Removes the sole no-CHAP portal/initiator association only when the target has no LUNs or authorized networks. The portal and initiator records are retained. Stop iSCSI and disconnect clients first.'
+          : 'For a target with no access groups, authorized networks or LUNs. Only one explicit portal and initiator group are attached, without CHAP or a LUN. Stop iSCSI and disconnect clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DropdownButtonFormField<int>(
-            key: const Key('iscsi-access-target'),
+            key: Key(_key('target')),
             isExpanded: true,
             initialValue: targets.any((item) => item.id == _target)
                 ? _target
                 : null,
-            decoration: const InputDecoration(
-              labelText: 'Unbound target',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: widget.detach ? 'Target to detach' : 'Unbound target',
+              border: const OutlineInputBorder(),
             ),
             items: [
               for (final item in targets)
@@ -156,72 +176,86 @@ class _IscsiTargetAccessEditorState
             onChanged: enabled
                 ? (value) => setState(() {
                     _target = value;
+                    if (widget.detach) {
+                      final selected = widget.overview.targetById(value!);
+                      _portal = selected?.groups.single.portalId;
+                      _initiator = selected?.groups.single.initiatorId;
+                    } else {
+                      _portal = null;
+                      _initiator = null;
+                    }
                     _review = null;
                     _message = null;
                   })
                 : null,
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<int>(
-            key: const Key('iscsi-access-portal'),
-            isExpanded: true,
-            initialValue: portals.any((item) => item.id == _portal)
-                ? _portal
-                : null,
-            decoration: const InputDecoration(
-              labelText: 'Portal',
-              border: OutlineInputBorder(),
-            ),
-            items: [
-              for (final item in portals)
-                DropdownMenuItem(
-                  value: item.id,
-                  child: Text(
-                    '#${item.id} ${item.listeners.single.ip}',
-                    overflow: TextOverflow.ellipsis,
+          KeyedSubtree(
+            key: ValueKey(('portal', _target, widget.detach)),
+            child: DropdownButtonFormField<int>(
+              key: Key(_key('portal')),
+              isExpanded: true,
+              initialValue: portals.any((item) => item.id == _portal)
+                  ? _portal
+                  : null,
+              decoration: const InputDecoration(
+                labelText: 'Portal',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final item in portals)
+                  DropdownMenuItem(
+                    value: item.id,
+                    child: Text(
+                      '#${item.id} ${item.listeners.single.ip}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-            ],
-            onChanged: enabled
-                ? (value) => setState(() {
-                    _portal = value;
-                    _review = null;
-                    _message = null;
-                  })
-                : null,
+              ],
+              onChanged: enabled && !widget.detach
+                  ? (value) => setState(() {
+                      _portal = value;
+                      _review = null;
+                      _message = null;
+                    })
+                  : null,
+            ),
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<int>(
-            key: const Key('iscsi-access-initiator'),
-            isExpanded: true,
-            initialValue: initiators.any((item) => item.id == _initiator)
-                ? _initiator
-                : null,
-            decoration: const InputDecoration(
-              labelText: 'Explicit initiator group',
-              border: OutlineInputBorder(),
-            ),
-            items: [
-              for (final item in initiators)
-                DropdownMenuItem(
-                  value: item.id,
-                  child: Text(
-                    '#${item.id} ${item.names.join(', ')}',
-                    overflow: TextOverflow.ellipsis,
+          KeyedSubtree(
+            key: ValueKey(('initiator', _target, widget.detach)),
+            child: DropdownButtonFormField<int>(
+              key: Key(_key('initiator')),
+              isExpanded: true,
+              initialValue: initiators.any((item) => item.id == _initiator)
+                  ? _initiator
+                  : null,
+              decoration: const InputDecoration(
+                labelText: 'Explicit initiator group',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final item in initiators)
+                  DropdownMenuItem(
+                    value: item.id,
+                    child: Text(
+                      '#${item.id} ${item.names.join(', ')}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-            ],
-            onChanged: enabled
-                ? (value) => setState(() {
-                    _initiator = value;
-                    _review = null;
-                    _message = null;
-                  })
-                : null,
+              ],
+              onChanged: enabled && !widget.detach
+                  ? (value) => setState(() {
+                      _initiator = value;
+                      _review = null;
+                      _message = null;
+                    })
+                  : null,
+            ),
           ),
           const SizedBox(height: 8),
           OutlinedButton(
-            key: const Key('iscsi-access-review'),
+            key: Key(_key('review')),
             onPressed:
                 enabled &&
                     _target != null &&
@@ -229,7 +263,11 @@ class _IscsiTargetAccessEditorState
                     _initiator != null
                 ? () => _prepare(coordinator)
                 : null,
-            child: const Text('Review target access association'),
+            child: Text(
+              widget.detach
+                  ? 'Review target access removal'
+                  : 'Review target access association',
+            ),
           ),
           if (coordinator == null || !coordinator.available)
             const Text(
@@ -247,11 +285,13 @@ class _IscsiTargetAccessEditorState
             Text(
               'Initiator #${review.initiatorId}: ${review.initiatorNames.join(', ')}',
             ),
-            const Text(
-              'No CHAP, authorized networks or LUN is submitted. Complete inventories and stopped service are checked again; concurrent administrators can still race these reads.',
+            Text(
+              widget.detach
+                  ? 'Only the reviewed group is removed. No portal, initiator or LUN is deleted. Complete inventories and stopped service are checked again; concurrent administrators can still race these reads.'
+                  : 'No CHAP, authorized networks or LUN is submitted. Complete inventories and stopped service are checked again; concurrent administrators can still race these reads.',
             ),
             TextField(
-              key: const Key('iscsi-access-confirmation'),
+              key: Key(_key('confirmation')),
               controller: _confirmation,
               enabled: !_busy,
               decoration: InputDecoration(
@@ -260,9 +300,13 @@ class _IscsiTargetAccessEditorState
               ),
             ),
             FilledButton(
-              key: const Key('iscsi-access-submit'),
+              key: Key(_key('submit')),
               onPressed: _busy ? null : () => _submit(coordinator, review),
-              child: const Text('Attach portal and initiator'),
+              child: Text(
+                widget.detach
+                    ? 'Detach portal and initiator'
+                    : 'Attach portal and initiator',
+              ),
             ),
             TextButton(
               onPressed: _busy

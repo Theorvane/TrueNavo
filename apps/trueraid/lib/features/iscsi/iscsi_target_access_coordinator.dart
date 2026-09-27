@@ -43,15 +43,17 @@ final class IscsiTargetAccessReview {
     this.portalIp,
     this.initiatorId,
     this.initiatorNames,
+    this.detach,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, portalIp, proof;
   final int targetId, portalId, initiatorId;
   final List<String> initiatorNames;
+  final bool detach;
   final DateTime issuedAt;
   String get confirmation =>
-      'ATTACH ISCSI TARGET #$targetId PORTAL #$portalId INITIATOR #$initiatorId';
+      '${detach ? 'DETACH' : 'ATTACH'} ISCSI TARGET #$targetId PORTAL #$portalId INITIATOR #$initiatorId';
 }
 
 final class _Snapshot {
@@ -80,7 +82,7 @@ final class _Snapshot {
   ]);
 }
 
-/// Associates an explicit initiator and portal with a target that has no LUN.
+/// Associates or detaches an explicit initiator and portal without a LUN.
 /// Sequential inventory reads cannot exclude another administrator's race.
 final class IscsiTargetAccessCoordinator {
   IscsiTargetAccessCoordinator({
@@ -232,8 +234,9 @@ final class IscsiTargetAccessCoordinator {
     _Snapshot snapshot,
     int targetId,
     int portalId,
-    int initiatorId,
-  ) {
+    int initiatorId, {
+    bool attached = false,
+  }) {
     final target = snapshot.targets[targetId];
     final portal = snapshot.portals[portalId];
     final initiator = snapshot.initiators[initiatorId];
@@ -248,11 +251,15 @@ final class IscsiTargetAccessCoordinator {
         name.isEmpty ||
         name.length > 120 ||
         target['groups'] is! List ||
-        (target['groups'] as List).isNotEmpty ||
+        (attached
+            ? !_hasOnlyGroup(target['groups'] as List, portalId, initiatorId)
+            : (target['groups'] as List).isNotEmpty) ||
         target['auth_networks'] is! List ||
         (target['auth_networks'] as List).isNotEmpty ||
         snapshot.mappings.any((row) => row['target'] == targetId)) {
-      throw StateError('Only an unbound iSCSI target without LUNs qualifies.');
+      throw StateError(
+        'Only the reviewed LUN-free iSCSI access state qualifies.',
+      );
     }
     final listeners = portal['listen'];
     if (listeners is! List ||
@@ -313,7 +320,20 @@ final class IscsiTargetAccessCoordinator {
     int targetId,
     int portalId,
     int initiatorId,
-  ) async {
+  ) => _prepare(targetId, portalId, initiatorId, detach: false);
+
+  Future<IscsiTargetAccessReview> prepareDetach(
+    int targetId,
+    int portalId,
+    int initiatorId,
+  ) => _prepare(targetId, portalId, initiatorId, detach: true);
+
+  Future<IscsiTargetAccessReview> _prepare(
+    int targetId,
+    int portalId,
+    int initiatorId, {
+    required bool detach,
+  }) async {
     _guard();
     if (!available ||
         _busy ||
@@ -330,7 +350,13 @@ final class IscsiTargetAccessCoordinator {
     _issued.clear();
     try {
       final snapshot = await _snapshot();
-      final candidate = _candidate(snapshot, targetId, portalId, initiatorId);
+      final candidate = _candidate(
+        snapshot,
+        targetId,
+        portalId,
+        initiatorId,
+        attached: detach,
+      );
       final review = IscsiTargetAccessReview._(
         session.endpoint!,
         targetId,
@@ -339,6 +365,7 @@ final class IscsiTargetAccessCoordinator {
         candidate.ip,
         initiatorId,
         candidate.initiators,
+        detach,
         snapshot.proof,
         _now().toUtc(),
       );
@@ -359,10 +386,22 @@ final class IscsiTargetAccessCoordinator {
   Future<IscsiTargetAccessResult> execute(
     IscsiTargetAccessReview review,
     String confirmation,
-  ) async {
+  ) => _execute(review, confirmation, detach: false);
+
+  Future<IscsiTargetAccessResult> executeDetach(
+    IscsiTargetAccessReview review,
+    String confirmation,
+  ) => _execute(review, confirmation, detach: true);
+
+  Future<IscsiTargetAccessResult> _execute(
+    IscsiTargetAccessReview review,
+    String confirmation, {
+    required bool detach,
+  }) async {
     final issued = _issued.remove(review);
     final now = _now().toUtc();
     if (!issued ||
+        review.detach != detach ||
         _busy ||
         !isCurrent() ||
         IscsiWriteFence.isUncertain(session) ||
@@ -386,7 +425,13 @@ final class IscsiTargetAccessCoordinator {
     var sent = false;
     try {
       final before = await _snapshot();
-      _candidate(before, review.targetId, review.portalId, review.initiatorId);
+      _candidate(
+        before,
+        review.targetId,
+        review.portalId,
+        review.initiatorId,
+        attached: detach,
+      );
       if (before.proof != review.proof) {
         return const IscsiTargetAccessResult(
           IscsiTargetAccessOutcome.rejected,
@@ -400,7 +445,9 @@ final class IscsiTargetAccessCoordinator {
           arguments: [
             review.targetId,
             {
-              'groups': [_group(review.portalId, review.initiatorId)],
+              'groups': detach
+                  ? <Map<String, Object?>>[]
+                  : [_group(review.portalId, review.initiatorId)],
             },
           ],
         ),
@@ -413,13 +460,13 @@ final class IscsiTargetAccessCoordinator {
       }
       if (result is! AdminCompleted ||
           result.value is! Map ||
-          !_matchesGroup(result.value as Map, review)) {
+          !_matchesState(result.value as Map, review)) {
         return _unknown();
       }
       final after = await _snapshot();
       final selected = after.targets[review.targetId];
       if (selected == null ||
-          !_matchesGroup(selected, review) ||
+          !_matchesState(selected, review) ||
           _stableTargetDigest(after, review.targetId) !=
               _stableTargetDigest(before, review.targetId) ||
           after.portalDigest != before.portalDigest ||
@@ -429,9 +476,11 @@ final class IscsiTargetAccessCoordinator {
           after.service.enabledOnBoot != before.service.enabledOnBoot) {
         return _unknown();
       }
-      return const IscsiTargetAccessResult(
+      return IscsiTargetAccessResult(
         IscsiTargetAccessOutcome.completed,
-        'Only the reviewed portal/initiator group appeared. No LUN was mapped; client access was not tested.',
+        detach
+            ? 'Only the reviewed portal/initiator group disappeared. No LUN was mapped; client access was not tested.'
+            : 'Only the reviewed portal/initiator group appeared. No LUN was mapped; client access was not tested.',
       );
     } on Object {
       return sent
@@ -453,11 +502,8 @@ final class IscsiTargetAccessCoordinator {
     'auth': null,
   };
 
-  bool _matchesGroup(Map row, IscsiTargetAccessReview review) {
-    final groups = row['groups'];
-    if (groups is! List || groups.length != 1 || groups.single is! Map) {
-      return false;
-    }
+  bool _hasOnlyGroup(List groups, int portalId, int initiatorId) {
+    if (groups.length != 1 || groups.single is! Map) return false;
     final group = groups.single as Map;
     if (group.keys.any(
       (key) =>
@@ -465,13 +511,23 @@ final class IscsiTargetAccessCoordinator {
     )) {
       return false;
     }
-    return row['id'] == review.targetId &&
-        row['name'] == review.targetName &&
-        row['mode'] == 'ISCSI' &&
-        group['portal'] == review.portalId &&
-        group['initiator'] == review.initiatorId &&
+    return group['portal'] == portalId &&
+        group['initiator'] == initiatorId &&
         group['authmethod'] == 'NONE' &&
         group['auth'] == null;
+  }
+
+  bool _matchesState(Map row, IscsiTargetAccessReview review) {
+    final groups = row['groups'];
+    if (groups is! List ||
+        (review.detach
+            ? groups.isNotEmpty
+            : !_hasOnlyGroup(groups, review.portalId, review.initiatorId))) {
+      return false;
+    }
+    return row['id'] == review.targetId &&
+        row['name'] == review.targetName &&
+        row['mode'] == 'ISCSI';
   }
 
   String _stableTargetDigest(_Snapshot snapshot, int targetId) {

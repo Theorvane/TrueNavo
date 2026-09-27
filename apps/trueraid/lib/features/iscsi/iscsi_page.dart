@@ -298,6 +298,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         const SizedBox(height: 16),
         IscsiTargetAccessEditor(overview: value),
         const SizedBox(height: 16),
+        IscsiTargetAccessEditor(overview: value, detach: true),
+        const SizedBox(height: 16),
         if (value.targets.isNotEmpty) ...[
           KeyedSubtree(
             key: ValueKey(('target-filter', value)),

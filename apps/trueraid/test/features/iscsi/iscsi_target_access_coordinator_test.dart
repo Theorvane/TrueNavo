@@ -170,6 +170,123 @@ class _Harness {
 }
 
 void main() {
+  test('detaches only the sole reviewed LUN-free access group', () async {
+    final h = _Harness();
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final review = await h.coordinator.prepareDetach(3, 2, 4);
+    expect(
+      review.confirmation,
+      'DETACH ISCSI TARGET #3 PORTAL #2 INITIATOR #4',
+    );
+    expect(h.writes, 0);
+    final result = await h.coordinator.executeDetach(
+      review,
+      review.confirmation,
+    );
+    expect(result.outcome, IscsiTargetAccessOutcome.completed);
+    expect(
+      h.api.calls
+          .singleWhere((call) => call.method.name == 'iscsi.target.update')
+          .arguments,
+      [
+        3,
+        {'groups': <Object?>[]},
+      ],
+    );
+    expect(h.api.targets.single['groups'], isEmpty);
+    expect(h.api.portals, hasLength(1));
+    expect(h.api.initiators, hasLength(1));
+    expect(h.writes, 1);
+  });
+
+  test(
+    'detach rejects CHAP, added LUN, dependency drift and wrong review mode',
+    () async {
+      final h = _Harness();
+      h.api.targets.single['groups'] = [
+        {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 7},
+      ];
+      await expectLater(h.coordinator.prepareDetach(3, 2, 4), throwsStateError);
+      h.api.targets.single['groups'] = [
+        {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      ];
+      h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+      await expectLater(h.coordinator.prepareDetach(3, 2, 4), throwsStateError);
+      h.api.mappings.clear();
+      var review = await h.coordinator.prepareDetach(3, 2, 4);
+      expect(
+        (await h.coordinator.execute(review, review.confirmation)).outcome,
+        IscsiTargetAccessOutcome.rejected,
+      );
+      review = await h.coordinator.prepareDetach(3, 2, 4);
+      h.api.portals.single['comment'] = 'changed';
+      expect(
+        (await h.coordinator.executeDetach(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiTargetAccessOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    },
+  );
+
+  testWidgets(
+    'detach editor reviews the current group and requires confirmation',
+    (tester) async {
+      final h = _Harness();
+      h.api.targets.single['groups'] = [
+        {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      ];
+      final overview = IscsiOverview.parse(
+        portals: h.api.portals,
+        initiators: h.api.initiators,
+        targets: h.api.targets,
+        extents: [],
+        mappings: h.api.mappings,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          ],
+          child: MaterialApp(
+            theme: TrueRAIDTheme.dark(),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: IscsiTargetAccessEditor(
+                  overview: overview,
+                  detach: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('iscsi-access-detach-target')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('#3 target-a').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('iscsi-access-detach-review')));
+      await tester.pumpAndSettle();
+      expect(h.writes, 0);
+      await tester.enterText(
+        find.byKey(const Key('iscsi-access-detach-confirmation')),
+        'DETACH ISCSI TARGET #3 PORTAL #2 INITIATOR #4',
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('iscsi-access-detach-submit')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('iscsi-access-detach-submit')));
+      await tester.pumpAndSettle();
+      expect(h.writes, 1);
+    },
+  );
+
   test(
     'attaches only explicit portal and initiator to LUN-free target',
     () async {
