@@ -44,6 +44,8 @@ class _Fake
     this.hostSupported = true,
     this.unassociatedPort = false,
     this.globalSupported = false,
+    this.serviceSupported = false,
+    this.serviceRows,
   }) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
@@ -59,6 +61,7 @@ class _Fake
               {'type': 'object'},
             ],
           },
+        if (serviceSupported) 'service.query': _method(),
       },
     );
   }
@@ -66,6 +69,8 @@ class _Fake
   final bool hostSupported;
   final bool unassociatedPort;
   final bool globalSupported;
+  final bool serviceSupported;
+  final List<Object?>? serviceRows;
   @override
   late final AdminCatalog adminCatalog;
   final calls = <AdminRequest>[];
@@ -107,6 +112,16 @@ class _Fake
         'xport_referral': false,
         'unexpected_private_field': 'do-not-render',
       },
+      'service.query' =>
+        serviceRows ??
+            [
+              {
+                'service': 'nvmet',
+                'enable': true,
+                'state': 'RUNNING',
+                'pids': [42],
+              },
+            ],
       'nvmet.subsys.query' => [
         {
           'id': 1,
@@ -188,6 +203,104 @@ void main() {
         }),
         throwsFormatException,
       );
+    },
+  );
+
+  test('service projection rejects missing, duplicate and malformed rows', () {
+    expect(NvmeServiceStatus.parse([]), isNull);
+    expect(
+      NvmeServiceStatus.parse([
+        {'service': 'nvmet', 'enable': true, 'state': 'RUNNING'},
+        {'service': 'nvmet', 'enable': false, 'state': 'STOPPED'},
+      ]),
+      isNull,
+    );
+    expect(
+      NvmeServiceStatus.parse([
+        {'service': 'iscsitarget', 'enable': true, 'state': 'RUNNING'},
+      ]),
+      isNull,
+    );
+    expect(
+      NvmeServiceStatus.parse([
+        {'service': 'nvmet', 'enable': true, 'state': 'RUNNING\nsecret'},
+      ]),
+      isNull,
+    );
+  });
+
+  testWidgets('service state is a separate selected read', (tester) async {
+    final fake = _Fake(globalSupported: true, serviceSupported: true);
+    final session = AuthenticatedSession(
+      profileId: 'fixture',
+      repository: fake,
+      availableMethodNames: {..._names, 'nvmet.global.config', 'service.query'},
+      endpoint: 'wss://fixture.example/api/current',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => session),
+        ],
+        child: MaterialApp(theme: TrueRAIDTheme.dark(), home: const NvmePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final calls = fake.calls
+        .where((call) => call.method.name == 'service.query')
+        .toList();
+    expect(calls, hasLength(1));
+    expect(calls.single.arguments, [
+      [
+        ['service', '=', 'nvmet'],
+      ],
+      {
+        'select': ['service', 'enable', 'state'],
+        'limit': 2,
+      },
+    ]);
+    expect(find.text('Service: RUNNING'), findsOneWidget);
+    expect(find.text('Start on boot: Enabled'), findsOneWidget);
+    expect(find.textContaining('pids'), findsNothing);
+    expect(
+      find.textContaining('Neither proves that a listener is reachable'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'missing service row stays unknown without losing configuration',
+    (tester) async {
+      final fake = _Fake(
+        globalSupported: true,
+        serviceSupported: true,
+        serviceRows: const [],
+      );
+      final session = AuthenticatedSession(
+        profileId: 'fixture',
+        repository: fake,
+        availableMethodNames: {
+          ..._names,
+          'nvmet.global.config',
+          'service.query',
+        },
+        endpoint: 'wss://fixture.example/api/current',
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            dashboardActiveSessionProvider.overrideWith((ref) => session),
+          ],
+          child: MaterialApp(
+            theme: TrueRAIDTheme.dark(),
+            home: const NvmePage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Base NQN: nqn.2026-09.example'), findsOneWidget);
+      expect(find.text('Service: Status unavailable'), findsOneWidget);
+      expect(find.text('Start on boot: Unknown'), findsOneWidget);
     },
   );
 

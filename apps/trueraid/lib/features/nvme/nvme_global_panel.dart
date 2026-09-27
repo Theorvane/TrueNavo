@@ -53,7 +53,38 @@ final class NvmeGlobalConfig {
   }
 }
 
-final nvmeGlobalProvider = FutureProvider.autoDispose<NvmeGlobalConfig>((
+final class NvmeGlobalSummary {
+  const NvmeGlobalSummary({
+    required this.config,
+    required this.service,
+    required this.observedAt,
+  });
+  final NvmeGlobalConfig config;
+  final NvmeServiceStatus? service;
+  final DateTime observedAt;
+}
+
+final class NvmeServiceStatus {
+  const NvmeServiceStatus({required this.enabledOnBoot, required this.state});
+  final bool enabledOnBoot;
+  final String state;
+
+  static NvmeServiceStatus? parse(Object? raw) {
+    if (raw is! List || raw.length != 1 || raw.single is! Map) return null;
+    final row = raw.single as Map;
+    final enabled = row['enable'];
+    final state = row['state'];
+    if (row['service'] != 'nvmet' ||
+        enabled is! bool ||
+        state is! String ||
+        !RegExp(r'^[A-Z_]{3,30}$').hasMatch(state)) {
+      return null;
+    }
+    return NvmeServiceStatus(enabledOnBoot: enabled, state: state);
+  }
+}
+
+final nvmeGlobalProvider = FutureProvider.autoDispose<NvmeGlobalSummary>((
   ref,
 ) async {
   final session = ref.watch(dashboardActiveSessionProvider);
@@ -80,7 +111,41 @@ final nvmeGlobalProvider = FutureProvider.autoDispose<NvmeGlobalConfig>((
       'Global NVMe-oF settings are unavailable for this account.',
     );
   }
-  return NvmeGlobalConfig.parse(result.value);
+  final config = NvmeGlobalConfig.parse(result.value);
+  NvmeServiceStatus? service;
+  final serviceMethod = api.adminCatalog.method('service.query');
+  if (serviceMethod != null && serviceMethod.supported) {
+    try {
+      final serviceResult = await api.invokeAdmin(
+        AdminRequest(
+          method: serviceMethod,
+          arguments: [
+            [
+              ['service', '=', 'nvmet'],
+            ],
+            {
+              'select': ['service', 'enable', 'state'],
+              'limit': 2,
+            },
+          ],
+        ),
+      );
+      if (serviceResult is AdminCompleted) {
+        service = NvmeServiceStatus.parse(serviceResult.value);
+      }
+    } catch (_) {
+      // Saved settings remain useful when SERVICE_READ is unavailable.
+    }
+  }
+  if (!ref.mounted ||
+      !identical(session, ref.read(dashboardActiveSessionProvider))) {
+    throw StateError('The server connection changed.');
+  }
+  return NvmeGlobalSummary(
+    config: config,
+    service: service,
+    observedAt: DateTime.now().toUtc(),
+  );
 }, retry: (_, _) => null);
 
 class NvmeGlobalPanel extends ConsumerWidget {
@@ -107,22 +172,34 @@ class NvmeGlobalPanel extends ConsumerWidget {
 
 class _GlobalContent extends StatelessWidget {
   const _GlobalContent({required this.value});
-  final NvmeGlobalConfig value;
+  final NvmeGlobalSummary value;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text('Base NQN: ${value.baseNqn}'),
-      Text('Kernel backend: ${value.kernel ? 'Selected' : 'Not selected'}'),
-      Text('ANA: ${value.ana ? 'Configured on' : 'Configured off'}'),
-      Text('RDMA: ${value.rdma ? 'Configured on' : 'Configured off'}'),
+      Text('Read ${value.observedAt.toIso8601String()} (client UTC)'),
+      const SizedBox(height: 8),
+      Text('Base NQN: ${value.config.baseNqn}'),
       Text(
-        'Transport referrals: ${value.transportReferrals ? 'Configured on' : 'Configured off'}',
+        'Kernel backend: ${value.config.kernel ? 'Selected' : 'Not selected'}',
+      ),
+      Text('ANA: ${value.config.ana ? 'Configured on' : 'Configured off'}'),
+      Text('RDMA: ${value.config.rdma ? 'Configured on' : 'Configured off'}'),
+      Text(
+        'Transport referrals: ${value.config.transportReferrals ? 'Configured on' : 'Configured off'}',
       ),
       const SizedBox(height: 8),
+      Text('Service: ${value.service?.state ?? 'Status unavailable'}'),
+      Text(
+        'Start on boot: ${value.service == null
+            ? 'Unknown'
+            : value.service!.enabledOnBoot
+            ? 'Enabled'
+            : 'Disabled'}',
+      ),
       const Text(
-        'These flags do not prove that a listener is running, RDMA hardware is available, or a client can connect.',
+        'Saved settings and reported service state are separate reads. Neither proves that a listener is reachable, RDMA hardware is available, or a client can connect.',
       ),
     ],
   );
