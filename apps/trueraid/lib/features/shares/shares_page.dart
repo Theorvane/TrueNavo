@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 import '../dashboard/dashboard_controller.dart';
+import '../iscsi/iscsi_overview.dart';
+import '../iscsi/iscsi_page.dart';
 import '../management/management_page.dart';
 import '../nfs_shares/nfs_shares_controller.dart';
 import '../nfs_shares/nfs_shares_page.dart';
@@ -57,14 +59,17 @@ class _SharesPageState extends ConsumerState<SharesPage> {
     final overview = ref.watch(sharesOverviewProvider);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('File sharing'),
+        title: const Text('Shares'),
         actions: [
           IconButton(
             key: const Key('shares-overview-refresh'),
             tooltip: 'Refresh local inventories',
             onPressed: overview.isLoading
                 ? null
-                : () => ref.invalidate(sharesOverviewProvider),
+                : () {
+                    ref.invalidate(sharesOverviewProvider);
+                    ref.invalidate(iscsiOverviewProvider);
+                  },
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -97,6 +102,9 @@ class _SharesPageState extends ConsumerState<SharesPage> {
   }
 
   Widget _content(SharesOverview value) {
+    // The file-share read releases its operation lock before this separate
+    // block-storage read starts. The two inventories are never atomic.
+    final block = ref.watch(iscsiOverviewProvider);
     final sources = value.protocols;
     final visible = value.shares
         .where(
@@ -122,13 +130,13 @@ class _SharesPageState extends ConsumerState<SharesPage> {
               const Text('SHARES & SERVICES', style: TdTypography.micro),
               const SizedBox(height: 8),
               const Text(
-                'File sharing at a glance',
+                'File and block sharing at a glance',
                 style: TdTypography.titleLarge,
               ),
               const SizedBox(height: 12),
               Text(value.endpoint),
               Text(
-                'Read ${value.loadedSources} of 2 protocol inventories · ${value.observedAt.toIso8601String()} (client UTC)',
+                'Read ${value.loadedSources} of 2 file-sharing inventories · ${value.observedAt.toIso8601String()} (client UTC)',
               ),
               const SizedBox(height: 12),
               const Text(
@@ -154,6 +162,16 @@ class _SharesPageState extends ConsumerState<SharesPage> {
                       ),
                   ],
                 ),
+              ),
+              const SizedBox(height: 16),
+              _BlockStorageCard(
+                state: block,
+                open: () {
+                  ref.invalidate(iscsiOverviewProvider);
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(builder: (_) => const IscsiPage()),
+                  );
+                },
               ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
@@ -294,12 +312,93 @@ class _SharesPageState extends ConsumerState<SharesPage> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'iSCSI, NVMe, Fibre Channel and WebShare are not included yet. This screen never starts services, changes shares or probes clients. Refresh manually after making changes elsewhere.',
+                'NVMe, Fibre Channel and WebShare are not included yet. This screen never starts services, changes shares or probes clients. Refresh manually after making changes elsewhere.',
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _BlockStorageCard extends StatelessWidget {
+  const _BlockStorageCard({required this.state, required this.open});
+
+  final AsyncValue<IscsiOverview> state;
+  final VoidCallback open;
+
+  @override
+  Widget build(BuildContext context) => TdPanel(
+    title: 'iSCSI block storage',
+    description: 'Separate configuration read. A target or LUN mapping does not prove service availability or client access.',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        switch (state) {
+          AsyncData(:final value) => _BlockStorageCounts(value),
+          AsyncError() => const Text(
+            'iSCSI inventory unavailable. Its counts are unknown, not zero.',
+          ),
+          _ => const LinearProgressIndicator(),
+        },
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          key: const Key('shares-open-iscsi'),
+          onPressed: open,
+          icon: const Icon(Icons.open_in_new),
+          label: const Text('Open iSCSI workspace'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _BlockStorageCounts extends StatelessWidget {
+  const _BlockStorageCounts(this.value);
+
+  final IscsiOverview value;
+
+  @override
+  Widget build(BuildContext context) {
+    final mapped = value.mappings.map((mapping) => mapping.extentId).toSet();
+    final mappedCount = value.extents
+        .where((e) => mapped.contains(e.id))
+        .length;
+    final unresolved = value.mappings
+        .where(
+          (mapping) =>
+              value.targetById(mapping.targetId) == null ||
+              value.extentById(mapping.extentId) == null,
+        )
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '${value.targets.length} targets · ${value.extents.length} extents · ${value.mappings.length} LUN mappings',
+        ),
+        const SizedBox(height: 8),
+        Text('$mappedCount of ${value.extents.length} extents mapped'),
+        const SizedBox(height: 8),
+        Semantics(
+          label:
+              '$mappedCount of ${value.extents.length} returned iSCSI extents have a LUN mapping',
+          child: LinearProgressIndicator(
+            key: const Key('shares-iscsi-mapped-ratio'),
+            value: value.extents.isEmpty
+                ? 0
+                : mappedCount / value.extents.length,
+            minHeight: 12,
+          ),
+        ),
+        if (unresolved > 0) ...[
+          const SizedBox(height: 8),
+          Text(
+            '$unresolved mappings refer to a target or extent absent from this read. Inspect the iSCSI workspace.',
+          ),
+        ],
+      ],
     );
   }
 }

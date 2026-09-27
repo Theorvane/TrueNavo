@@ -7,6 +7,8 @@ import 'package:trueraid/dev/smb_shares_preview.dart';
 import 'package:trueraid/dev/nfs_shares_preview.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
 import 'package:trueraid/features/dashboard/dashboard_controller.dart';
+import 'package:trueraid/features/iscsi/iscsi_overview.dart';
+import 'package:trueraid/features/iscsi/iscsi_page.dart';
 import 'package:trueraid/features/management/management_page.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid/features/nfs_shares/nfs_shares_controller.dart';
@@ -262,6 +264,65 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('separate iSCSI summary shows bounded block topology and route', (
+    tester,
+  ) async {
+    _size(tester, 320);
+    final h = _Harness(
+      block: IscsiOverview.parse(
+        portals: [],
+        initiators: [],
+        targets: [
+          {'id': 1, 'name': 'target-a', 'groups': []},
+        ],
+        extents: [
+          {'id': 2, 'name': 'disk-a', 'type': 'DISK'},
+          {'id': 3, 'name': 'disk-b', 'type': 'DISK'},
+        ],
+        mappings: [
+          {'id': 4, 'target': 1, 'extent': 2, 'lunid': 0},
+          {'id': 5, 'target': 1, 'extent': 99, 'lunid': 1},
+        ],
+      ),
+    );
+    addTearDown(h.container.dispose);
+    await _pump(tester, h);
+    expect(find.text('1 targets · 2 extents · 2 LUN mappings'), findsOneWidget);
+    expect(find.text('1 of 2 extents mapped'), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-iscsi-mapped-ratio')),
+          )
+          .value,
+      0.5,
+    );
+    expect(find.textContaining('1 mappings refer to'), findsOneWidget);
+    expect(find.text('● Enabled · 4'), findsOneWidget);
+    expect(h.api.mutations, 0);
+    expect(h.blockReads, 1);
+    await tester.tap(find.byKey(const Key('shares-overview-refresh')));
+    await tester.pumpAndSettle();
+    expect(h.blockReads, 2);
+    final open = find.byKey(const Key('shares-open-iscsi'));
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+    expect(find.byType(IscsiPage), findsOneWidget);
+    expect(h.api.mutations, 0);
+  });
+  testWidgets('unavailable iSCSI is unknown rather than zero', (tester) async {
+    final h = _Harness();
+    addTearDown(h.container.dispose);
+    await _pump(tester, h);
+    expect(
+      find.text(
+        'iSCSI inventory unavailable. Its counts are unknown, not zero.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('shares-iscsi-mapped-ratio')), findsNothing);
+  });
   for (final protocol in ['smb', 'nfs']) {
     testWidgets(
       'reopening cached $protocol workspace reads a fresh inventory after overview refresh',
@@ -464,15 +525,21 @@ class _Fake extends _Unavailable
 }
 
 class _Harness {
-  _Harness() {
+  _Harness({IscsiOverview? block}) {
     current = session();
     container = ProviderContainer(
       overrides: [
         dashboardActiveSessionProvider.overrideWith((ref) => current),
+        if (block != null)
+          iscsiOverviewProvider.overrideWith((ref) async {
+            blockReads++;
+            return block;
+          }),
       ],
     );
   }
   final api = _Fake();
+  int blockReads = 0;
   AuthenticatedSession? current;
   late final ProviderContainer container;
   AuthenticatedSession session() => AuthenticatedSession(

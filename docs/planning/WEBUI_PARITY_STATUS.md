@@ -4,6 +4,10 @@ Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: block storage in unified Shares overview
+
+The Shares landing page now loads the existing bounded iSCSI topology after its separate SMB and NFS inventories and displays target, extent and LUN-mapping counts, a mapped-extent ratio bar, unresolved target/extent references and a direct link to the native iSCSI workspace. File-share enablement and path charts exclude block storage rather than treating LUNs as filesystem paths or enabled file shares. An unavailable iSCSI read is explicitly unknown, not a zero count; all reads remain sequential and cannot attest to client access. The page refresh requests fresh file and iSCSI inventories. Synthetic widget tests cover the block summary, unavailable state, navigation and no-write behavior; no live NAS read or write occurred in this increment. TD-033 remains partial.
+
 ## Current continuation: CHAP reference topology and usage chart
 
 The on-demand credential rows now identify up to three distinct returned target names and IDs per credential, with an explicit count for additional targets. Duplicate access groups on one target count once. Replacing or reloading the five-query topology hides the prior CHAP result and requires a fresh explicit credential read before the two inventories can be joined again. This prevents a stale credential read from being displayed as if it belonged to the refreshed topology, though fresh sequential reads are still not atomic. Synthetic model and widget tests only; no live NAS read or write occurred in this increment. TD-036 remains partial.
