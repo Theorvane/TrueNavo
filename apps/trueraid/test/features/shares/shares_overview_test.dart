@@ -301,9 +301,25 @@ void main() {
     expect(find.text('● Enabled · 4'), findsOneWidget);
     expect(h.api.mutations, 0);
     expect(h.blockReads, 1);
+    final blockFilter = find.byKey(const Key('shares-iscsi-filter'));
+    await tester.ensureVisible(blockFilter);
+    await tester.enterText(blockFilter, 'disk-a');
+    await tester.pumpAndSettle();
+    expect(find.text('1 matching targets'), findsOneWidget);
+    final target = find.byKey(const Key('shares-iscsi-target-1'));
+    await tester.ensureVisible(target);
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+    expect(find.text('LUN 0 · disk-a'), findsOneWidget);
+    expect(find.text('LUN 1 · Extent not returned'), findsOneWidget);
+    await tester.enterText(blockFilter, 'no-such-target');
+    await tester.pumpAndSettle();
+    expect(find.text('0 matching targets'), findsOneWidget);
+    expect(find.text('● Enabled · 4'), findsOneWidget);
     await tester.tap(find.byKey(const Key('shares-overview-refresh')));
     await tester.pumpAndSettle();
     expect(h.blockReads, 2);
+    expect(tester.widget<TextField>(blockFilter).controller!.text, isEmpty);
     final open = find.byKey(const Key('shares-open-iscsi'));
     await tester.ensureVisible(open);
     await tester.tap(open);
@@ -322,6 +338,34 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('shares-iscsi-mapped-ratio')), findsNothing);
+  });
+  testWidgets('block explorer caps the visible list but searches all targets', (
+    tester,
+  ) async {
+    final h = _Harness(
+      block: IscsiOverview.parse(
+        portals: [],
+        initiators: [],
+        targets: [
+          for (var id = 1; id <= 21; id++)
+            {'id': id, 'name': 'target-$id', 'groups': []},
+        ],
+        extents: [],
+        mappings: [],
+      ),
+    );
+    addTearDown(h.container.dispose);
+    await _pump(tester, h);
+    expect(find.text('21 matching targets'), findsOneWidget);
+    expect(find.byKey(const Key('shares-iscsi-target-21')), findsNothing);
+    final filter = find.byKey(const Key('shares-iscsi-filter'));
+    await tester.ensureVisible(filter);
+    await tester.enterText(filter, 'target-21');
+    await tester.pumpAndSettle();
+    expect(find.text('1 matching targets'), findsOneWidget);
+    expect(find.byKey(const Key('shares-iscsi-target-21')), findsOneWidget);
+    expect(h.blockReads, 1);
+    expect(h.api.mutations, 0);
   });
   for (final protocol in ['smb', 'nfs']) {
     testWidgets(

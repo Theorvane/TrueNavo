@@ -165,6 +165,7 @@ class _SharesPageState extends ConsumerState<SharesPage> {
               ),
               const SizedBox(height: 16),
               _BlockStorageCard(
+                key: ValueKey(value),
                 state: block,
                 open: () {
                   ref.invalidate(iscsiOverviewProvider);
@@ -322,11 +323,32 @@ class _SharesPageState extends ConsumerState<SharesPage> {
   }
 }
 
-class _BlockStorageCard extends StatelessWidget {
-  const _BlockStorageCard({required this.state, required this.open});
+class _BlockStorageCard extends StatefulWidget {
+  const _BlockStorageCard({required this.state, required this.open, super.key});
 
   final AsyncValue<IscsiOverview> state;
   final VoidCallback open;
+
+  @override
+  State<_BlockStorageCard> createState() => _BlockStorageCardState();
+}
+
+class _BlockStorageCardState extends State<_BlockStorageCard> {
+  final _filter = TextEditingController();
+
+  @override
+  void didUpdateWidget(covariant _BlockStorageCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.state.asData?.value, widget.state.asData?.value)) {
+      _filter.clear();
+    }
+  }
+
+  @override
+  void dispose() {
+    _filter.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => TdPanel(
@@ -335,8 +357,12 @@ class _BlockStorageCard extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        switch (state) {
-          AsyncData(:final value) => _BlockStorageCounts(value),
+        switch (widget.state) {
+          AsyncData(:final value) => _BlockStorageCounts(
+            value,
+            filter: _filter,
+            onFilterChanged: () => setState(() {}),
+          ),
           AsyncError() => const Text(
             'iSCSI inventory unavailable. Its counts are unknown, not zero.',
           ),
@@ -345,7 +371,7 @@ class _BlockStorageCard extends StatelessWidget {
         const SizedBox(height: 12),
         FilledButton.icon(
           key: const Key('shares-open-iscsi'),
-          onPressed: open,
+          onPressed: widget.open,
           icon: const Icon(Icons.open_in_new),
           label: const Text('Open iSCSI workspace'),
         ),
@@ -355,9 +381,15 @@ class _BlockStorageCard extends StatelessWidget {
 }
 
 class _BlockStorageCounts extends StatelessWidget {
-  const _BlockStorageCounts(this.value);
+  const _BlockStorageCounts(
+    this.value, {
+    required this.filter,
+    required this.onFilterChanged,
+  });
 
   final IscsiOverview value;
+  final TextEditingController filter;
+  final VoidCallback onFilterChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -372,6 +404,22 @@ class _BlockStorageCounts extends StatelessWidget {
               value.extentById(mapping.extentId) == null,
         )
         .length;
+    final query = filter.text.trim().toLowerCase();
+    final visible = value.targets.where((target) {
+      if (query.isEmpty ||
+          target.name.toLowerCase().contains(query) ||
+          target.id.toString() == query) {
+        return true;
+      }
+      return value.mappings.any((mapping) {
+        if (mapping.targetId != target.id) return false;
+        final extent = value.extentById(mapping.extentId);
+        return mapping.extentId.toString() == query ||
+            mapping.lun.toString() == query ||
+            'lun ${mapping.lun}' == query ||
+            (extent?.name.toLowerCase().contains(query) ?? false);
+      });
+    }).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -398,9 +446,74 @@ class _BlockStorageCounts extends StatelessWidget {
             '$unresolved mappings refer to a target or extent absent from this read. Inspect the iSCSI workspace.',
           ),
         ],
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('shares-iscsi-filter'),
+          controller: filter,
+          decoration: const InputDecoration(
+            labelText: 'Find target, extent or LUN',
+            prefixIcon: Icon(Icons.search),
+          ),
+          onChanged: (_) => onFilterChanged(),
+        ),
+        const SizedBox(height: 8),
+        Text('${visible.length} matching targets'),
+        if (visible.isEmpty)
+          const Text('No target matches in the returned iSCSI inventory.'),
+        if (visible.length > 20)
+          const Text(
+            'Showing the first 20 targets. Narrow the search to inspect others.',
+          ),
+        for (final target in visible.take(20))
+          _BlockTargetTile(
+            target: target,
+            mappings:
+                value.mappings
+                    .where((mapping) => mapping.targetId == target.id)
+                    .toList()
+                  ..sort((a, b) => a.lun.compareTo(b.lun)),
+            overview: value,
+          ),
       ],
     );
   }
+}
+
+class _BlockTargetTile extends StatelessWidget {
+  const _BlockTargetTile({
+    required this.target,
+    required this.mappings,
+    required this.overview,
+  });
+
+  final IscsiTarget target;
+  final List<IscsiMapping> mappings;
+  final IscsiOverview overview;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    type: MaterialType.transparency,
+    child: ExpansionTile(
+      key: Key('shares-iscsi-target-${target.id}'),
+      title: Text(target.name),
+      subtitle: Text(
+        'Target #${target.id} · ${target.mode} · ${mappings.length} LUN mappings',
+      ),
+      children: [
+        if (mappings.isEmpty)
+          const ListTile(title: Text('No returned LUN mapping.')),
+        for (final mapping in mappings)
+          ListTile(
+            title: Text(
+              'LUN ${mapping.lun} · ${overview.extentById(mapping.extentId)?.name ?? 'Extent not returned'}',
+            ),
+            subtitle: Text(
+              'Mapping #${mapping.id} · Extent #${mapping.extentId}',
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 class _ProtocolCard extends StatelessWidget {

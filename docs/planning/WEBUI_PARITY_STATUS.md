@@ -4,6 +4,10 @@ Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: searchable block-sharing explorer
+
+The unified Shares page now lists returned iSCSI targets separately from file shares. A local search matches target name or exact ID, mapped extent name or exact ID, and exact LUN number; expanding a target shows its returned mapping IDs, LUNs and extent names without exposing backing paths. The initial list is capped at 20 visible targets, but searches cover the full bounded inventory. Missing extents are identified as unavailable rather than invented; file-share charts remain unchanged by the filter. The filter clears on inventory replacement and endpoint changes. Synthetic widget tests include 320px width at 200% text scale, missing references, full-inventory search beyond the initial cap and no-write assertions. No live NAS read or write occurred. TD-033 remains partial.
+
 ## Current continuation: block storage in unified Shares overview
 
 The Shares landing page now loads the existing bounded iSCSI topology after its separate SMB and NFS inventories and displays target, extent and LUN-mapping counts, a mapped-extent ratio bar, unresolved target/extent references and a direct link to the native iSCSI workspace. File-share enablement and path charts exclude block storage rather than treating LUNs as filesystem paths or enabled file shares. An unavailable iSCSI read is explicitly unknown, not a zero count; all reads remain sequential and cannot attest to client access. The page refresh requests fresh file and iSCSI inventories. Synthetic widget tests cover the block summary, unavailable state, navigation and no-write behavior; no live NAS read or write occurred in this increment. TD-033 remains partial.
