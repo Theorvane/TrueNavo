@@ -955,7 +955,9 @@ class AdminOperationTile extends StatelessWidget {
     'iscsi.targetextent.create' ||
     'iscsi.targetextent.delete' ||
     'iscsi.targetextent.update' => const IscsiPage(),
-    'nvmet.subsys.create' || 'nvmet.subsys.delete' => const NvmePage(),
+    'nvmet.subsys.create' ||
+    'nvmet.subsys.delete' ||
+    'nvmet.subsys.update' => const NvmePage(),
     'config.reset' => const ConfigurationResetPage(),
     'config.upload' => const ConfigurationRestorePage(),
     'config.save' => const ConfigurationBackupPage(),

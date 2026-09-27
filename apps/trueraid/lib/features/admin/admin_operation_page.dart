@@ -45,6 +45,7 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
     final unavailable = switch (widget.operation.method) {
       'nvmet.subsys.create' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.subsys.delete' => 'Use the dedicated NVMe-oF workflow.',
+      'nvmet.subsys.update' => 'Use the dedicated NVMe-oF workflow.',
       'iscsi.global.update' ||
       'iscsi.portal.listen_ip_choices' ||
       'iscsi.portal.update' ||
