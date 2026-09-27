@@ -4,9 +4,13 @@ Updated 2026-09-28. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: port-only reviewed NVMe-oF PI editing
+
+The native NVMe-oF page now offers on, off or server-default PI changes only for an existing disabled port with a returned PI field and no subsystem association. The coordinator resolves IDs exclusively against the port inventory; subsystem-only IDs are rejected. A five-minute endpoint-bound review requires the exact port ID, transport and chosen value. Bounded topology and protected host inventories are reread before the single `nvmet.port.update(portId, {pi_enable: value})` request and afterward. Readback must show only PI changed within the public projection, preserving transport, disabled status, queue and inline settings and all other projected records. Ambiguous results or drift fence further edits until reconnection. Bind addresses and actual data protection are not verified, and sequential reads cannot exclude concurrent administrators. Synthetic fake API and widget tests only; no live NAS write occurred. See the TrueNAS 25.10 [port update contract](https://api.truenas.com/v25.10/api_methods_nvmet.port.update.html). TD-037 remains partial.
+
 ## Current continuation: shared NVMe-oF port PI chart
 
-The NVMe-oF detail page and Shares dashboard now show a four-segment port PI doughnut alongside the existing saved-configuration charts. It counts explicit on, explicit off, returned server default and field-not-returned ports separately with exact legends, including zero-count categories. The chart uses the existing bounded port inventory and adds no API request or write path. It describes saved configuration only, not data-integrity verification or active client behavior. Synthetic widget tests cover both screens and zero-port state; no live NAS write occurred. Editing port PI remains unsupported. TD-033 and TD-037 remain partial.
+The NVMe-oF detail page and Shares dashboard show a four-segment port PI doughnut alongside the existing saved-configuration charts. It counts explicit on, explicit off, returned server default and field-not-returned ports separately with exact legends, including zero-count categories. The chart uses the existing bounded port inventory and adds no API request or write path. It describes saved configuration only, not data-integrity verification or active client behavior. Synthetic widget tests cover both screens and zero-port state; no live NAS write occurred. TD-033 and TD-037 remain partial.
 
 ## Current continuation: bounded NVMe-oF port settings projection
 
