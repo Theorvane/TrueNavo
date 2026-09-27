@@ -59,6 +59,8 @@ final class NvmeMutationSnapshot {
                 s.piEnable,
                 s.qidReported,
                 s.qidMax,
+                s.ieeeOuiReported,
+                s.ieeeOui,
               ],
             )
             .toList()

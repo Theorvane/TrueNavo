@@ -131,6 +131,7 @@ class _Fake
           'ana': true,
           'pi_enable': true,
           'qid_max': 16,
+          'ieee_oui': '00A1B2',
           'serial': 'hidden-serial',
         },
         {
@@ -140,6 +141,7 @@ class _Fake
           'ana': null,
           'pi_enable': null,
           'qid_max': null,
+          'ieee_oui': null,
         },
       ],
       'nvmet.port.query' => [
@@ -238,23 +240,32 @@ void main() {
     );
   });
 
-  test('subsystem projection rejects malformed PI and queue values', () {
+  test('subsystem projection rejects malformed PI, queue and OUI values', () {
     const row = {'id': 1, 'name': 'test', 'allow_any_host': false};
     expect(NvmeSubsystem.parse({...row, 'pi_enable': 'true'}), isNull);
     expect(NvmeSubsystem.parse({...row, 'qid_max': -1}), isNull);
     expect(NvmeSubsystem.parse({...row, 'qid_max': 2147483648}), isNull);
+    expect(NvmeSubsystem.parse({...row, 'ieee_oui': 'bad\nvalue'}), isNull);
+    expect(
+      NvmeSubsystem.parse({...row, 'ieee_oui': List.filled(33, 'x').join()}),
+      isNull,
+    );
     final absent = NvmeSubsystem.parse(row)!;
     expect(absent.piReported, false);
     expect(absent.qidReported, false);
+    expect(absent.ieeeOuiReported, false);
     final defaults = NvmeSubsystem.parse({
       ...row,
       'pi_enable': null,
       'qid_max': null,
+      'ieee_oui': null,
     })!;
     expect(defaults.piReported, true);
     expect(defaults.qidReported, true);
+    expect(defaults.ieeeOuiReported, true);
     expect(defaults.piEnable, isNull);
     expect(defaults.qidMax, isNull);
+    expect(defaults.ieeeOui, isNull);
   });
 
   testWidgets('service state is a separate selected read', (tester) async {
@@ -582,6 +593,7 @@ void main() {
         'ana',
         'pi_enable',
         'qid_max',
+        'ieee_oui',
       ]);
       for (final call in fake.calls) {
         expect(call.arguments.first, isEmpty);
@@ -616,6 +628,9 @@ void main() {
       expect(find.textContaining('hidden-serial'), findsNothing);
       final filter = find.byKey(const Key('nvme-filter'));
       await tester.ensureVisible(filter);
+      await tester.enterText(filter, '00a1b2');
+      await tester.pumpAndSettle();
+      expect(find.text('1 matching subsystems'), findsOneWidget);
       await tester.enterText(filter, 'finance');
       await tester.pumpAndSettle();
       expect(find.text('1 matching subsystems'), findsOneWidget);
@@ -631,6 +646,8 @@ void main() {
       expect(find.text('Configured on'), findsOneWidget);
       expect(find.text('Maximum queue IDs'), findsOneWidget);
       expect(find.text('16'), findsOneWidget);
+      expect(find.text('IEEE OUI'), findsOneWidget);
+      expect(find.text('00A1B2'), findsOneWidget);
       await tester.tap(find.byKey(const Key('nvme-refresh')));
       await tester.pumpAndSettle();
       expect(fake.calls.length, 8);

@@ -320,6 +320,8 @@ String _proofWithout(_Snapshot snapshot, int? omitSubsystemId) {
               s.piEnable,
               s.qidReported,
               s.qidMax,
+              s.ieeeOuiReported,
+              s.ieeeOui,
             ],
           )
           .toList()

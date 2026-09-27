@@ -300,6 +300,14 @@ final class NvmeSubsystemRenameCoordinator {
               before.topology.subsystems
                   .singleWhere((s) => s.id == review.id)
                   .qidMax ||
+          changed.single.ieeeOuiReported !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .ieeeOuiReported ||
+          changed.single.ieeeOui !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .ieeeOui ||
           changed.single.allowAnyHost ||
           _proof(after, omitSubsystemId: review.id) !=
               _proof(before, omitSubsystemId: review.id) ||
@@ -353,6 +361,8 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
               s.piEnable,
               s.qidReported,
               s.qidMax,
+              s.ieeeOuiReported,
+              s.ieeeOui,
             ],
           )
           .toList()

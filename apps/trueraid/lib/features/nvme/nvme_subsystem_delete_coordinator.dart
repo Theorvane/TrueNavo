@@ -295,6 +295,8 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
               s.piEnable,
               s.qidReported,
               s.qidMax,
+              s.ieeeOuiReported,
+              s.ieeeOui,
             ],
           )
           .toList()

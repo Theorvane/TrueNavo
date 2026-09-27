@@ -341,6 +341,7 @@ class _Content extends StatelessWidget {
       if (query.isEmpty ||
           subsystem.name.toLowerCase().contains(query) ||
           (subsystem.subnqn?.toLowerCase().contains(query) ?? false) ||
+          (subsystem.ieeeOui?.toLowerCase().contains(query) ?? false) ||
           subsystem.id.toString() == query) {
         return true;
       }
@@ -426,7 +427,7 @@ class _Content extends StatelessWidget {
                 key: const Key('nvme-filter'),
                 controller: filter,
                 decoration: const InputDecoration(
-                  labelText: 'Find subsystem, NQN or namespace ID',
+                  labelText: 'Find subsystem, NQN, IEEE OUI or namespace ID',
                   prefixIcon: Icon(Icons.search),
                 ),
                 onChanged: (_) => onChanged(),
@@ -487,6 +488,15 @@ class _Content extends StatelessWidget {
                               ? 'Not returned by this server'
                               : subsystem.qidMax?.toString() ??
                                     'Server default',
+                        ),
+                      ),
+                      ListTile(
+                        title: const Text('IEEE OUI'),
+                        subtitle: Text(
+                          !subsystem.ieeeOuiReported
+                              ? 'Not returned by this server'
+                              : subsystem.ieeeOui ?? 'Server default',
+                          key: Key('nvme-subsystem-oui-${subsystem.id}'),
                         ),
                       ),
                       for (final namespace in value.namespaces.where(

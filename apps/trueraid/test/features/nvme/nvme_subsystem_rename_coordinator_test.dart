@@ -58,6 +58,7 @@ class _Fake
       'ana': null,
       'pi_enable': null,
       'qid_max': null,
+      'ieee_oui': null,
     },
     {'id': 2, 'name': 'other', 'allow_any_host': false},
   ];
@@ -66,6 +67,7 @@ class _Fake
   bool changeNqnAfterWrite = false;
   bool changeAnaAfterWrite = false;
   bool changePiAfterWrite = false;
+  bool changeOuiAfterWrite = false;
   bool attachHostAfterWrite = false;
   int hostReads = 0;
 
@@ -109,6 +111,9 @@ class _Fake
         }
         if (changePiAfterWrite) {
           row['pi_enable'] = true;
+        }
+        if (changeOuiAfterWrite) {
+          row['ieee_oui'] = '00A1B2';
         }
         if (attachHostAfterWrite) {
           hostMappings.add({
@@ -284,6 +289,18 @@ void main() {
   test('PI setting drift after rename fences further edits', () async {
     final h = _Harness();
     h.api.changePiAfterWrite = true;
+    final review = await h.coordinator.prepare(1, 'new');
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmeRenameOutcome.unknown,
+    );
+    expect(h.writes, 1);
+    expect(h.coordinator.locked, true);
+  });
+
+  test('IEEE OUI drift after rename fences further edits', () async {
+    final h = _Harness();
+    h.api.changeOuiAfterWrite = true;
     final review = await h.coordinator.prepare(1, 'new');
     expect(
       (await h.coordinator.execute(review, review.confirmation)).outcome,

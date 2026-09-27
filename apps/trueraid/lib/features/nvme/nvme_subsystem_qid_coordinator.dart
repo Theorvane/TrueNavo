@@ -279,6 +279,8 @@ final class NvmeSubsystemQidCoordinator {
           changed.single.ana != target.ana ||
           changed.single.piReported != target.piReported ||
           changed.single.piEnable != target.piEnable ||
+          changed.single.ieeeOuiReported != target.ieeeOuiReported ||
+          changed.single.ieeeOui != target.ieeeOui ||
           after.topology.subsystems.length !=
               before.topology.subsystems.length ||
           after.proof(omitSubsystemId: review.id) !=

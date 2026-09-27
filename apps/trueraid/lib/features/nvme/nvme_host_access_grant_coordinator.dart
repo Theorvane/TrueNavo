@@ -328,6 +328,8 @@ String _proof(_Snapshot snapshot) {
               s.piEnable,
               s.qidReported,
               s.qidMax,
+              s.ieeeOuiReported,
+              s.ieeeOui,
             ],
           )
           .toList()

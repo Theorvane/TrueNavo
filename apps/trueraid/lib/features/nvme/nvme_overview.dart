@@ -69,6 +69,8 @@ final class NvmeSubsystem {
     this.piReported = false,
     this.qidMax,
     this.qidReported = false,
+    this.ieeeOui,
+    this.ieeeOuiReported = false,
   });
   final int id;
   final String name;
@@ -85,6 +87,10 @@ final class NvmeSubsystem {
   final int? qidMax;
   final bool qidReported;
 
+  /// Null is the server default only when the field was returned.
+  final String? ieeeOui;
+  final bool ieeeOuiReported;
+
   static NvmeSubsystem? parse(Map row) {
     final id = _id(row['id']);
     final name = _label(row['name']);
@@ -93,14 +99,17 @@ final class NvmeSubsystem {
     final ana = row['ana'];
     final pi = row['pi_enable'];
     final qid = row['qid_max'];
+    final rawOui = row['ieee_oui'];
     final subnqn = rawNqn == null ? null : _nqn(rawNqn);
+    final ieeeOui = rawOui == null ? null : _oui(rawOui);
     if (id == null ||
         name == null ||
         allowAnyHost is! bool ||
         (rawNqn != null && subnqn == null) ||
         (ana != null && ana is! bool) ||
         (pi != null && pi is! bool) ||
-        (qid != null && (qid is! int || qid < 0 || qid > 2147483647))) {
+        (qid != null && (qid is! int || qid < 0 || qid > 2147483647)) ||
+        (rawOui != null && ieeeOui == null)) {
       return null;
     }
     return NvmeSubsystem(
@@ -114,6 +123,8 @@ final class NvmeSubsystem {
       piReported: row.containsKey('pi_enable'),
       qidMax: qid as int?,
       qidReported: row.containsKey('qid_max'),
+      ieeeOui: ieeeOui,
+      ieeeOuiReported: row.containsKey('ieee_oui'),
     );
   }
 }
@@ -239,6 +250,16 @@ String? _nqn(Object? value) {
   return value;
 }
 
+String? _oui(Object? value) {
+  if (value is! String ||
+      value.isEmpty ||
+      value.length > 32 ||
+      !RegExp(r'^[\x20-\x7e]+$').hasMatch(value)) {
+    return null;
+  }
+  return value;
+}
+
 Future<NvmeOverview> loadNvmeOverviewFromAdmin({
   required AuthenticatedAdminSession api,
   required bool Function() isCurrent,
@@ -250,7 +271,16 @@ Future<NvmeOverview> loadNvmeOverviewFromAdmin({
     'nvmet.port_subsys.query',
   ];
   const fields = [
-    ['id', 'name', 'subnqn', 'allow_any_host', 'ana', 'pi_enable', 'qid_max'],
+    [
+      'id',
+      'name',
+      'subnqn',
+      'allow_any_host',
+      'ana',
+      'pi_enable',
+      'qid_max',
+      'ieee_oui',
+    ],
     ['id', 'addr_trtype', 'enabled'],
     ['id', 'nsid', 'subsys.id', 'device_type', 'enabled', 'locked'],
     ['id', 'port.id', 'subsys.id'],
