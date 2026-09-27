@@ -14,6 +14,7 @@ import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid/features/nfs_shares/nfs_shares_controller.dart';
 import 'package:trueraid/features/nfs_shares/nfs_shares_page.dart';
 import 'package:trueraid/features/nvme/nvme_page.dart';
+import 'package:trueraid/features/nvme/nvme_overview.dart';
 import 'package:trueraid/features/smb_shares/smb_shares_page.dart';
 import 'package:trueraid/features/shares/shares_overview.dart';
 import 'package:trueraid/features/shares/shares_page.dart';
@@ -341,6 +342,104 @@ void main() {
     );
     expect(find.byKey(const Key('shares-iscsi-mapped-ratio')), findsNothing);
   });
+  testWidgets('separate NVMe summary charts bounded topology and refreshes', (
+    tester,
+  ) async {
+    _size(tester, 320);
+    final h = _Harness(
+      nvme: NvmeOverview.parse(
+        subsystems: [
+          {'id': 1, 'name': 'private', 'allow_any_host': false, 'ana': null},
+          {'id': 2, 'name': 'other', 'allow_any_host': false, 'ana': false},
+        ],
+        ports: [
+          {
+            'id': 3,
+            'addr_trtype': 'TCP',
+            'enabled': true,
+            'addr_traddr': 'private-address',
+          },
+        ],
+        namespaces: [
+          {
+            'id': 4,
+            'nsid': 1,
+            'subsys': {'id': 1},
+            'device_type': 'ZVOL',
+            'enabled': true,
+            'locked': false,
+          'device_path': '/nvme-secret-backing',
+          },
+          {
+            'id': 5,
+            'nsid': 2,
+            'subsys': {'id': 1},
+            'device_type': 'ZVOL',
+            'enabled': false,
+            'locked': false,
+          },
+        ],
+        portMappings: [
+          {
+            'id': 6,
+            'port': {'id': 3},
+            'subsys': {'id': 1},
+          },
+        ],
+      ),
+    );
+    addTearDown(h.container.dispose);
+    await _pump(tester, h);
+    expect(
+      find.text('2 subsystems · 1 ports · 2 namespaces · 1 port associations'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('1 of 2 subsystems have a returned port association'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-nvme-port-associated-ratio')),
+          )
+          .value,
+      0.5,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-nvme-namespace-enabled-ratio')),
+          )
+          .value,
+      0.5,
+    );
+    expect(find.textContaining('private-address'), findsNothing);
+    expect(find.textContaining('/nvme-secret-backing'), findsNothing);
+    expect(h.nvmeReads, 1);
+    await tester.tap(find.byKey(const Key('shares-overview-refresh')));
+    await tester.pumpAndSettle();
+    expect(h.nvmeReads, 2);
+    expect(h.api.mutations, 0);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('unavailable NVMe topology is unknown rather than zero', (
+    tester,
+  ) async {
+    final h = _Harness();
+    addTearDown(h.container.dispose);
+    await _pump(tester, h);
+    expect(
+      find.text(
+        'NVMe-oF inventory unavailable. Its counts are unknown, not zero.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('shares-nvme-port-associated-ratio')),
+      findsNothing,
+    );
+  });
   testWidgets('block explorer caps the visible list but searches all targets', (
     tester,
   ) async {
@@ -571,7 +670,7 @@ class _Fake extends _Unavailable
 }
 
 class _Harness {
-  _Harness({IscsiOverview? block}) {
+  _Harness({IscsiOverview? block, NvmeOverview? nvme}) {
     current = session();
     container = ProviderContainer(
       overrides: [
@@ -581,11 +680,17 @@ class _Harness {
             blockReads++;
             return block;
           }),
+        if (nvme != null)
+          nvmeOverviewProvider.overrideWith((ref) async {
+            nvmeReads++;
+            return nvme;
+          }),
       ],
     );
   }
   final api = _Fake();
   int blockReads = 0;
+  int nvmeReads = 0;
   AuthenticatedSession? current;
   late final ProviderContainer container;
   AuthenticatedSession session() => AuthenticatedSession(

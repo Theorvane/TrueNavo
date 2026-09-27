@@ -9,6 +9,7 @@ import '../iscsi/iscsi_overview.dart';
 import '../iscsi/iscsi_page.dart';
 import '../management/management_page.dart';
 import '../nvme/nvme_page.dart';
+import '../nvme/nvme_overview.dart';
 import '../nfs_shares/nfs_shares_controller.dart';
 import '../nfs_shares/nfs_shares_page.dart';
 import '../smb_shares/smb_shares_controller.dart';
@@ -70,6 +71,7 @@ class _SharesPageState extends ConsumerState<SharesPage> {
                 : () {
                     ref.invalidate(sharesOverviewProvider);
                     ref.invalidate(iscsiOverviewProvider);
+                    ref.invalidate(nvmeOverviewProvider);
                   },
             icon: const Icon(Icons.refresh),
           ),
@@ -106,6 +108,7 @@ class _SharesPageState extends ConsumerState<SharesPage> {
     // The file-share read releases its operation lock before this separate
     // block-storage read starts. The two inventories are never atomic.
     final block = ref.watch(iscsiOverviewProvider);
+    final nvme = ref.watch(nvmeOverviewProvider);
     final sources = value.protocols;
     final visible = value.shares
         .where(
@@ -141,7 +144,7 @@ class _SharesPageState extends ConsumerState<SharesPage> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Configuration and last-read service state only. Enabled does not prove client access, network reachability or valid permissions. Reads are sequential, not an atomic server snapshot.',
+                'Configuration and last-read service state only. Enabled does not prove client access, network reachability or valid permissions. File inventories are sequential; block inventories are independent. These are not an atomic server snapshot.',
               ),
               const SizedBox(height: 20),
               _ShareEnablement(value),
@@ -176,13 +179,14 @@ class _SharesPageState extends ConsumerState<SharesPage> {
                 },
               ),
               const SizedBox(height: 16),
-              OutlinedButton.icon(
-                key: const Key('shares-open-nvme'),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const NvmePage()),
-                ),
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Inspect NVMe-oF topology'),
+              _NvmeStorageCard(
+                state: nvme,
+                open: () {
+                  ref.invalidate(nvmeOverviewProvider);
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(builder: (_) => const NvmePage()),
+                  );
+                },
               ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
@@ -329,6 +333,92 @@ class _SharesPageState extends ConsumerState<SharesPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _NvmeStorageCard extends StatelessWidget {
+  const _NvmeStorageCard({required this.state, required this.open});
+
+  final AsyncValue<NvmeOverview> state;
+  final VoidCallback open;
+
+  @override
+  Widget build(BuildContext context) => TdPanel(
+    title: 'NVMe-oF block storage',
+    description: 'Separate saved topology read. Associations and configured enablement do not prove a running listener or client access.',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        switch (state) {
+          AsyncData(:final value) => _NvmeStorageCounts(value),
+          AsyncError() => const Text(
+            'NVMe-oF inventory unavailable. Its counts are unknown, not zero.',
+          ),
+          _ => const LinearProgressIndicator(),
+        },
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: const Key('shares-open-nvme'),
+          onPressed: open,
+          icon: const Icon(Icons.open_in_new),
+          label: const Text('Inspect NVMe-oF topology'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _NvmeStorageCounts extends StatelessWidget {
+  const _NvmeStorageCounts(this.value);
+  final NvmeOverview value;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabledNamespaces = value.namespaces.where((n) => n.enabled).length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '${value.subsystems.length} subsystems · ${value.ports.length} ports · ${value.namespaces.length} namespaces · ${value.portMappings.length} port associations',
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${value.exposedSubsystems} of ${value.subsystems.length} subsystems have a returned port association',
+        ),
+        Semantics(
+          label:
+              '${value.exposedSubsystems} of ${value.subsystems.length} returned NVMe-oF subsystems have a port association',
+          child: LinearProgressIndicator(
+            key: const Key('shares-nvme-port-associated-ratio'),
+            value: value.subsystems.isEmpty
+                ? 0
+                : value.exposedSubsystems / value.subsystems.length,
+            minHeight: 12,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '$enabledNamespaces of ${value.namespaces.length} namespaces configured enabled',
+        ),
+        Semantics(
+          label:
+              '$enabledNamespaces of ${value.namespaces.length} returned NVMe-oF namespaces are configured enabled',
+          child: LinearProgressIndicator(
+            key: const Key('shares-nvme-namespace-enabled-ratio'),
+            value: value.namespaces.isEmpty
+                ? 0
+                : enabledNamespaces / value.namespaces.length,
+            minHeight: 12,
+          ),
+        ),
+        if (value.unresolvedReferences > 0) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${value.unresolvedReferences} namespace or port association references are unresolved. Inspect the NVMe-oF workspace.',
+          ),
+        ],
+      ],
     );
   }
 }
