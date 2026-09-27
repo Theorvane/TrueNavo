@@ -8,6 +8,7 @@ import '../dashboard/dashboard_controller.dart';
 import '../iscsi/iscsi_overview.dart';
 import '../iscsi/iscsi_page.dart';
 import '../management/management_page.dart';
+import '../nvme/nvme_page.dart';
 import '../nfs_shares/nfs_shares_controller.dart';
 import '../nfs_shares/nfs_shares_page.dart';
 import '../smb_shares/smb_shares_controller.dart';
@@ -176,6 +177,15 @@ class _SharesPageState extends ConsumerState<SharesPage> {
               ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
+                key: const Key('shares-open-nvme'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const NvmePage()),
+                ),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Inspect NVMe-oF topology'),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
                 key: const Key('shares-service-controls'),
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -313,7 +323,7 @@ class _SharesPageState extends ConsumerState<SharesPage> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'NVMe, Fibre Channel and WebShare are not included yet. This screen never starts services, changes shares or probes clients. Refresh manually after making changes elsewhere.',
+                'Fibre Channel and WebShare are not included yet. This screen never starts services, changes shares or probes clients. Refresh manually after making changes elsewhere.',
               ),
             ],
           ),

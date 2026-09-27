@@ -13,6 +13,7 @@ import 'package:trueraid/features/management/management_page.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid/features/nfs_shares/nfs_shares_controller.dart';
 import 'package:trueraid/features/nfs_shares/nfs_shares_page.dart';
+import 'package:trueraid/features/nvme/nvme_page.dart';
 import 'package:trueraid/features/smb_shares/smb_shares_page.dart';
 import 'package:trueraid/features/shares/shares_overview.dart';
 import 'package:trueraid/features/shares/shares_page.dart';
@@ -231,6 +232,7 @@ void main() {
   for (final (key, page) in [
     ('shares-open-smb', SmbSharesPage),
     ('shares-open-nfs', NfsSharesPage),
+    ('shares-open-nvme', NvmePage),
     ('shares-service-controls', ManagementPage),
   ]) {
     testWidgets('$key opens native review workspace without writes', (
