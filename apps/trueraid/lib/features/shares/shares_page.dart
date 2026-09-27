@@ -376,6 +376,26 @@ class _NvmeStorageCounts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabledNamespaces = value.namespaces.where((n) => n.enabled).length;
+    final anaOn = value.subsystems
+        .where((s) => s.anaReported && s.ana == true)
+        .length;
+    final anaOff = value.subsystems
+        .where((s) => s.anaReported && s.ana == false)
+        .length;
+    final anaInherited = value.subsystems
+        .where((s) => s.anaReported && s.ana == null)
+        .length;
+    final anaReported = anaOn + anaOff + anaInherited;
+    final piOn = value.subsystems
+        .where((s) => s.piReported && s.piEnable == true)
+        .length;
+    final piOff = value.subsystems
+        .where((s) => s.piReported && s.piEnable == false)
+        .length;
+    final piDefault = value.subsystems
+        .where((s) => s.piReported && s.piEnable == null)
+        .length;
+    final piReported = piOn + piOff + piDefault;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -411,6 +431,36 @@ class _NvmeStorageCounts extends StatelessWidget {
                 : enabledNamespaces / value.namespaces.length,
             minHeight: 12,
           ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'ANA: $anaOn on · $anaOff off · $anaInherited inherit · ${value.subsystems.length - anaReported} not returned',
+        ),
+        Semantics(
+          label:
+              '$anaOn of $anaReported returned NVMe-oF subsystems have explicit ANA on; inherited and unreturned settings do not prove active paths',
+          child: LinearProgressIndicator(
+            key: const Key('shares-nvme-ana-on-ratio'),
+            value: anaReported == 0 ? 0 : anaOn / anaReported,
+            minHeight: 12,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'PI: $piOn on · $piOff off · $piDefault server default · ${value.subsystems.length - piReported} not returned',
+        ),
+        Semantics(
+          label:
+              '$piOn of $piReported returned NVMe-oF subsystems have configured protection information on; this does not verify data integrity',
+          child: LinearProgressIndicator(
+            key: const Key('shares-nvme-pi-on-ratio'),
+            value: piReported == 0 ? 0 : piOn / piReported,
+            minHeight: 12,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'ANA and PI bars summarize saved settings, not listener health, client access or verified data protection.',
         ),
         if (value.unresolvedReferences > 0) ...[
           const SizedBox(height: 8),

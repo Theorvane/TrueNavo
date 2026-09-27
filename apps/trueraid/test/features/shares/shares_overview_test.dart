@@ -349,8 +349,20 @@ void main() {
     final h = _Harness(
       nvme: NvmeOverview.parse(
         subsystems: [
-          {'id': 1, 'name': 'private', 'allow_any_host': false, 'ana': null},
-          {'id': 2, 'name': 'other', 'allow_any_host': false, 'ana': false},
+          {
+            'id': 1,
+            'name': 'private',
+            'allow_any_host': false,
+            'ana': true,
+            'pi_enable': true,
+          },
+          {
+            'id': 2,
+            'name': 'other',
+            'allow_any_host': false,
+            'ana': null,
+            'pi_enable': null,
+          },
         ],
         ports: [
           {
@@ -368,7 +380,7 @@ void main() {
             'device_type': 'ZVOL',
             'enabled': true,
             'locked': false,
-          'device_path': '/nvme-secret-backing',
+            'device_path': '/nvme-secret-backing',
           },
           {
             'id': 5,
@@ -414,6 +426,30 @@ void main() {
           .value,
       0.5,
     );
+    expect(
+      find.text('ANA: 1 on · 0 off · 1 inherit · 0 not returned'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('PI: 1 on · 0 off · 1 server default · 0 not returned'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-nvme-ana-on-ratio')),
+          )
+          .value,
+      0.5,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-nvme-pi-on-ratio')),
+          )
+          .value,
+      0.5,
+    );
     expect(find.textContaining('private-address'), findsNothing);
     expect(find.textContaining('/nvme-secret-backing'), findsNothing);
     expect(h.nvmeReads, 1);
@@ -422,6 +458,47 @@ void main() {
     expect(h.nvmeReads, 2);
     expect(h.api.mutations, 0);
     expect(tester.takeException(), isNull);
+  });
+  testWidgets('unreturned NVMe settings stay unknown in summary', (
+    tester,
+  ) async {
+    final h = _Harness(
+      nvme: NvmeOverview.parse(
+        subsystems: [
+          {'id': 1, 'name': 'legacy', 'allow_any_host': false},
+        ],
+        ports: [],
+        namespaces: [],
+        portMappings: [],
+      ),
+    );
+    addTearDown(h.container.dispose);
+    await _pump(tester, h);
+    expect(
+      find.text('ANA: 0 on · 0 off · 0 inherit · 1 not returned'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('PI: 0 on · 0 off · 0 server default · 1 not returned'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-nvme-ana-on-ratio')),
+          )
+          .value,
+      0,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('shares-nvme-pi-on-ratio')),
+          )
+          .value,
+      0,
+    );
+    expect(h.api.mutations, 0);
   });
   testWidgets('unavailable NVMe topology is unknown rather than zero', (
     tester,
