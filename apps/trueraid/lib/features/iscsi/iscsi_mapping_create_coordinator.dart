@@ -52,6 +52,26 @@ final class IscsiMappingCreateReview {
       'MAP ISCSI TARGET #$targetId EXTENT #$extentId LUN $lun';
 }
 
+final class IscsiMappingRenumberReview {
+  IscsiMappingRenumberReview._(
+    this.endpoint,
+    this.mappingId,
+    this.targetId,
+    this.targetName,
+    this.extentId,
+    this.extentName,
+    this.beforeLun,
+    this.proposedLun,
+    this.proof,
+    this.issuedAt,
+  );
+  final String endpoint, targetName, extentName, proof;
+  final int mappingId, targetId, extentId, beforeLun, proposedLun;
+  final DateTime issuedAt;
+  String get confirmation =>
+      'MOVE ISCSI LUN #$mappingId $beforeLun TO $proposedLun';
+}
+
 final class _Snapshot {
   const _Snapshot(
     this.targets,
@@ -94,6 +114,7 @@ final class IscsiMappingCreateCoordinator {
   final bool Function() isCurrent;
   final DateTime Function() _now;
   final _issued = <IscsiMappingCreateReview>{};
+  final _renumberIssued = <IscsiMappingRenumberReview>{};
   bool _busy = false;
 
   bool get locked => _busy || IscsiWriteFence.isUncertain(session);
@@ -108,10 +129,23 @@ final class IscsiMappingCreateCoordinator {
         'service.query',
         'iscsi.global.sessions',
       ].every((name) => api.adminCatalog.method(name)?.supported == true);
+  bool get renumberAvailable =>
+      session.endpoint != null &&
+      api.adminCatalog.versionSupported &&
+      [
+        'iscsi.target.query',
+        'iscsi.extent.query',
+        'iscsi.targetextent.query',
+        'iscsi.targetextent.update',
+        'service.query',
+        'iscsi.global.sessions',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
 
   AdminMethodSpec _method(String name) {
     final method = api.adminCatalog.method(name);
-    if (!available || method == null || !method.supported) {
+    if (!api.adminCatalog.versionSupported ||
+        method == null ||
+        !method.supported) {
       throw StateError('Required iSCSI mapping methods are unavailable.');
     }
     return method;
@@ -296,6 +330,195 @@ final class IscsiMappingCreateCoordinator {
     }
   }
 
+  List<int> _renumberCandidate(
+    _Snapshot snapshot,
+    int mappingId,
+    int proposed,
+  ) {
+    if (proposed < 1 || proposed > 31) {
+      throw StateError('Choose a free LUN number from 1 to 31.');
+    }
+    final matches = snapshot.mappings
+        .where((mapping) => mapping[0] == mappingId)
+        .toList();
+    if (matches.length != 1) {
+      throw StateError('The LUN mapping is unavailable.');
+    }
+    final selected = matches.single;
+    final targetId = selected[1], extentId = selected[2], oldLun = selected[3];
+    if (!snapshot.availableTargets.contains(targetId) ||
+        !snapshot.availableExtents.contains(extentId)) {
+      throw StateError(
+        'Only an unbound iSCSI target and unlocked active extent qualify.',
+      );
+    }
+    final targetMappings = snapshot.mappings
+        .where((mapping) => mapping[1] == targetId)
+        .toList();
+    final usedLuns = targetMappings.map((mapping) => mapping[3]).toSet();
+    if (targetMappings.length < 2 ||
+        targetMappings.length > 32 ||
+        usedLuns.length != targetMappings.length ||
+        targetMappings.any((mapping) => mapping[3] > 31) ||
+        !usedLuns.contains(0) ||
+        oldLun < 1 ||
+        oldLun > 31 ||
+        usedLuns.contains(proposed) ||
+        snapshot.mappings.any(
+          (mapping) => mapping[0] != mappingId && mapping[2] == extentId,
+        )) {
+      throw StateError('The selected or destination LUN is unavailable.');
+    }
+    return selected;
+  }
+
+  Future<IscsiMappingRenumberReview> prepareRenumber(
+    int mappingId,
+    int proposedLun,
+  ) async {
+    _guard();
+    if (!renumberAvailable ||
+        _busy ||
+        mappingId < 1 ||
+        proposedLun < 1 ||
+        proposedLun > 31) {
+      throw StateError(
+        'Choose an existing additional LUN and a free number 1–31.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    _renumberIssued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final mapping = _renumberCandidate(snapshot, mappingId, proposedLun);
+      final review = IscsiMappingRenumberReview._(
+        session.endpoint!,
+        mappingId,
+        mapping[1],
+        snapshot.targets[mapping[1]]!,
+        mapping[2],
+        snapshot.extents[mapping[2]]!,
+        mapping[3],
+        proposedLun,
+        snapshot.proof,
+        _now().toUtc(),
+      );
+      _renumberIssued.add(review);
+      return review;
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError('The LUN preflight failed. Nothing was sent.');
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  void cancelRenumber(IscsiMappingRenumberReview review) =>
+      _renumberIssued.remove(review);
+
+  Future<IscsiMappingCreateResult> executeRenumber(
+    IscsiMappingRenumberReview review,
+    String confirmation,
+  ) async {
+    final issued = _renumberIssued.remove(review);
+    final now = _now().toUtc();
+    if (!issued ||
+        _busy ||
+        !isCurrent() ||
+        IscsiWriteFence.isUncertain(session) ||
+        review.endpoint != session.endpoint ||
+        confirmation != review.confirmation ||
+        now.isBefore(review.issuedAt) ||
+        now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+      return const IscsiMappingCreateResult(
+        IscsiMappingCreateOutcome.rejected,
+        'Review expired or confirmation did not match. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      return const IscsiMappingCreateResult(
+        IscsiMappingCreateOutcome.rejected,
+        'Another server operation is in progress. Nothing was sent.',
+      );
+    }
+    _busy = true;
+    var sent = false;
+    try {
+      final before = await _snapshot();
+      _renumberCandidate(before, review.mappingId, review.proposedLun);
+      if (before.proof != review.proof) {
+        return const IscsiMappingCreateResult(
+          IscsiMappingCreateOutcome.rejected,
+          'Target, extent, LUN or service state changed since review. Nothing was sent.',
+        );
+      }
+      sent = true;
+      final result = await api.invokeAdmin(
+        AdminRequest(
+          method: _method('iscsi.targetextent.update'),
+          arguments: [
+            review.mappingId,
+            {'lunid': review.proposedLun},
+          ],
+        ),
+      );
+      if (result is AdminFailed && result.reason == AdminFailureReason.denied) {
+        return const IscsiMappingCreateResult(
+          IscsiMappingCreateOutcome.rejected,
+          'The server denied the LUN change. No change was confirmed.',
+        );
+      }
+      if (result is! AdminCompleted) {
+        return _unknown();
+      }
+      final response = result.value;
+      if (response is! Map ||
+          response['id'] != review.mappingId ||
+          response['target'] != review.targetId ||
+          response['extent'] != review.extentId ||
+          response['lunid'] != review.proposedLun) {
+        return _unknown();
+      }
+      final after = await _snapshot();
+      final expected = <List<int>>[
+        for (final mapping in before.mappings)
+          if (mapping[0] == review.mappingId)
+            [mapping[0], mapping[1], mapping[2], review.proposedLun]
+          else
+            mapping,
+      ];
+      if (after.targetDigest != before.targetDigest ||
+          after.extentDigest != before.extentDigest ||
+          jsonEncode(after.mappings) != jsonEncode(expected) ||
+          after.service.state != before.service.state ||
+          after.service.enabledOnBoot != before.service.enabledOnBoot) {
+        return _unknown();
+      }
+      return const IscsiMappingCreateResult(
+        IscsiMappingCreateOutcome.completed,
+        'Only the reviewed LUN number changed; target, extent and other mappings stayed unchanged.',
+      );
+    } on Object {
+      return sent
+          ? _unknown()
+          : const IscsiMappingCreateResult(
+              IscsiMappingCreateOutcome.rejected,
+              'The LUN preflight failed. Nothing was sent.',
+            );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
   Future<IscsiMappingCreateReview> prepare(
     int targetId,
     int extentId, {
@@ -316,6 +539,7 @@ final class IscsiMappingCreateCoordinator {
     }
     _busy = true;
     _issued.clear();
+    _renumberIssued.clear();
     try {
       final snapshot = await _snapshot();
       _candidate(snapshot, targetId, extentId, lun);
@@ -445,6 +669,7 @@ final class IscsiMappingCreateCoordinator {
   IscsiMappingCreateResult _unknown() {
     IscsiWriteFence.markUncertain(session);
     _issued.clear();
+    _renumberIssued.clear();
     return const IscsiMappingCreateResult(
       IscsiMappingCreateOutcome.unknown,
       'The mapping may have changed the server. Do not retry; inspect the server and reconnect.',

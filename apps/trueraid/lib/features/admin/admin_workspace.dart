@@ -952,7 +952,8 @@ class AdminOperationTile extends StatelessWidget {
     'iscsi.extent.update' ||
     'iscsi.targetextent.query' ||
     'iscsi.targetextent.create' ||
-    'iscsi.targetextent.delete' => const IscsiPage(),
+    'iscsi.targetextent.delete' ||
+    'iscsi.targetextent.update' => const IscsiPage(),
     'config.reset' => const ConfigurationResetPage(),
     'config.upload' => const ConfigurationRestorePage(),
     'config.save' => const ConfigurationBackupPage(),

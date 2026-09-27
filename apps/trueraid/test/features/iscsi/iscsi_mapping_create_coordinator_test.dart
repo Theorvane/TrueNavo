@@ -5,13 +5,26 @@ import 'package:trueraid/features/connection/connection_controller.dart';
 import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/iscsi/iscsi_mapping_create_coordinator.dart';
 import 'package:trueraid/features/iscsi/iscsi_mapping_create_editor.dart';
+import 'package:trueraid/features/iscsi/iscsi_mapping_renumber_editor.dart';
 import 'package:trueraid/features/iscsi/iscsi_overview.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
-Map<String, Object?> _method({bool create = false}) => {
-  'accepts': create
+Map<String, Object?> _method({bool create = false, bool update = false}) => {
+  'accepts': update
+      ? [
+          {'_name_': 'id', '_required_': true, 'type': 'integer'},
+          {
+            '_name_': 'data',
+            '_required_': true,
+            'type': 'object',
+            'properties': {
+              'lunid': {'type': 'integer'},
+            },
+          },
+        ]
+      : create
       ? [
           {
             '_name_': 'data',
@@ -45,6 +58,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         'iscsi.extent.query': _method(),
         'iscsi.targetextent.query': _method(),
         'iscsi.targetextent.create': _method(create: true),
+        'iscsi.targetextent.update': _method(update: true),
         'service.query': _method(),
         'iscsi.global.sessions': _method(),
       },
@@ -121,6 +135,14 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         mappings.add(row);
         if (mutateTarget) targets.single['name'] = 'unexpected';
         return AdminCompleted(request, value: Map<String, Object?>.from(row));
+      case 'iscsi.targetextent.update':
+        if (unknown) return AdminOutcomeUnknown(request);
+        final row = mappings.singleWhere(
+          (item) => item['id'] == request.arguments.first,
+        );
+        row['lunid'] = (request.arguments[1] as Map)['lunid'];
+        if (mutateTarget) targets.single['name'] = 'unexpected';
+        return AdminCompleted(request, value: Map<String, Object?>.from(row));
       default:
         throw StateError('Unexpected fake call');
     }
@@ -154,9 +176,193 @@ class _Harness {
   int get writes => api.calls
       .where((call) => call.method.name == 'iscsi.targetextent.create')
       .length;
+  int get updates => api.calls
+      .where((call) => call.method.name == 'iscsi.targetextent.update')
+      .length;
 }
 
 void main() {
+  testWidgets(
+    'renumber editor reviews and sends only after exact confirmation',
+    (tester) async {
+      final h = _Harness();
+      h.api.extents.add({
+        'id': 6,
+        'name': 'disk-b',
+        'type': 'DISK',
+        'path': 'zvol/tank/second',
+        'enabled': true,
+        'locked': false,
+      });
+      h.api.mappings.addAll([
+        {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+        {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+      ]);
+      final overview = IscsiOverview.parse(
+        portals: [],
+        initiators: [],
+        targets: h.api.targets,
+        extents: h.api.extents,
+        mappings: h.api.mappings,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          ],
+          child: MaterialApp(
+            theme: TrueRAIDTheme.dark(),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: IscsiMappingRenumberEditor(overview: overview),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('iscsi-mapping-renumber-select')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('#9 target-a · LUN 1').last);
+      await tester.pumpAndSettle();
+      expect(find.text('LUN 2'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('iscsi-mapping-renumber-review')));
+      await tester.pumpAndSettle();
+      expect(h.updates, 0);
+      await tester.enterText(
+        find.byKey(const Key('iscsi-mapping-renumber-confirmation')),
+        'MOVE ISCSI LUN #9 1 TO 2',
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('iscsi-mapping-renumber-submit')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('iscsi-mapping-renumber-submit')));
+      await tester.pumpAndSettle();
+      expect(h.updates, 1);
+    },
+  );
+
+  test(
+    'renumbers one additional LUN with lunid-only payload and readback',
+    () async {
+      final h = _Harness();
+      h.api.extents.add({
+        'id': 6,
+        'name': 'disk-b',
+        'type': 'DISK',
+        'path': 'zvol/tank/second',
+        'enabled': true,
+        'locked': false,
+      });
+      h.api.mappings.addAll([
+        {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+        {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+      ]);
+      final review = await h.coordinator.prepareRenumber(9, 2);
+      expect(review.confirmation, 'MOVE ISCSI LUN #9 1 TO 2');
+      expect(h.updates, 0);
+      final result = await h.coordinator.executeRenumber(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, IscsiMappingCreateOutcome.completed);
+      expect(
+        h.api.calls
+            .singleWhere(
+              (call) => call.method.name == 'iscsi.targetextent.update',
+            )
+            .arguments,
+        [
+          9,
+          {'lunid': 2},
+        ],
+      );
+      expect(h.api.mappings, [
+        {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+        {'id': 9, 'target': 3, 'extent': 6, 'lunid': 2},
+      ]);
+      expect(
+        (await h.coordinator.executeRenumber(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiMappingCreateOutcome.rejected,
+      );
+    },
+  );
+
+  test(
+    'renumber blocks LUN zero, occupied destination and target drift',
+    () async {
+      final h = _Harness();
+      h.api.extents.add({
+        'id': 6,
+        'name': 'disk-b',
+        'type': 'DISK',
+        'path': 'zvol/tank/second',
+        'enabled': true,
+        'locked': false,
+      });
+      h.api.mappings.addAll([
+        {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+        {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+      ]);
+      await expectLater(h.coordinator.prepareRenumber(8, 2), throwsStateError);
+      await expectLater(h.coordinator.prepareRenumber(9, 0), throwsStateError);
+      await expectLater(h.coordinator.prepareRenumber(9, 1), throwsStateError);
+      await expectLater(h.coordinator.prepareRenumber(9, 32), throwsStateError);
+      var review = await h.coordinator.prepareRenumber(9, 2);
+      h.api.targets.single['groups'] = [
+        {'portal': 1, 'initiator': null, 'authmethod': 'NONE', 'auth': null},
+      ];
+      expect(
+        (await h.coordinator.executeRenumber(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiMappingCreateOutcome.rejected,
+      );
+      h.api.targets.single['groups'] = <Object?>[];
+      review = await h.coordinator.prepareRenumber(9, 2);
+      h.clock = h.clock.add(const Duration(minutes: 5));
+      expect(
+        (await h.coordinator.executeRenumber(
+          review,
+          review.confirmation,
+        )).outcome,
+        IscsiMappingCreateOutcome.rejected,
+      );
+      expect(h.updates, 0);
+    },
+  );
+
+  test('renumber unknown result fences the session', () async {
+    final h = _Harness();
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.addAll([
+      {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+      {'id': 9, 'target': 3, 'extent': 6, 'lunid': 1},
+    ]);
+    final review = await h.coordinator.prepareRenumber(9, 2);
+    h.api.unknown = true;
+    expect(
+      (await h.coordinator.executeRenumber(
+        review,
+        review.confirmation,
+      )).outcome,
+      IscsiMappingCreateOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
   test(
     'adds a second explicit LUN without changing the existing mapping',
     () async {

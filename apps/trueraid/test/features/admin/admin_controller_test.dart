@@ -50,6 +50,7 @@ void main() {
     'iscsi.target.get_instance',
     'iscsi.targetextent.delete',
     'iscsi.targetextent.create',
+    'iscsi.targetextent.update',
     'disk.temperatures',
     'pool.scrub.query',
     'pool.scrub.create',
@@ -98,7 +99,7 @@ void main() {
       final harness = _Harness(_AdminManager());
       addTearDown(harness.dispose);
       harness.switchSession(_session(harness.manager));
-      await harness.execute('iscsi.targetextent.update');
+      await harness.execute('nvmet.subsys.update');
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('connection changed'));
@@ -111,7 +112,7 @@ void main() {
       final harness = _Harness(_AdminManager());
       addTearDown(harness.dispose);
       harness.switchSession(null);
-      await harness.execute('iscsi.targetextent.update');
+      await harness.execute('nvmet.subsys.update');
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
     },
@@ -124,7 +125,7 @@ void main() {
       addTearDown(harness.dispose);
       await harness.execute(
         'pool.query',
-        operation: _operation('iscsi.targetextent.update'),
+        operation: _operation('nvmet.subsys.update'),
       );
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
@@ -149,14 +150,14 @@ void main() {
       final harness = _Harness(_AdminManager());
       addTearDown(harness.dispose);
       const forged = AdminOperationDefinition(
-        id: 'iscsi.targetextent.update',
+        id: 'nvmet.subsys.update',
         domain: AdminDomain.shares,
         title: 'Read portal',
-        method: 'iscsi.targetextent.update',
+        method: 'nvmet.subsys.update',
         risk: AdminRisk.read,
         description: 'This is not the compiled policy.',
       );
-      await harness.execute('iscsi.targetextent.update', operation: forged);
+      await harness.execute('nvmet.subsys.update', operation: forged);
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('Nothing was sent'));
@@ -167,9 +168,9 @@ void main() {
     final completion = Completer<AdminResult>();
     final harness = _Harness(_AdminManager(onInvoke: (_) => completion.future));
     addTearDown(harness.dispose);
-    final first = harness.execute('iscsi.targetextent.update');
+    final first = harness.execute('nvmet.subsys.update');
     expect(harness.state.busy, isTrue);
-    await harness.execute('iscsi.targetextent.update');
+    await harness.execute('nvmet.subsys.update');
     expect(harness.manager.requests, hasLength(1));
     completion.complete(
       AdminCompleted(harness.manager.requests.single, value: null),
@@ -186,7 +187,7 @@ void main() {
         _AdminManager(onInvoke: (_) => completion.future),
       );
       addTearDown(harness.dispose);
-      final first = harness.execute('iscsi.targetextent.update');
+      final first = harness.execute('nvmet.subsys.update');
       await harness.quickExecute();
       expect(harness.manager.quickCommands, isEmpty);
       expect(harness.quickState.phase, ManagementPhase.failed);
@@ -209,13 +210,13 @@ void main() {
       );
       addTearDown(harness.dispose);
       final quick = harness.quickExecute();
-      await harness.execute('iscsi.targetextent.update');
+      await harness.execute('nvmet.subsys.update');
       expect(harness.manager.requests, isEmpty);
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('Another server operation'));
       completion.complete(const ManagementCompleted(_quickCommand));
       await quick;
-      await harness.execute('iscsi.targetextent.update');
+      await harness.execute('nvmet.subsys.update');
       expect(harness.manager.requests, hasLength(1));
       expect(harness.state.phase, AdminPhase.completed);
     },
@@ -397,7 +398,7 @@ void main() {
         ),
       );
       addTearDown(harness.dispose);
-      await harness.execute('iscsi.targetextent.update');
+      await harness.execute('nvmet.subsys.update');
       expect(harness.state.phase, AdminPhase.unknown);
       expect(harness.state.message, isNot(contains('TEST-SECRET')));
       expect(harness.state.message, isNot(contains('payload')));
@@ -419,7 +420,7 @@ void main() {
         ),
       );
       addTearDown(harness.dispose);
-      await harness.execute('iscsi.targetextent.update');
+      await harness.execute('nvmet.subsys.update');
       expect(harness.state.phase, AdminPhase.failed);
       expect(harness.state.message, contains('25.10'));
       expect(harness.manager.requests, hasLength(1));
@@ -435,7 +436,7 @@ void main() {
       ),
     );
     addTearDown(harness.dispose);
-    await harness.execute('iscsi.targetextent.update');
+    await harness.execute('nvmet.subsys.update');
     expect(harness.state.phase, AdminPhase.failed);
     expect(harness.state.message, contains('permission'));
     expect(harness.manager.requests, hasLength(1));
@@ -487,7 +488,7 @@ class _Harness {
             method: spec,
             arguments: spec.parameters.isEmpty
                 ? const []
-                : method == 'iscsi.targetextent.update'
+                : method == 'nvmet.subsys.update'
                 ? const [7]
                 : const ['fixture-target'],
           ),
@@ -546,12 +547,13 @@ class _AdminManager
       'pool.query': _method(),
       // Synthetic generic lifecycle fixture. Alerts and cron now require
       // native gateways; these tests verify controller locking, not iSCSI RPC.
-      'iscsi.targetextent.update': {
+      'nvmet.subsys.update': {
         ..._method(),
         'accepts': [
           {'_name_': 'id', '_required_': true, 'type': 'integer'},
         ],
       },
+      'iscsi.targetextent.update': _method(),
       'iscsi.targetextent.delete': {
         ..._method(),
         'accepts': [

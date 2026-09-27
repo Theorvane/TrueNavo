@@ -352,6 +352,7 @@ void main() {
     ('iscsi.portal.create', IscsiPage),
     ('iscsi.targetextent.delete', IscsiPage),
     ('iscsi.targetextent.create', IscsiPage),
+    ('iscsi.targetextent.update', IscsiPage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -737,7 +738,10 @@ void main() {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
     await _reveal(tester, 'admin-directory-search');
-    await tester.enterText(_key('admin-directory-search'), 'Create NVMe subsystem');
+    await tester.enterText(
+      _key('admin-directory-search'),
+      'Create NVMe subsystem',
+    );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await _tap(tester, 'admin-open-nvmet.subsys.create');

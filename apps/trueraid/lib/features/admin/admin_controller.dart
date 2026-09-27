@@ -92,6 +92,7 @@ class AdminController extends Notifier<AdminOperationState> {
         operation.method == 'iscsi.initiator.delete' ||
         operation.method == 'iscsi.targetextent.delete' ||
         operation.method == 'iscsi.targetextent.create' ||
+        operation.method == 'iscsi.targetextent.update' ||
         operation.blockedReason != null) {
       fail('This action requires its dedicated workflow. Nothing was sent.');
       return;
