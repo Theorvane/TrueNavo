@@ -6,6 +6,7 @@ import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/nvme/nvme_overview.dart';
 import 'package:trueraid/features/nvme/nvme_host_overview.dart';
 import 'package:trueraid/features/nvme/nvme_page.dart';
+import 'package:trueraid/features/nvme/nvme_global_panel.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
@@ -42,6 +43,7 @@ class _Fake
     this.supported = true,
     this.hostSupported = true,
     this.unassociatedPort = false,
+    this.globalSupported = false,
   }) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
@@ -49,12 +51,21 @@ class _Fake
         for (final name in supported ? _names : _names.take(3)) name: _method(),
         for (final name in hostSupported ? _hostNames : _hostNames.take(1))
           name: _method(),
+        if (globalSupported)
+          'nvmet.global.config': {
+            ..._method(),
+            'filterable': false,
+            'returns': [
+              {'type': 'object'},
+            ],
+          },
       },
     );
   }
   final bool supported;
   final bool hostSupported;
   final bool unassociatedPort;
+  final bool globalSupported;
   @override
   late final AdminCatalog adminCatalog;
   final calls = <AdminRequest>[];
@@ -87,6 +98,15 @@ class _Fake
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
     calls.add(request);
     final value = switch (request.method.name) {
+      'nvmet.global.config' => {
+        'id': 1,
+        'basenqn': 'nqn.2026-09.example',
+        'kernel': true,
+        'ana': false,
+        'rdma': true,
+        'xport_referral': false,
+        'unexpected_private_field': 'do-not-render',
+      },
       'nvmet.subsys.query' => [
         {
           'id': 1,
@@ -135,6 +155,82 @@ class _Fake
 }
 
 void main() {
+  test(
+    'global projection excludes unknown fields and rejects partial data',
+    () {
+      final config = NvmeGlobalConfig.parse({
+        'basenqn': 'nqn.2026-09.example',
+        'kernel': true,
+        'ana': false,
+        'rdma': true,
+        'xport_referral': false,
+        'unexpected_private_field': 'do-not-retain',
+      });
+      expect(config.baseNqn, 'nqn.2026-09.example');
+      expect(config.toString(), isNot(contains('do-not-retain')));
+      expect(
+        () => NvmeGlobalConfig.parse({
+          'basenqn': 'nqn.2026-09.example',
+          'kernel': true,
+          'ana': false,
+          'rdma': true,
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => NvmeGlobalConfig.parse({
+          'basenqn': 'nqn.bad\nname',
+          'kernel': true,
+          'ana': false,
+          'rdma': true,
+          'xport_referral': false,
+        }),
+        throwsFormatException,
+      );
+    },
+  );
+
+  testWidgets('global settings read uses no arguments and refreshes', (
+    tester,
+  ) async {
+    final fake = _Fake(globalSupported: true);
+    final session = AuthenticatedSession(
+      profileId: 'fixture',
+      repository: fake,
+      availableMethodNames: {..._names, 'nvmet.global.config'},
+      endpoint: 'wss://fixture.example/api/current',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => session),
+        ],
+        child: MaterialApp(theme: TrueRAIDTheme.dark(), home: const NvmePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      fake.calls.where((c) => c.method.name == 'nvmet.global.config').length,
+      1,
+    );
+    expect(
+      fake.calls
+          .firstWhere((c) => c.method.name == 'nvmet.global.config')
+          .arguments,
+      isEmpty,
+    );
+    expect(find.text('Base NQN: nqn.2026-09.example'), findsOneWidget);
+    expect(find.text('RDMA: Configured on'), findsOneWidget);
+    expect(find.textContaining('do-not-render'), findsNothing);
+    await tester.tap(find.byKey(const Key('nvme-refresh')));
+    await tester.pumpAndSettle();
+    expect(
+      fake.calls.where((c) => c.method.name == 'nvmet.global.config').length,
+      2,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   test('host projection is bounded and flags unresolved associations', () {
     final overview = NvmeHostOverview.parse(
       hosts: [

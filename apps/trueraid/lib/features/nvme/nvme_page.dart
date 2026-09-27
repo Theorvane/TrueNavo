@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 import '../dashboard/dashboard_controller.dart';
+import 'nvme_global_panel.dart';
 import 'nvme_host_overview.dart';
 import 'nvme_host_access_revoke_editor.dart';
 import 'nvme_host_access_grant_editor.dart';
@@ -69,6 +70,7 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                 : () {
                     setState(() => _showHosts = false);
                     ref.invalidate(nvmeOverviewProvider);
+                    ref.invalidate(nvmeGlobalProvider);
                   },
             icon: const Icon(Icons.refresh),
           ),
@@ -96,6 +98,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const Text(
                     'Saved configuration from four sequential reads. No host keys, device paths, serials or client sessions are loaded. Mappings do not prove reachability or current access.',
                   ),
+                  const SizedBox(height: 20),
+                  const NvmeGlobalPanel(),
                   const SizedBox(height: 20),
                   switch (state) {
                     AsyncData(:final value) => _Content(
