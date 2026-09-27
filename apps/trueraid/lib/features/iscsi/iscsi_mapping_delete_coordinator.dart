@@ -43,18 +43,23 @@ final class IscsiMappingDeleteReview {
     this.extentId,
     this.extentName,
     this.lun,
-    this.portalId,
-    this.initiatorId,
+    this.accessGroups,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
   final int id, targetId, extentId, lun;
-  final int? portalId, initiatorId;
+  final List<({int portalId, int initiatorId})> accessGroups;
   final DateTime issuedAt;
-  String get confirmation => portalId == null
-      ? 'UNMAP ISCSI LUN #$id TARGET #$targetId EXTENT #$extentId'
-      : 'UNMAP ISCSI LUN #$id TARGET #$targetId EXTENT #$extentId PORTAL #$portalId INITIATOR #$initiatorId';
+  String get confirmation {
+    final base = 'UNMAP ISCSI LUN #$id TARGET #$targetId EXTENT #$extentId';
+    if (accessGroups.isEmpty) return base;
+    if (accessGroups.length == 1) {
+      final group = accessGroups.single;
+      return '$base PORTAL #${group.portalId} INITIATOR #${group.initiatorId}';
+    }
+    return '$base GROUPS ${accessGroups.map((group) => 'PORTAL #${group.portalId} INITIATOR #${group.initiatorId}').join(' ; ')}';
+  }
 }
 
 final class _Mapping {
@@ -315,7 +320,7 @@ final class IscsiMappingDeleteCoordinator {
     return snapshot;
   }
 
-  ({int? portalId, int? initiatorId}) _candidate(
+  List<({int portalId, int initiatorId})> _candidate(
     _Snapshot snapshot,
     _Mapping mapping,
   ) {
@@ -334,31 +339,42 @@ final class IscsiMappingDeleteCoordinator {
     if (groups is! List || networks is! List || networks.isNotEmpty) {
       throw StateError('The target access configuration is unsupported.');
     }
-    if (groups.isEmpty) return (portalId: null, initiatorId: null);
-    if (groups.length != 1 || groups.single is! Map) {
-      throw StateError('Only one explicit no-CHAP access group is supported.');
+    if (groups.length > 8) {
+      throw StateError('At most eight no-CHAP access groups are supported.');
     }
-    final group = groups.single as Map;
-    final portalId = group['portal'], initiatorId = group['initiator'];
-    if (group.keys.any(
-          (key) => !const {
-            'portal',
-            'initiator',
-            'authmethod',
-            'auth',
-          }.contains(key),
-        ) ||
-        group['authmethod'] != 'NONE' ||
-        group['auth'] != null ||
-        portalId is! int ||
-        portalId < 1 ||
-        initiatorId is! int ||
-        initiatorId < 1 ||
-        !snapshot.portalRows.containsKey(portalId) ||
-        !snapshot.initiatorRows.containsKey(initiatorId)) {
-      throw StateError('Only one explicit no-CHAP access group is supported.');
+    final access = <({int portalId, int initiatorId})>[];
+    for (final raw in groups) {
+      if (raw is! Map) {
+        throw StateError('Only explicit no-CHAP access groups are supported.');
+      }
+      final portalId = raw['portal'], initiatorId = raw['initiator'];
+      if (raw.keys.any(
+            (key) => !const {
+              'portal',
+              'initiator',
+              'authmethod',
+              'auth',
+            }.contains(key),
+          ) ||
+          raw['authmethod'] != 'NONE' ||
+          raw['auth'] != null ||
+          portalId is! int ||
+          portalId < 1 ||
+          initiatorId is! int ||
+          initiatorId < 1 ||
+          !snapshot.portalRows.containsKey(portalId) ||
+          !snapshot.initiatorRows.containsKey(initiatorId) ||
+          access.any(
+            (item) =>
+                item.portalId == portalId && item.initiatorId == initiatorId,
+          )) {
+        throw StateError(
+          'Only distinct explicit no-CHAP access groups are supported.',
+        );
+      }
+      access.add((portalId: portalId, initiatorId: initiatorId));
     }
-    return (portalId: portalId, initiatorId: initiatorId);
+    return List.unmodifiable(access);
   }
 
   Future<IscsiMappingDeleteReview> prepare(int id) async {
@@ -384,8 +400,7 @@ final class IscsiMappingDeleteCoordinator {
         mapping.extentId,
         snapshot.extents[mapping.extentId]!,
         mapping.lun,
-        access.portalId,
-        access.initiatorId,
+        access,
         snapshot.proof,
         _now().toUtc(),
       );
@@ -435,8 +450,11 @@ final class IscsiMappingDeleteCoordinator {
       final before = await _snapshot();
       final mapping = before.mapping(review.id);
       final access = _candidate(before, mapping);
-      if (access.portalId != review.portalId ||
-          access.initiatorId != review.initiatorId) {
+      if (access.length != review.accessGroups.length ||
+          [
+            for (var i = 0; i < access.length; i++)
+              access[i] == review.accessGroups[i],
+          ].contains(false)) {
         return const IscsiMappingDeleteResult(
           IscsiMappingDeleteOutcome.rejected,
           'The target access changed. Nothing was sent.',

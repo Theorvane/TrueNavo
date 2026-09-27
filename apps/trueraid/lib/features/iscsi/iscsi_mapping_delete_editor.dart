@@ -105,7 +105,7 @@ class _IscsiMappingDeleteEditorState
     final mappings = widget.overview.mappings;
     return TdPanel(
       title: 'Remove a target–extent LUN mapping',
-      description: 'Unmaps only one association from an iSCSI-only target with no access group or one explicit no-CHAP group. Additional LUNs must be removed before LUN 0. It does not delete the target or backing extent. Stop iSCSI and disconnect all clients first.',
+      description: 'Unmaps only one association from an iSCSI-only target with no access groups or up to eight distinct explicit no-CHAP groups. Additional LUNs must be removed before LUN 0. It does not delete the target or backing extent. Stop iSCSI and disconnect all clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -159,19 +159,20 @@ class _IscsiMappingDeleteEditorState
             Text('Mapping #${review.id}, LUN ${review.lun}'),
             Text('Target #${review.targetId}: ${review.targetName}'),
             Text('Extent #${review.extentId}: ${review.extentName}'),
-            if (review.portalId != null)
+            for (var i = 0; i < review.accessGroups.length; i++)
               Text(
-                'Portal #${review.portalId} · initiator #${review.initiatorId}',
+                '${review.accessGroups.length == 1 ? '' : 'Group ${i + 1}: '}Portal #${review.accessGroups[i].portalId} · initiator #${review.accessGroups[i].initiatorId}',
               ),
             const Text(
               'Only this association is removed with force=false. Target, extent, mapping, service and session inventories are checked again. Concurrent server changes are still possible.',
             ),
+            SelectableText(review.confirmation),
             TextField(
               key: const Key('iscsi-mapping-delete-confirmation'),
               controller: _confirmation,
               enabled: !_busy,
               decoration: InputDecoration(
-                labelText: 'Type ${review.confirmation}',
+                labelText: 'Type the exact phrase above',
                 border: const OutlineInputBorder(),
               ),
             ),

@@ -97,6 +97,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
   bool unknown = false;
   bool mutateTarget = false;
   bool mutatePortal = false;
+  bool mutateLastPortal = false;
 
   @override
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
@@ -144,6 +145,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         mappings.removeWhere((row) => row['id'] == request.arguments.first);
         if (mutateTarget) targets.single['name'] = 'unexpected';
         if (mutatePortal) portals.single['comment'] = 'unexpected';
+        if (mutateLastPortal) portals.last['comment'] = 'unexpected';
         return AdminCompleted(request, value: true);
       default:
         throw StateError('Unexpected fake call');
@@ -290,6 +292,85 @@ void main() {
     ];
     final review = await h.coordinator.prepare(7);
     h.api.mutatePortal = true;
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      IscsiMappingDeleteOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
+  test('multi-group no-CHAP unmap reviews every access pair', () async {
+    final h = _Harness();
+    h.api.portals.add({
+      'id': 3,
+      'tag': 2,
+      'comment': '',
+      'listen': [
+        {'ip': '192.0.2.11', 'port': 3260},
+      ],
+    });
+    h.api.initiators.add({
+      'id': 5,
+      'comment': '',
+      'initiators': ['iqn.2026-09.example:second'],
+    });
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      {'portal': 3, 'initiator': 5, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final review = await h.coordinator.prepare(7);
+    expect(review.accessGroups, [
+      (portalId: 2, initiatorId: 4),
+      (portalId: 3, initiatorId: 5),
+    ]);
+    expect(
+      review.confirmation,
+      'UNMAP ISCSI LUN #7 TARGET #3 EXTENT #5 GROUPS PORTAL #2 INITIATOR #4 ; PORTAL #3 INITIATOR #5',
+    );
+    expect(h.writes, 0);
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      IscsiMappingDeleteOutcome.completed,
+    );
+    expect(h.api.mappings, isEmpty);
+  });
+
+  test('multi-group unmap blocks duplicate or mixed CHAP access', () async {
+    final h = _Harness();
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    await expectLater(h.coordinator.prepare(7), throwsStateError);
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 1},
+    ];
+    await expectLater(h.coordinator.prepare(7), throwsStateError);
+    h.api.targets.single['groups'] = [
+      for (var i = 0; i < 9; i++)
+        {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    await expectLater(h.coordinator.prepare(7), throwsStateError);
+    expect(h.writes, 0);
+  });
+
+  test('multi-group second portal postread drift fences session', () async {
+    final h = _Harness();
+    h.api.portals.add({
+      'id': 3,
+      'tag': 2,
+      'comment': '',
+      'listen': [
+        {'ip': '192.0.2.11', 'port': 3260},
+      ],
+    });
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      {'portal': 3, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final review = await h.coordinator.prepare(7);
+    h.api.mutateLastPortal = true;
     expect(
       (await h.coordinator.execute(review, review.confirmation)).outcome,
       IscsiMappingDeleteOutcome.unknown,
@@ -450,5 +531,55 @@ void main() {
     await tester.tap(find.byKey(const Key('iscsi-mapping-delete-submit')));
     await tester.pumpAndSettle();
     expect(h.writes, 1);
+  });
+
+  testWidgets('multi-group editor shows every reviewed access pair', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.portals.add({
+      'id': 3,
+      'tag': 2,
+      'comment': '',
+      'listen': [
+        {'ip': '192.0.2.11', 'port': 3260},
+      ],
+    });
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+      {'portal': 3, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingDeleteEditor(overview: overview),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-delete-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('#7 target-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-delete-review')));
+    await tester.pumpAndSettle();
+    expect(find.text('Group 1: Portal #2 · initiator #4'), findsOneWidget);
+    expect(find.text('Group 2: Portal #3 · initiator #4'), findsOneWidget);
+    expect(h.writes, 0);
   });
 }
