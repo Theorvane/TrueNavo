@@ -4,6 +4,10 @@ Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: shared NVMe-oF settings doughnuts
+
+The NVMe-oF detail page and Shares dashboard now use one four-segment ANA/PI chart component. Both show explicit on, explicit off, inherited/server-default and field-not-returned counts with matching colors and text legends. The detailed page's earlier single-ratio bars were replaced because they hid off/default/unknown distribution. The two screens use the same bounded topology projection, not new API calls. Charts describe saved settings only, not live paths or verified data protection. Synthetic widget tests cover both screens; no live NAS read or write occurred. TD-033 and TD-037 remain partial.
+
 ## Current continuation: reviewed PI setting on an empty NVMe-oF subsystem
 
 The native NVMe-oF page now offers explicit on, off or server-default PI configuration only for a restricted subsystem with a returned NQN and PI field and no returned namespace, port or host association. A five-minute endpoint-bound review requires an exact ID/name/choice phrase. Complete bounded topology and protected host inventories are checked at review, immediately before the single `nvmet.subsys.update(id, {pi_enable: selectedValue})` request, and afterward. The payload contains no other subsystem field. Fresh readback must show only PI changed; an ambiguous result or unrelated change fences further NVMe-oF edits until reconnection. This does not verify actual data-integrity protection or exclude a concurrent administrator's race. Synthetic fake API and widget tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem update contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.update.html). TD-037 remains partial.
@@ -14,7 +18,7 @@ The read-only NVMe-oF card on Shares now summarizes explicit ANA on/off/inherit 
 
 ## Current continuation: NVMe-oF subsystem PI and queue settings
 
-The bounded subsystem query now also selects `pi_enable` and `qid_max`. The native explorer distinguishes explicit PI on/off, a returned server default, and a field not returned; it shows the returned maximum queue-ID setting or the same default/unknown distinction. A ratio bar summarizes explicitly enabled PI among reported settings, not verified data-integrity protection. Mutation snapshot proofs include both fields and their presence; unexpected target changes after rename, access restriction or ANA editing, and unrelated changes during other reviewed workflows, fence further edits as uncertain. Malformed values fail closed. Synthetic widget and fake-write tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.create.html). TD-037 remains partial.
+The bounded subsystem query now also selects `pi_enable` and `qid_max`. The native explorer distinguishes explicit PI on/off, a returned server default, and a field not returned; it shows the returned maximum queue-ID setting or the same default/unknown distinction. The current four-segment PI doughnut summarizes all these saved configurations, not verified data-integrity protection. Mutation snapshot proofs include both fields and their presence; unexpected target changes after rename, access restriction or ANA editing, and unrelated changes during other reviewed workflows, fence further edits as uncertain. Malformed values fail closed. Synthetic widget and fake-write tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.create.html). TD-037 remains partial.
 
 ## Current continuation: NVMe-oF summary on the Shares dashboard
 
@@ -30,7 +34,7 @@ The native page now offers an explicit on, off or inherit-global ANA change only
 
 ## Current continuation: NVMe-oF subsystem ANA overrides
 
-The bounded subsystem query now selects the nullable `ana` override and the native topology distinguishes explicitly on, explicitly off, inherited global setting and a field not returned. An override-ratio bar summarizes the saved configuration without implying active paths or availability. Mutation snapshot proofs now include both the override and whether it was returned; a rename or any-host restriction that unexpectedly changes the target's override is treated as uncertain and fences further edits. Synthetic widget and fake-write tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem query contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.query.html). TD-037 remains partial.
+The bounded subsystem query now selects the nullable `ana` override and the native topology distinguishes explicitly on, explicitly off, inherited global setting and a field not returned. The current four-segment ANA doughnut summarizes saved configuration without implying active paths or availability. Mutation snapshot proofs now include both the override and whether it was returned; a rename or any-host restriction that unexpectedly changes the target's override is treated as uncertain and fences further edits. Synthetic widget and fake-write tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem query contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.query.html). TD-037 remains partial.
 
 ## Current continuation: read-only NVMe-oF global settings
 

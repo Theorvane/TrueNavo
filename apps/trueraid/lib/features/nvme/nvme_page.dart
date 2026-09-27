@@ -12,6 +12,7 @@ import 'nvme_port_access_revoke_editor.dart';
 import 'nvme_port_access_grant_editor.dart';
 import 'nvme_port_delete_editor.dart';
 import 'nvme_overview.dart';
+import 'nvme_setting_charts.dart';
 import 'nvme_subsystem_create_editor.dart';
 import 'nvme_subsystem_ana_editor.dart';
 import 'nvme_subsystem_pi_editor.dart';
@@ -348,26 +349,6 @@ class _Content extends StatelessWidget {
       );
     }).toList();
     final enabledNamespaces = value.namespaces.where((n) => n.enabled).length;
-    final anaOn = value.subsystems
-        .where((s) => s.anaReported && s.ana == true)
-        .length;
-    final anaOff = value.subsystems
-        .where((s) => s.anaReported && s.ana == false)
-        .length;
-    final anaInherited = value.subsystems
-        .where((s) => s.anaReported && s.ana == null)
-        .length;
-    final anaUnknown = value.subsystems.length - anaOn - anaOff - anaInherited;
-    final piOn = value.subsystems
-        .where((s) => s.piReported && s.piEnable == true)
-        .length;
-    final piOff = value.subsystems
-        .where((s) => s.piReported && s.piEnable == false)
-        .length;
-    final piDefault = value.subsystems
-        .where((s) => s.piReported && s.piEnable == null)
-        .length;
-    final piUnknown = value.subsystems.length - piOn - piOff - piDefault;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -402,33 +383,7 @@ class _Content extends StatelessWidget {
                 minHeight: 10,
               ),
               const SizedBox(height: 12),
-              Text(
-                'ANA overrides: $anaOn on · $anaOff off · $anaInherited inherit global · $anaUnknown not returned',
-              ),
-              LinearProgressIndicator(
-                key: const Key('nvme-ana-explicit-ratio'),
-                value: anaOn + anaOff + anaInherited == 0
-                    ? 0
-                    : (anaOn + anaOff) / (anaOn + anaOff + anaInherited),
-                minHeight: 10,
-              ),
-              const Text(
-                'Bar shows explicit overrides among reported ANA settings, not active paths or availability.',
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Protection information: $piOn on · $piOff off · $piDefault server default · $piUnknown not returned',
-              ),
-              LinearProgressIndicator(
-                key: const Key('nvme-pi-enabled-ratio'),
-                value: piOn + piOff + piDefault == 0
-                    ? 0
-                    : piOn / (piOn + piOff + piDefault),
-                minHeight: 10,
-              ),
-              const Text(
-                'Bar shows configured PI on among reported settings, not verified data integrity.',
-              ),
+              NvmeSettingCharts(value: value, keyPrefix: 'nvme'),
               if (value.unresolvedReferences > 0) ...[
                 const SizedBox(height: 12),
                 Text(

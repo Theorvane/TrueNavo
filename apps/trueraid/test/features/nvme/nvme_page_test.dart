@@ -604,32 +604,13 @@ void main() {
             .value,
         0.5,
       );
-      expect(
-        find.textContaining('ANA overrides: 1 on · 0 off · 1 inherit global'),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<LinearProgressIndicator>(
-              find.byKey(const Key('nvme-ana-explicit-ratio')),
-            )
-            .value,
-        0.5,
-      );
-      expect(
-        find.textContaining(
-          'Protection information: 1 on · 0 off · 1 server default',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<LinearProgressIndicator>(
-              find.byKey(const Key('nvme-pi-enabled-ratio')),
-            )
-            .value,
-        0.5,
-      );
+      expect(find.byKey(const Key('nvme-ana-donut')), findsOneWidget);
+      expect(find.byKey(const Key('nvme-pi-donut')), findsOneWidget);
+      expect(find.text('ANA'), findsOneWidget);
+      expect(find.text('PI'), findsOneWidget);
+      expect(find.text('on: 1'), findsNWidgets(2));
+      expect(find.text('inherit: 1'), findsOneWidget);
+      expect(find.text('server default: 1'), findsOneWidget);
       expect(find.textContaining('private-address'), findsNothing);
       expect(find.textContaining('/mnt/private-backing'), findsNothing);
       expect(find.textContaining('hidden-serial'), findsNothing);

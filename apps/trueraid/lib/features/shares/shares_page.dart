@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
@@ -11,6 +10,7 @@ import '../iscsi/iscsi_page.dart';
 import '../management/management_page.dart';
 import '../nvme/nvme_page.dart';
 import '../nvme/nvme_overview.dart';
+import '../nvme/nvme_setting_charts.dart';
 import '../nfs_shares/nfs_shares_controller.dart';
 import '../nfs_shares/nfs_shares_page.dart';
 import '../smb_shares/smb_shares_controller.dart';
@@ -377,26 +377,6 @@ class _NvmeStorageCounts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabledNamespaces = value.namespaces.where((n) => n.enabled).length;
-    final anaOn = value.subsystems
-        .where((s) => s.anaReported && s.ana == true)
-        .length;
-    final anaOff = value.subsystems
-        .where((s) => s.anaReported && s.ana == false)
-        .length;
-    final anaInherited = value.subsystems
-        .where((s) => s.anaReported && s.ana == null)
-        .length;
-    final anaReported = anaOn + anaOff + anaInherited;
-    final piOn = value.subsystems
-        .where((s) => s.piReported && s.piEnable == true)
-        .length;
-    final piOff = value.subsystems
-        .where((s) => s.piReported && s.piEnable == false)
-        .length;
-    final piDefault = value.subsystems
-        .where((s) => s.piReported && s.piEnable == null)
-        .length;
-    final piReported = piOn + piOff + piDefault;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -434,42 +414,7 @@ class _NvmeStorageCounts extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 24,
-          runSpacing: 16,
-          children: [
-            _NvmeSettingsDonut(
-              chartKey: const Key('shares-nvme-ana-donut'),
-              title: 'ANA',
-              labels: const ['on', 'off', 'inherit', 'not returned'],
-              counts: [
-                anaOn,
-                anaOff,
-                anaInherited,
-                value.subsystems.length - anaReported,
-              ],
-              detail:
-                  '$anaOn on · $anaOff off · $anaInherited inherit · ${value.subsystems.length - anaReported} not returned',
-            ),
-            _NvmeSettingsDonut(
-              chartKey: const Key('shares-nvme-pi-donut'),
-              title: 'PI',
-              labels: const ['on', 'off', 'server default', 'not returned'],
-              counts: [
-                piOn,
-                piOff,
-                piDefault,
-                value.subsystems.length - piReported,
-              ],
-              detail:
-                  '$piOn on · $piOff off · $piDefault server default · ${value.subsystems.length - piReported} not returned',
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'ANA and PI rings summarize saved settings, not listener health, client access or verified data protection.',
-        ),
+        NvmeSettingCharts(value: value, keyPrefix: 'shares-nvme'),
         if (value.unresolvedReferences > 0) ...[
           const SizedBox(height: 8),
           Text(
@@ -479,116 +424,6 @@ class _NvmeStorageCounts extends StatelessWidget {
       ],
     );
   }
-}
-
-class _NvmeSettingsDonut extends StatelessWidget {
-  const _NvmeSettingsDonut({
-    required this.chartKey,
-    required this.title,
-    required this.labels,
-    required this.counts,
-    required this.detail,
-  });
-
-  final Key chartKey;
-  final String title, detail;
-  final List<String> labels;
-  final List<int> counts;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final total = counts.fold<int>(0, (sum, count) => sum + count);
-    final segmentColors = [
-      colors.primary,
-      colors.secondary,
-      colors.tertiary,
-      colors.outlineVariant,
-    ];
-    return SizedBox(
-      width: 230,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Semantics(
-            label:
-                '$title saved settings among $total returned subsystems: $detail',
-            child: SizedBox.square(
-              dimension: 112,
-              child: CustomPaint(
-                key: chartKey,
-                painter: _NvmeSettingsDonutPainter(
-                  counts: counts,
-                  colors: segmentColors,
-                  track: colors.surfaceContainerHighest,
-                ),
-                child: Center(
-                  child: Text(
-                    '$total',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          for (var index = 0; index < counts.length; index++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Row(
-                children: [
-                  Container(width: 10, height: 10, color: segmentColors[index]),
-                  const SizedBox(width: 6),
-                  Expanded(child: Text('${labels[index]}: ${counts[index]}')),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NvmeSettingsDonutPainter extends CustomPainter {
-  const _NvmeSettingsDonutPainter({
-    required this.counts,
-    required this.colors,
-    required this.track,
-  });
-
-  final List<int> counts;
-  final List<Color> colors;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final total = counts.fold<int>(0, (sum, count) => sum + count);
-    final stroke = math.min(size.width, size.height) * .095;
-    final bounds = (Offset.zero & size).deflate(stroke / 2);
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..color = track;
-    canvas.drawOval(bounds, paint);
-    if (total == 0) return;
-    var start = -math.pi / 2;
-    for (var index = 0; index < counts.length; index++) {
-      final sweep = counts[index] / total * 2 * math.pi;
-      if (sweep > 0) {
-        paint.color = colors[index];
-        canvas.drawArc(bounds, start, sweep, false, paint);
-      }
-      start += sweep;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _NvmeSettingsDonutPainter oldDelegate) =>
-      track != oldDelegate.track ||
-      !listEquals(counts, oldDelegate.counts) ||
-      !listEquals(colors, oldDelegate.colors);
 }
 
 class _BlockStorageCard extends StatefulWidget {
