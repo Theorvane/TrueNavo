@@ -4,6 +4,10 @@ Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: reviewed NVMe-oF maximum queue-ID setting
+
+The native NVMe-oF page now offers a dedicated `qid_max` change for an unbound restricted subsystem with a returned NQN and queue-ID setting. It accepts server default or a positive value up to 2,147,483,647; other inputs are rejected before submission. A five-minute endpoint-bound review requires the exact subsystem ID, name and chosen value. Complete bounded topology and protected host inventories are checked at review, immediately before the single `nvmet.subsys.update(id, {qid_max: chosenValue})` request, and afterward. Fresh readback must show only this setting changed; ambiguous results or unrelated drift fence further NVMe-oF edits until reconnection. Sequential reads cannot exclude concurrent administrators or verify real client queue behavior. Synthetic fake API and widget tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem update contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.update.html). TD-037 remains partial.
+
 ## Current continuation: shared NVMe-oF settings doughnuts
 
 The NVMe-oF detail page and Shares dashboard now use one four-segment ANA/PI chart component. Both show explicit on, explicit off, inherited/server-default and field-not-returned counts with matching colors and text legends. The detailed page's earlier single-ratio bars were replaced because they hid off/default/unknown distribution. The two screens use the same bounded topology projection, not new API calls. Charts describe saved settings only, not live paths or verified data protection. Synthetic widget tests cover both screens; no live NAS read or write occurred. TD-033 and TD-037 remain partial.
