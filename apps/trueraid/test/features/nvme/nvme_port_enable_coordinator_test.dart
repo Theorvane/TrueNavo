@@ -53,6 +53,7 @@ class _Fake
     'id': 3,
     'addr_trtype': 'TCP',
     'enabled': false,
+    'pi_enable': null,
   };
   final subsystem = <String, Object?>{
     'id': 2,
@@ -88,7 +89,7 @@ class _Fake
         final payload = request.arguments[1] as Map;
         port['enabled'] = payload['enabled'];
         final returned = Map.of(port);
-        if (driftAfterWrite) port['addr_trtype'] = 'RDMA';
+        if (driftAfterWrite) port['pi_enable'] = true;
         return AdminCompleted(request, value: returned);
       default:
         throw StateError('Unexpected method');

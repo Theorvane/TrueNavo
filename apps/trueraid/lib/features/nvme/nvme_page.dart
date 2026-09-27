@@ -418,8 +418,39 @@ class _Content extends StatelessWidget {
                       ListTile(
                         key: Key('nvme-port-${port.id}'),
                         title: Text('Port #${port.id} · ${port.transport}'),
-                        subtitle: Text(
-                          '${port.enabled ? 'Configured enabled' : 'Disabled'} · ${value.portMappings.where((m) => m.portId == port.id).length} subsystem associations',
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${port.enabled ? 'Configured enabled' : 'Disabled'} · ${value.portMappings.where((m) => m.portId == port.id).length} subsystem associations',
+                            ),
+                            Text(
+                              'Inline data size: ${!port.inlineDataSizeReported
+                                  ? 'Not returned'
+                                  : port.inlineDataSize == null
+                                  ? 'Server default'
+                                  : '${port.inlineDataSize} bytes'}',
+                              key: Key('nvme-port-inline-${port.id}'),
+                            ),
+                            Text(
+                              'Maximum queue size: ${!port.maxQueueSizeReported
+                                  ? 'Not returned'
+                                  : port.maxQueueSize == null
+                                  ? 'Server default'
+                                  : '${port.maxQueueSize} entries'}',
+                              key: Key('nvme-port-queue-${port.id}'),
+                            ),
+                            Text(
+                              'Port PI: ${!port.piReported
+                                  ? 'Not returned'
+                                  : port.piEnable == null
+                                  ? 'Server default'
+                                  : port.piEnable!
+                                  ? 'Configured on'
+                                  : 'Configured off'}',
+                              key: Key('nvme-port-pi-${port.id}'),
+                            ),
+                          ],
                         ),
                       ),
                   ],

@@ -130,21 +130,59 @@ final class NvmeSubsystem {
 }
 
 final class NvmePort {
-  const NvmePort(this.id, this.transport, this.enabled);
+  const NvmePort(
+    this.id,
+    this.transport,
+    this.enabled, {
+    this.inlineDataSize,
+    this.inlineDataSizeReported = false,
+    this.maxQueueSize,
+    this.maxQueueSizeReported = false,
+    this.piEnable,
+    this.piReported = false,
+  });
   final int id;
   final String transport;
   final bool enabled;
+  final int? inlineDataSize;
+  final bool inlineDataSizeReported;
+  final int? maxQueueSize;
+  final bool maxQueueSizeReported;
+  final bool? piEnable;
+  final bool piReported;
 
   static NvmePort? parse(Map row) {
     final id = _id(row['id']);
     final transport = row['addr_trtype'];
     final enabled = row['enabled'];
+    final inlineDataSize = row['inline_data_size'];
+    final maxQueueSize = row['max_queue_size'];
+    final piEnable = row['pi_enable'];
     if (id == null ||
         !const {'TCP', 'RDMA', 'FC'}.contains(transport) ||
-        enabled is! bool) {
+        enabled is! bool ||
+        (inlineDataSize != null &&
+            (inlineDataSize is! int ||
+                inlineDataSize < 0 ||
+                inlineDataSize > 2147483647)) ||
+        (maxQueueSize != null &&
+            (maxQueueSize is! int ||
+                maxQueueSize < 0 ||
+                maxQueueSize > 2147483647)) ||
+        (piEnable != null && piEnable is! bool)) {
       return null;
     }
-    return NvmePort(id, transport as String, enabled);
+    return NvmePort(
+      id,
+      transport as String,
+      enabled,
+      inlineDataSize: inlineDataSize as int?,
+      inlineDataSizeReported: row.containsKey('inline_data_size'),
+      maxQueueSize: maxQueueSize as int?,
+      maxQueueSizeReported: row.containsKey('max_queue_size'),
+      piEnable: piEnable as bool?,
+      piReported: row.containsKey('pi_enable'),
+    );
   }
 }
 
@@ -281,7 +319,14 @@ Future<NvmeOverview> loadNvmeOverviewFromAdmin({
       'qid_max',
       'ieee_oui',
     ],
-    ['id', 'addr_trtype', 'enabled'],
+    [
+      'id',
+      'addr_trtype',
+      'enabled',
+      'inline_data_size',
+      'max_queue_size',
+      'pi_enable',
+    ],
     ['id', 'nsid', 'subsys.id', 'device_type', 'enabled', 'locked'],
     ['id', 'port.id', 'subsys.id'],
   ];

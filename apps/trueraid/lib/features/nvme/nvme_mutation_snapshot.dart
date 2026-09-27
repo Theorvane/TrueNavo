@@ -68,7 +68,19 @@ final class NvmeMutationSnapshot {
     final ports =
         topology.ports
             .where((p) => p.id != omitPortId)
-            .map((p) => [p.id, p.transport, p.enabled])
+            .map(
+              (p) => [
+                p.id,
+                p.transport,
+                p.enabled,
+                p.inlineDataSizeReported,
+                p.inlineDataSize,
+                p.maxQueueSizeReported,
+                p.maxQueueSize,
+                p.piReported,
+                p.piEnable,
+              ],
+            )
             .toList()
           ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
     final namespaces =

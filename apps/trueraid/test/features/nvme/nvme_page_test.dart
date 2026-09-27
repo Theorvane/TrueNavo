@@ -149,6 +149,9 @@ class _Fake
           'id': 3,
           'addr_trtype': 'TCP',
           'enabled': true,
+          'inline_data_size': 4096,
+          'max_queue_size': null,
+          'pi_enable': false,
           'addr_traddr': 'private-address',
         },
         if (unassociatedPort)
@@ -266,6 +269,29 @@ void main() {
     expect(defaults.piEnable, isNull);
     expect(defaults.qidMax, isNull);
     expect(defaults.ieeeOui, isNull);
+  });
+
+  test('port setting projection distinguishes default and absent', () {
+    const row = {'id': 3, 'addr_trtype': 'TCP', 'enabled': false};
+    final absent = NvmePort.parse(row)!;
+    expect(absent.inlineDataSizeReported, false);
+    expect(absent.maxQueueSizeReported, false);
+    expect(absent.piReported, false);
+    final defaults = NvmePort.parse({
+      ...row,
+      'inline_data_size': null,
+      'max_queue_size': null,
+      'pi_enable': null,
+    })!;
+    expect(defaults.inlineDataSizeReported, true);
+    expect(defaults.maxQueueSizeReported, true);
+    expect(defaults.piReported, true);
+    expect(defaults.inlineDataSize, isNull);
+    expect(defaults.maxQueueSize, isNull);
+    expect(defaults.piEnable, isNull);
+    expect(NvmePort.parse({...row, 'inline_data_size': -1}), isNull);
+    expect(NvmePort.parse({...row, 'max_queue_size': '128'}), isNull);
+    expect(NvmePort.parse({...row, 'pi_enable': 'false'}), isNull);
   });
 
   testWidgets('service state is a separate selected read', (tester) async {
@@ -595,6 +621,14 @@ void main() {
         'qid_max',
         'ieee_oui',
       ]);
+      expect((fake.calls[1].arguments[1] as Map)['select'], [
+        'id',
+        'addr_trtype',
+        'enabled',
+        'inline_data_size',
+        'max_queue_size',
+        'pi_enable',
+      ]);
       for (final call in fake.calls) {
         expect(call.arguments.first, isEmpty);
         expect((call.arguments[1] as Map)['limit'], 101);
@@ -654,6 +688,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Namespace 1 · ZVOL'), findsOneWidget);
       expect(find.text('Port #3 · TCP'), findsWidgets);
+      expect(find.text('Inline data size: 4096 bytes'), findsOneWidget);
+      expect(find.text('Maximum queue size: Server default'), findsOneWidget);
+      expect(find.text('Port PI: Configured off'), findsOneWidget);
       expect(find.text('nqn.2026-09.example:finance'), findsOneWidget);
       expect(find.text('Configured on for this subsystem'), findsOneWidget);
       expect(find.text('Protection information (PI)'), findsOneWidget);
@@ -695,6 +732,9 @@ void main() {
       expect(find.byKey(const Key('nvme-port-7')), findsOneWidget);
       expect(find.text('Port #7 · RDMA'), findsOneWidget);
       expect(find.text('Disabled · 0 subsystem associations'), findsOneWidget);
+      expect(find.text('Inline data size: Not returned'), findsOneWidget);
+      expect(find.text('Maximum queue size: Not returned'), findsOneWidget);
+      expect(find.text('Port PI: Not returned'), findsOneWidget);
       expect(find.text('TCP: 1'), findsOneWidget);
       expect(find.text('RDMA: 1'), findsOneWidget);
       expect(find.textContaining('private-address'), findsNothing);

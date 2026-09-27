@@ -233,6 +233,13 @@ final class NvmePortEnableCoordinator {
       if (changed.length != 1 ||
           changed.single.transport != review.transport ||
           !changed.single.enabled ||
+          changed.single.inlineDataSizeReported !=
+              port.inlineDataSizeReported ||
+          changed.single.inlineDataSize != port.inlineDataSize ||
+          changed.single.maxQueueSizeReported != port.maxQueueSizeReported ||
+          changed.single.maxQueueSize != port.maxQueueSize ||
+          changed.single.piReported != port.piReported ||
+          changed.single.piEnable != port.piEnable ||
           after.topology.ports.length != before.topology.ports.length ||
           after.proof(omitPortId: review.id) !=
               before.proof(omitPortId: review.id) ||
