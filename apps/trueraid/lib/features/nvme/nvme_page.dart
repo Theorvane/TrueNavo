@@ -342,6 +342,16 @@ class _Content extends StatelessWidget {
       );
     }).toList();
     final enabledNamespaces = value.namespaces.where((n) => n.enabled).length;
+    final anaOn = value.subsystems
+        .where((s) => s.anaReported && s.ana == true)
+        .length;
+    final anaOff = value.subsystems
+        .where((s) => s.anaReported && s.ana == false)
+        .length;
+    final anaInherited = value.subsystems
+        .where((s) => s.anaReported && s.ana == null)
+        .length;
+    final anaUnknown = value.subsystems.length - anaOn - anaOff - anaInherited;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -374,6 +384,20 @@ class _Content extends StatelessWidget {
                     ? 0
                     : enabledNamespaces / value.namespaces.length,
                 minHeight: 10,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'ANA overrides: $anaOn on · $anaOff off · $anaInherited inherit global · $anaUnknown not returned',
+              ),
+              LinearProgressIndicator(
+                key: const Key('nvme-ana-explicit-ratio'),
+                value: anaOn + anaOff + anaInherited == 0
+                    ? 0
+                    : (anaOn + anaOff) / (anaOn + anaOff + anaInherited),
+                minHeight: 10,
+              ),
+              const Text(
+                'Bar shows explicit overrides among reported ANA settings, not active paths or availability.',
               ),
               if (value.unresolvedReferences > 0) ...[
                 const SizedBox(height: 12),
@@ -442,6 +466,18 @@ class _Content extends StatelessWidget {
                         subtitle: Text(
                           subsystem.subnqn ?? 'Not returned by this server',
                           key: Key('nvme-subsystem-nqn-${subsystem.id}'),
+                        ),
+                      ),
+                      ListTile(
+                        title: const Text('ANA setting'),
+                        subtitle: Text(
+                          !subsystem.anaReported
+                              ? 'Not returned by this server'
+                              : switch (subsystem.ana) {
+                                  true => 'Configured on for this subsystem',
+                                  false => 'Configured off for this subsystem',
+                                  null => 'Inherits global setting',
+                                },
                         ),
                       ),
                       for (final namespace in value.namespaces.where(

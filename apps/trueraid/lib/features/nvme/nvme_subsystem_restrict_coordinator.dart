@@ -259,6 +259,14 @@ final class NvmeSubsystemRestrictCoordinator {
               before.topology.subsystems
                   .singleWhere((s) => s.id == review.id)
                   .subnqn ||
+          changed.single.anaReported !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .anaReported ||
+          changed.single.ana !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .ana ||
           changed.single.allowAnyHost ||
           after.topology.subsystems.length !=
               before.topology.subsystems.length ||
@@ -302,7 +310,16 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
   final subsystems =
       topology.subsystems
           .where((s) => s.id != omitSubsystemId)
-          .map((s) => [s.id, s.name, s.subnqn, s.allowAnyHost])
+          .map(
+            (s) => [
+              s.id,
+              s.name,
+              s.subnqn,
+              s.allowAnyHost,
+              s.anaReported,
+              s.ana,
+            ],
+          )
           .toList()
         ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
   final ports =

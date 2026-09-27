@@ -58,25 +58,45 @@ final class NvmeOverview {
 }
 
 final class NvmeSubsystem {
-  const NvmeSubsystem(this.id, this.name, this.allowAnyHost, this.subnqn);
+  const NvmeSubsystem(
+    this.id,
+    this.name,
+    this.allowAnyHost,
+    this.subnqn, [
+    this.ana,
+    this.anaReported = false,
+  ]);
   final int id;
   final String name;
   final bool allowAnyHost;
   final String? subnqn;
+
+  /// Null inherits nvmet.global.config.ana only when the field was returned.
+  final bool? ana;
+  final bool anaReported;
 
   static NvmeSubsystem? parse(Map row) {
     final id = _id(row['id']);
     final name = _label(row['name']);
     final allowAnyHost = row['allow_any_host'];
     final rawNqn = row['subnqn'];
+    final ana = row['ana'];
     final subnqn = rawNqn == null ? null : _nqn(rawNqn);
     if (id == null ||
         name == null ||
         allowAnyHost is! bool ||
-        (rawNqn != null && subnqn == null)) {
+        (rawNqn != null && subnqn == null) ||
+        (ana != null && ana is! bool)) {
       return null;
     }
-    return NvmeSubsystem(id, name, allowAnyHost, subnqn);
+    return NvmeSubsystem(
+      id,
+      name,
+      allowAnyHost,
+      subnqn,
+      ana as bool?,
+      row.containsKey('ana'),
+    );
   }
 }
 
@@ -212,7 +232,7 @@ Future<NvmeOverview> loadNvmeOverviewFromAdmin({
     'nvmet.port_subsys.query',
   ];
   const fields = [
-    ['id', 'name', 'subnqn', 'allow_any_host'],
+    ['id', 'name', 'subnqn', 'allow_any_host', 'ana'],
     ['id', 'addr_trtype', 'enabled'],
     ['id', 'nsid', 'subsys.id', 'device_type', 'enabled', 'locked'],
     ['id', 'port.id', 'subsys.id'],

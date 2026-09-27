@@ -42,7 +42,16 @@ final class NvmeMutationSnapshot {
   String proof({int? omitPortMappingId, int? omitPortId}) {
     final subsystems =
         topology.subsystems
-            .map((s) => [s.id, s.name, s.subnqn, s.allowAnyHost])
+            .map(
+              (s) => [
+                s.id,
+                s.name,
+                s.subnqn,
+                s.allowAnyHost,
+                s.anaReported,
+                s.ana,
+              ],
+            )
             .toList()
           ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
     final ports =

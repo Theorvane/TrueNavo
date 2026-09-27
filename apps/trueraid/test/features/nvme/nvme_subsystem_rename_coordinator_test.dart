@@ -55,12 +55,14 @@ class _Fake
       'name': 'old',
       'subnqn': 'nqn.2026-09.example:stable',
       'allow_any_host': false,
+      'ana': null,
     },
     {'id': 2, 'name': 'other', 'allow_any_host': false},
   ];
   final hostMappings = <Map<String, Object?>>[];
   bool ambiguous = false;
   bool changeNqnAfterWrite = false;
+  bool changeAnaAfterWrite = false;
   bool attachHostAfterWrite = false;
   int hostReads = 0;
 
@@ -98,6 +100,9 @@ class _Fake
         final returned = Map.of(row);
         if (changeNqnAfterWrite) {
           row['subnqn'] = 'nqn.2026-09.example:drift';
+        }
+        if (changeAnaAfterWrite) {
+          row['ana'] = true;
         }
         if (attachHostAfterWrite) {
           hostMappings.add({
@@ -256,6 +261,18 @@ void main() {
       NvmeRenameOutcome.unknown,
     );
     expect(linked.coordinator.locked, true);
+  });
+
+  test('ANA override drift after rename fences further edits', () async {
+    final h = _Harness();
+    h.api.changeAnaAfterWrite = true;
+    final review = await h.coordinator.prepare(1, 'new');
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmeRenameOutcome.unknown,
+    );
+    expect(h.writes, 1);
+    expect(h.coordinator.locked, true);
   });
 
   testWidgets('editor requires exact confirmation before fake write', (

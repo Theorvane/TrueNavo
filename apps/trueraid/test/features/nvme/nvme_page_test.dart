@@ -113,9 +113,10 @@ class _Fake
           'name': 'finance',
           'subnqn': 'nqn.2026-09.example:finance',
           'allow_any_host': false,
+          'ana': true,
           'serial': 'hidden-serial',
         },
-        {'id': 2, 'name': 'public', 'allow_any_host': true},
+        {'id': 2, 'name': 'public', 'allow_any_host': true, 'ana': null},
       ],
       'nvmet.port.query' => [
         {
@@ -380,6 +381,17 @@ void main() {
     expect(
       () => NvmeOverview.parse(
         subsystems: [
+          {'id': 1, 'name': 'one', 'allow_any_host': false, 'ana': 'on'},
+        ],
+        ports: [],
+        namespaces: [],
+        portMappings: [],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => NvmeOverview.parse(
+        subsystems: [
           {'id': 1, 'name': 'one', 'allow_any_host': '[redacted]'},
         ],
         ports: [],
@@ -426,6 +438,7 @@ void main() {
         'name',
         'subnqn',
         'allow_any_host',
+        'ana',
       ]);
       for (final call in fake.calls) {
         expect(call.arguments.first, isEmpty);
@@ -448,6 +461,18 @@ void main() {
             .value,
         0.5,
       );
+      expect(
+        find.textContaining('ANA overrides: 1 on · 0 off · 1 inherit global'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byKey(const Key('nvme-ana-explicit-ratio')),
+            )
+            .value,
+        0.5,
+      );
       expect(find.textContaining('private-address'), findsNothing);
       expect(find.textContaining('/mnt/private-backing'), findsNothing);
       expect(find.textContaining('hidden-serial'), findsNothing);
@@ -463,6 +488,7 @@ void main() {
       expect(find.text('Namespace 1 · ZVOL'), findsOneWidget);
       expect(find.text('Port #3 · TCP'), findsWidgets);
       expect(find.text('nqn.2026-09.example:finance'), findsOneWidget);
+      expect(find.text('Configured on for this subsystem'), findsOneWidget);
       await tester.tap(find.byKey(const Key('nvme-refresh')));
       await tester.pumpAndSettle();
       expect(fake.calls.length, 8);

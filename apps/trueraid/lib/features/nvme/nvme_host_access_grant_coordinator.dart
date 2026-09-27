@@ -316,7 +316,16 @@ String _proof(_Snapshot snapshot) {
   final topology = snapshot.topology;
   final subsystems =
       topology.subsystems
-          .map((s) => [s.id, s.name, s.subnqn, s.allowAnyHost])
+          .map(
+            (s) => [
+              s.id,
+              s.name,
+              s.subnqn,
+              s.allowAnyHost,
+              s.anaReported,
+              s.ana,
+            ],
+          )
           .toList()
         ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
   final ports =

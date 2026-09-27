@@ -4,6 +4,10 @@ Updated 2026-09-27. Target: every applicable TrueNAS WebUI workflow in the exist
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.
 
+## Current continuation: NVMe-oF subsystem ANA overrides
+
+The bounded subsystem query now selects the nullable `ana` override and the native topology distinguishes explicitly on, explicitly off, inherited global setting and a field not returned. An override-ratio bar summarizes the saved configuration without implying active paths or availability. Mutation snapshot proofs now include both the override and whether it was returned; a rename or any-host restriction that unexpectedly changes the target's override is treated as uncertain and fences further edits. Synthetic widget and fake-write tests only; no live NAS write occurred. See the TrueNAS 25.10 [subsystem query contract](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.query.html). TD-037 remains partial.
+
 ## Current continuation: read-only NVMe-oF global settings
 
 The native NVMe-oF page now independently reads `nvmet.global.config` when supported and displays a bounded public projection of the base NQN and configured kernel backend, ANA, RDMA and transport-referral flags. Refresh reloads this configuration alongside the topology; a missing or malformed response is unavailable rather than guessed. Unknown response fields are discarded. These saved flags do not prove a listener is running, RDMA hardware or entitlement is present, or clients can connect. Synthetic parser and widget tests only; no live NAS read or write occurred. See the TrueNAS 25.10 [global configuration contract](https://api.truenas.com/v25.10/api_methods_nvmet.global.config.html). TD-037 remains partial.
