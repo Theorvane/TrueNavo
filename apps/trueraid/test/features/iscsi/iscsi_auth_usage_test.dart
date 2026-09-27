@@ -60,6 +60,14 @@ void main() {
       expect(usage.used, 2);
       expect(usage.unreferenced, 1);
       expect(usage.targetUses[3], 2);
+      expect(usage.targetReferences[3]?.map((target) => target.name).toList(), [
+        'one',
+        'two',
+      ]);
+      expect(usage.targetReferences[3]?.map((target) => target.id).toList(), [
+        7,
+        8,
+      ]);
       expect(usage.targetUses[4], isNull);
       expect(usage.missingIds, {99});
       expect(usage.chapWithoutId, 1);

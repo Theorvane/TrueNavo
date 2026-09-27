@@ -38,6 +38,15 @@ class _IscsiAuthPanelState extends ConsumerState<IscsiAuthPanel> {
   AuthenticatedSession? _requestedSession;
 
   @override
+  void didUpdateWidget(covariant IscsiAuthPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A new topology must never be joined to previously loaded credentials.
+    if (!identical(oldWidget.overview, widget.overview)) {
+      _requestedSession = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final session = ref.watch(dashboardActiveSessionProvider);
     final available = session?.repository is AuthenticatedIscsiAuthSession;
@@ -117,13 +126,20 @@ class _References extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         if (records.isEmpty) const Text('No CHAP records configured.'),
-        for (final record in records)
+        for (final record in records) ...[
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 4),
             child: Text(
               'Tag ${record.tag} · ${record.user}${record.peerUser.isEmpty ? '' : ' ↔ ${record.peerUser}'} · Discovery ${record.discoveryAuth}${usage == null ? '' : ' · ${usage.targetUses[record.id] ?? 0} target(s)'}',
             ),
           ),
+          if (usage != null &&
+              (usage.targetReferences[record.id]?.isNotEmpty ?? false))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8, left: 12),
+              child: Text(_targetSummary(usage.targetReferences[record.id]!)),
+            ),
+        ],
         if (usage != null) IscsiAuthUsageChart(usage: usage),
         const Text(
           'Only references are shown; access cannot be inferred from these rows.',
@@ -131,4 +147,12 @@ class _References extends StatelessWidget {
       ],
     );
   }
+}
+
+String _targetSummary(List<IscsiAuthTargetReference> targets) {
+  final shown = targets
+      .take(3)
+      .map((target) => '${target.name} (#${target.id})');
+  final remaining = targets.length - 3;
+  return 'Returned targets: ${shown.join(', ')}${remaining > 0 ? ' +$remaining more' : ''}';
 }

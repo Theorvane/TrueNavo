@@ -141,5 +141,41 @@ void main() {
     expect(find.text('No returned reference · 1'), findsOneWidget);
     expect(find.textContaining('1 missing credential IDs'), findsOneWidget);
     expect(find.textContaining('1 target(s)'), findsOneWidget);
+    expect(find.text('Returned targets: target-a (#7)'), findsOneWidget);
+
+    final refreshed = IscsiOverview.parse(
+      portals: [],
+      initiators: [],
+      targets: [
+        {'id': 8, 'name': 'target-b', 'groups': []},
+      ],
+      extents: [],
+      mappings: [],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiAuthPanel(overview: refreshed),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(api.reads, 1);
+    expect(find.textContaining('client-user'), findsNothing);
+    expect(find.byKey(const Key('iscsi-auth-usage-donut')), findsNothing);
+    expect(find.text('Load references'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('iscsi-load-auth')));
+    await tester.pumpAndSettle();
+    expect(api.reads, 2);
+    expect(find.textContaining('client-user'), findsOneWidget);
+    expect(find.text('Returned targets: target-a (#7)'), findsNothing);
   });
 }

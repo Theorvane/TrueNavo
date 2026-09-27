@@ -12,6 +12,7 @@ final class IscsiAuthUsage {
     this.total,
     this.used,
     this.targetUses,
+    this.targetReferences,
     this.missingIds,
     this.chapWithoutId,
     this.noChapWithId,
@@ -19,6 +20,7 @@ final class IscsiAuthUsage {
 
   final int total, used, chapWithoutId, noChapWithId;
   final Map<int, int> targetUses;
+  final Map<int, List<IscsiAuthTargetReference>> targetReferences;
   final Set<int> missingIds;
   int get unreferenced => total - used;
 
@@ -27,7 +29,7 @@ final class IscsiAuthUsage {
     IscsiOverview overview,
   ) {
     final credentialIds = inventory.references.map((row) => row.id).toSet();
-    final targetUses = <int, Set<int>>{};
+    final targetReferences = <int, Map<int, IscsiAuthTargetReference>>{};
     final missingIds = <int>{};
     var chapWithoutId = 0;
     var noChapWithId = 0;
@@ -44,14 +46,19 @@ final class IscsiAuthUsage {
         if (!credentialIds.contains(id)) {
           missingIds.add(id);
         } else {
-          targetUses.putIfAbsent(id, () => <int>{}).add(target.id);
+          targetReferences
+              .putIfAbsent(id, () => {})
+              .putIfAbsent(
+                target.id,
+                () => IscsiAuthTargetReference(target.id, target.name),
+              );
         }
       }
     }
     final used = inventory.references
         .where(
           (record) =>
-              targetUses.containsKey(record.id) ||
+              targetReferences.containsKey(record.id) ||
               record.discoveryAuth != 'NONE',
         )
         .length;
@@ -59,13 +66,28 @@ final class IscsiAuthUsage {
       inventory.references.length,
       used,
       Map.unmodifiable(
-        targetUses.map((id, targets) => MapEntry(id, targets.length)),
+        targetReferences.map((id, targets) => MapEntry(id, targets.length)),
+      ),
+      Map.unmodifiable(
+        targetReferences.map(
+          (id, targets) => MapEntry(
+            id,
+            List<IscsiAuthTargetReference>.unmodifiable(targets.values),
+          ),
+        ),
       ),
       Set.unmodifiable(missingIds),
       chapWithoutId,
       noChapWithId,
     );
   }
+}
+
+final class IscsiAuthTargetReference {
+  const IscsiAuthTargetReference(this.id, this.name);
+
+  final int id;
+  final String name;
 }
 
 class IscsiAuthUsageChart extends StatelessWidget {
