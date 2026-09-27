@@ -359,6 +359,7 @@ void main() {
     ('nvmet.host_subsys.delete', NvmePage),
     ('nvmet.host_subsys.create', NvmePage),
     ('nvmet.host.delete', NvmePage),
+    ('nvmet.port_subsys.delete', NvmePage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -777,6 +778,16 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
+  testWidgets('NVMe port unmap generic route is blocked despite metadata', (
+    tester,
+  ) async {
+    final (_, api) = await _pump(tester, _page('nvmet.port_subsys.delete'));
+    expect(api.adminCatalog.method('nvmet.port_subsys.delete'), isNotNull);
+    expect(find.text('This action is unavailable'), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
+    expect(api.requests, isEmpty);
+  });
+
   testWidgets('directory and review fit 320px with large text', (tester) async {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
@@ -1004,6 +1015,9 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       'nvmet.host.delete': _metadata([
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
         {'_name_': 'options', '_required_': false, 'type': 'object'},
+      ]),
+      'nvmet.port_subsys.delete': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
       ]),
       // Synthetic generic-form fixture retained on a different NVMe method;
       // subsystem creation now has a dedicated reviewed workflow.

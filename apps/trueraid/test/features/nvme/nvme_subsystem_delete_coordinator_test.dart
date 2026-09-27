@@ -11,6 +11,7 @@ import 'package:trueraid/features/nvme/nvme_subsystem_restrict_coordinator.dart'
 import 'package:trueraid/features/nvme/nvme_subsystem_restrict_editor.dart';
 import 'package:trueraid/features/nvme/nvme_host_access_revoke_editor.dart';
 import 'package:trueraid/features/nvme/nvme_host_delete_editor.dart';
+import 'package:trueraid/features/nvme/nvme_port_access_revoke_editor.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
@@ -53,6 +54,7 @@ class _Fake
         'nvmet.subsys.update': _method(),
         'nvmet.host_subsys.delete': _method(),
         'nvmet.host.delete': _method(),
+        'nvmet.port_subsys.delete': _method(),
       },
     );
   }
@@ -63,7 +65,12 @@ class _Fake
   final calls = <AdminRequest>[];
   int hostReads = 0;
   final subsystems = <Map<String, Object?>>[
-    {'id': 1, 'name': 'empty', 'allow_any_host': false},
+    {
+      'id': 1,
+      'name': 'empty',
+      'subnqn': 'nqn.2026-09.example:empty',
+      'allow_any_host': false,
+    },
     {'id': 2, 'name': 'other', 'allow_any_host': false},
   ];
   final ports = <Map<String, Object?>>[];
@@ -75,6 +82,8 @@ class _Fake
   bool unknownHostDelete = false;
   bool unknownOrphanDelete = false;
   bool driftAfterOrphanDelete = false;
+  bool unknownPortDelete = false;
+  bool driftAfterPortDelete = false;
   bool driftAfterHostDelete = false;
   bool driftAfterUpdate = false;
   bool nqnDriftAfterUpdate = false;
@@ -175,6 +184,19 @@ class _Fake
           });
         }
         return AdminCompleted(request, value: true);
+      case 'nvmet.port_subsys.delete':
+        if (unknownPortDelete) return AdminOutcomeUnknown(request);
+        portMappings.removeWhere(
+          (row) => row['id'] == request.arguments.single,
+        );
+        if (driftAfterPortDelete) {
+          subsystems.add({
+            'id': 4,
+            'name': 'other-admin',
+            'allow_any_host': false,
+          });
+        }
+        return AdminCompleted(request, value: true);
       default:
         throw StateError('Unexpected fake call');
     }
@@ -225,6 +247,14 @@ class _Harness {
       isCurrent: () => current,
       now: () => clock,
     );
+    portRevokeCoordinator = NvmePortAccessRevokeCoordinator(
+      session: session,
+      api: api,
+      hostsApi: api,
+      lock: ServerOperationLock(),
+      isCurrent: () => current,
+      now: () => clock,
+    );
   }
 
   final _Fake api;
@@ -233,6 +263,7 @@ class _Harness {
   late final NvmeSubsystemRestrictCoordinator restrictCoordinator;
   late final NvmeHostAccessRevokeCoordinator hostRevokeCoordinator;
   late final NvmeHostDeleteCoordinator hostDeleteCoordinator;
+  late final NvmePortAccessRevokeCoordinator portRevokeCoordinator;
   bool current = true;
   DateTime clock = DateTime.utc(2026);
   int get writes => api.calls
@@ -246,6 +277,9 @@ class _Harness {
       .length;
   int get hostDeletes =>
       api.calls.where((call) => call.method.name == 'nvmet.host.delete').length;
+  int get portRevokes => api.calls
+      .where((call) => call.method.name == 'nvmet.port_subsys.delete')
+      .length;
 }
 
 void main() {
@@ -900,4 +934,138 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  test('port association removal reads back only the one mapping', () async {
+    final h = _Harness();
+    h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': true});
+    h.api.portMappings.add({
+      'id': 10,
+      'port': {'id': 7},
+      'subsys': {'id': 1},
+    });
+    h.api.namespaces.add({
+      'id': 11,
+      'nsid': 1,
+      'subsys': {'id': 1},
+      'device_type': 'ZVOL',
+      'enabled': true,
+      'locked': false,
+    });
+    final review = await h.portRevokeCoordinator.prepare(10);
+    expect(review.namespaceCount, 1);
+    expect(review.otherPortCount, 0);
+    expect(
+      review.confirmation,
+      'UNMAP NVME PORT 7 FROM SUBSYSTEM 1 MAPPING 10',
+    );
+    expect(h.portRevokes, 0);
+    final result = await h.portRevokeCoordinator.execute(
+      review,
+      review.confirmation,
+    );
+    expect(result.outcome, NvmePortRevokeOutcome.completed);
+    expect(h.portRevokes, 1);
+    expect(h.api.calls[8].arguments, [10]);
+    expect(h.api.portMappings, isEmpty);
+    expect(h.api.hostReads, 3);
+  });
+
+  test(
+    'missing mapping, wrong phrase and dependency drift prevent unmap',
+    () async {
+      final missing = _Harness();
+      await expectLater(
+        missing.portRevokeCoordinator.prepare(10),
+        throwsStateError,
+      );
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': true});
+      h.api.portMappings.add({
+        'id': 10,
+        'port': {'id': 7},
+        'subsys': {'id': 1},
+      });
+      final first = await h.portRevokeCoordinator.prepare(10);
+      expect(
+        (await h.portRevokeCoordinator.execute(first, 'wrong')).outcome,
+        NvmePortRevokeOutcome.rejected,
+      );
+      final second = await h.portRevokeCoordinator.prepare(10);
+      h.api.ports.first['enabled'] = false;
+      expect(
+        (await h.portRevokeCoordinator.execute(
+          second,
+          second.confirmation,
+        )).outcome,
+        NvmePortRevokeOutcome.rejected,
+      );
+      expect(h.portRevokes, 0);
+    },
+  );
+
+  test('ambiguous port unmap and divergent readback fence edits', () async {
+    for (final drift in [false, true]) {
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': true});
+      h.api.portMappings.add({
+        'id': 10,
+        'port': {'id': 7},
+        'subsys': {'id': 1},
+      });
+      final review = await h.portRevokeCoordinator.prepare(10);
+      h.api.unknownPortDelete = !drift;
+      h.api.driftAfterPortDelete = drift;
+      final result = await h.portRevokeCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmePortRevokeOutcome.unknown);
+      expect(h.portRevokes, 1);
+      expect(h.portRevokeCoordinator.locked, true);
+      expect(NvmeWriteFence.isUncertain(h.session), true);
+    }
+  });
+
+  testWidgets('port unmap editor shows impact and requires exact phrase', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': true});
+    h.api.portMappings.add({
+      'id': 10,
+      'port': {'id': 7},
+      'subsys': {'id': 1},
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: NvmePortAccessRevokeEditor()),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(find.byKey(const Key('nvme-port-revoke-id')), '10');
+    await tester.tap(find.byKey(const Key('nvme-port-revoke-review')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('port #7'), findsOneWidget);
+    expect(find.textContaining('nqn.2026-09.example:empty'), findsOneWidget);
+    expect(find.textContaining('private-key'), findsNothing);
+    expect(h.portRevokes, 0);
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-revoke-confirmation')),
+      'UNMAP NVME PORT 7 FROM SUBSYSTEM 1 MAPPING 10',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-revoke-submit')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-revoke-submit')));
+    await tester.pumpAndSettle();
+    expect(h.portRevokes, 1);
+    expect(tester.takeException(), isNull);
+  });
 }

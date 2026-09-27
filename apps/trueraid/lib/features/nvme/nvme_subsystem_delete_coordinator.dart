@@ -869,3 +869,304 @@ String _proofWithoutHost(_Snapshot snapshot, int hostId) => _proof(
     ),
   ),
 );
+
+final nvmePortAccessRevokeCoordinatorProvider =
+    Provider<NvmePortAccessRevokeCoordinator?>((ref) {
+      final session = ref.watch(dashboardActiveSessionProvider);
+      final repository = session?.repository;
+      if (session?.endpoint == null ||
+          repository is! AuthenticatedAdminSession ||
+          repository is! AuthenticatedNvmeHostSession) {
+        return null;
+      }
+      return NvmePortAccessRevokeCoordinator(
+        session: session!,
+        api: repository as AuthenticatedAdminSession,
+        hostsApi: repository as AuthenticatedNvmeHostSession,
+        lock: ref.read(serverOperationLockProvider),
+        isCurrent: () =>
+            identical(ref.read(dashboardActiveSessionProvider), session),
+      );
+    });
+
+enum NvmePortRevokeOutcome { completed, rejected, unknown }
+
+final class NvmePortRevokeResult {
+  const NvmePortRevokeResult(this.outcome, this.message);
+  final NvmePortRevokeOutcome outcome;
+  final String message;
+}
+
+final class NvmePortRevokeReview {
+  NvmePortRevokeReview._({
+    required this.endpoint,
+    required this.mappingId,
+    required this.portId,
+    required this.transport,
+    required this.subsystemId,
+    required this.subsystemName,
+    required this.subnqn,
+    required this.namespaceCount,
+    required this.otherPortCount,
+    required this.proof,
+    required this.issuedAt,
+  });
+  final String endpoint, transport, subsystemName, subnqn, proof;
+  final int mappingId, portId, subsystemId, namespaceCount, otherPortCount;
+  final DateTime issuedAt;
+  String get confirmation =>
+      'UNMAP NVME PORT $portId FROM SUBSYSTEM $subsystemId MAPPING $mappingId';
+}
+
+/// Removes one reviewed port association. This may disconnect clients. Fresh
+/// sequential inventories cannot establish an atomic or live access state.
+final class NvmePortAccessRevokeCoordinator {
+  NvmePortAccessRevokeCoordinator({
+    required this.session,
+    required this.api,
+    required this.hostsApi,
+    required this.lock,
+    required this.isCurrent,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+
+  final AuthenticatedSession session;
+  final AuthenticatedAdminSession api;
+  final AuthenticatedNvmeHostSession hostsApi;
+  final ServerOperationLock lock;
+  final bool Function() isCurrent;
+  final DateTime Function() _now;
+  final _issued = <NvmePortRevokeReview>{};
+  bool _busy = false;
+
+  bool get locked => _busy || NvmeWriteFence.isUncertain(session);
+  bool get available =>
+      session.endpoint != null &&
+      api.adminCatalog.versionSupported &&
+      api.adminCatalog.method('nvmet.host.query') != null &&
+      api.adminCatalog.method('nvmet.host_subsys.query')?.supported == true &&
+      [
+        'nvmet.subsys.query',
+        'nvmet.port.query',
+        'nvmet.namespace.query',
+        'nvmet.port_subsys.query',
+        'nvmet.port_subsys.delete',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
+
+  void _guard() {
+    if (!isCurrent() || session.endpoint == null) {
+      throw StateError('The server connection changed.');
+    }
+    if (NvmeWriteFence.isUncertain(session)) {
+      throw StateError(
+        'An NVMe-oF change is unverified. Reconnect before editing.',
+      );
+    }
+  }
+
+  Future<_Snapshot> _snapshot() async {
+    final topology = await loadNvmeOverviewFromAdmin(
+      api: api,
+      isCurrent: () => isCurrent() && session.endpoint != null,
+    );
+    _guard();
+    final rows = await hostsApi.loadNvmeHostReferences();
+    _guard();
+    final hosts = NvmeHostOverview.parse(
+      hosts: rows.hosts,
+      mappings: rows.mappings,
+    );
+    if (topology.unresolvedReferences != 0 ||
+        hosts.unresolvedReferences(
+              topology.subsystems.map((s) => s.id).toSet(),
+            ) !=
+            0) {
+      throw StateError('NVMe-oF references are unresolved. Nothing was sent.');
+    }
+    return _Snapshot(topology, hosts);
+  }
+
+  (NvmePortMapping, NvmePort, NvmeSubsystem) _target(
+    _Snapshot snapshot,
+    int mappingId,
+  ) {
+    final mapping = snapshot.topology.portMappings
+        .where((m) => m.id == mappingId)
+        .singleOrNull;
+    if (mapping == null) {
+      throw StateError('Port association was not found. Nothing was sent.');
+    }
+    final port = snapshot.topology.ports
+        .where((p) => p.id == mapping.portId)
+        .singleOrNull;
+    final subsystem = snapshot.topology.subsystems
+        .where((s) => s.id == mapping.subsystemId)
+        .singleOrNull;
+    if (port == null || subsystem == null || subsystem.subnqn == null) {
+      throw StateError(
+        'Port and subsystem identity must be complete. Nothing was sent.',
+      );
+    }
+    return (mapping, port, subsystem);
+  }
+
+  Future<NvmePortRevokeReview> prepare(int mappingId) async {
+    _guard();
+    if (!available || _busy || mappingId <= 0) {
+      throw StateError(
+        'Select a positive port association ID on a supported server. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    try {
+      final before = await _snapshot();
+      final (mapping, port, subsystem) = _target(before, mappingId);
+      final review = NvmePortRevokeReview._(
+        endpoint: session.endpoint!,
+        mappingId: mapping.id,
+        portId: port.id,
+        transport: port.transport,
+        subsystemId: subsystem.id,
+        subsystemName: subsystem.name,
+        subnqn: subsystem.subnqn!,
+        namespaceCount: before.topology.namespaces
+            .where((n) => n.subsystemId == subsystem.id)
+            .length,
+        otherPortCount: before.topology.portMappings
+            .where((m) => m.subsystemId == subsystem.id && m.id != mapping.id)
+            .length,
+        proof: _proof(before),
+        issuedAt: _now().toUtc(),
+      );
+      _issued.add(review);
+      return review;
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError(
+        'NVMe-oF port unmap preflight failed. Nothing was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  void cancel(NvmePortRevokeReview review) => _issued.remove(review);
+
+  Future<NvmePortRevokeResult> execute(
+    NvmePortRevokeReview review,
+    String confirmation,
+  ) async {
+    final issued = _issued.remove(review);
+    final now = _now().toUtc();
+    if (!issued ||
+        _busy ||
+        !isCurrent() ||
+        NvmeWriteFence.isUncertain(session) ||
+        review.endpoint != session.endpoint ||
+        confirmation != review.confirmation ||
+        now.isBefore(review.issuedAt) ||
+        now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+      return const NvmePortRevokeResult(
+        NvmePortRevokeOutcome.rejected,
+        'Review expired or confirmation did not match. Nothing was sent.',
+      );
+    }
+    final owner = lock.acquire();
+    if (owner == null) {
+      return const NvmePortRevokeResult(
+        NvmePortRevokeOutcome.rejected,
+        'Another server operation is in progress. Nothing was sent.',
+      );
+    }
+    _busy = true;
+    var sent = false;
+    try {
+      final before = await _snapshot();
+      final (mapping, port, subsystem) = _target(before, review.mappingId);
+      if (mapping.id != review.mappingId ||
+          port.id != review.portId ||
+          port.transport != review.transport ||
+          subsystem.id != review.subsystemId ||
+          subsystem.name != review.subsystemName ||
+          subsystem.subnqn != review.subnqn ||
+          _proof(before) != review.proof) {
+        return const NvmePortRevokeResult(
+          NvmePortRevokeOutcome.rejected,
+          'NVMe-oF configuration changed since review. Nothing was sent.',
+        );
+      }
+      final method = api.adminCatalog.method('nvmet.port_subsys.delete');
+      if (method == null || !method.supported) {
+        return const NvmePortRevokeResult(
+          NvmePortRevokeOutcome.rejected,
+          'Port association delete method is unavailable. Nothing was sent.',
+        );
+      }
+      sent = true;
+      final response = await api.invokeAdmin(
+        AdminRequest(method: method, arguments: [review.mappingId]),
+      );
+      if (response is AdminFailed &&
+          response.reason == AdminFailureReason.denied) {
+        return const NvmePortRevokeResult(
+          NvmePortRevokeOutcome.rejected,
+          'The server denied port unmapping. No change was confirmed.',
+        );
+      }
+      if (response is! AdminCompleted || response.value != true) {
+        return _unknown();
+      }
+      final after = await _snapshot();
+      if (after.topology.portMappings.any((m) => m.id == review.mappingId) ||
+          after.topology.portMappings.length !=
+              before.topology.portMappings.length - 1 ||
+          _proof(after) != _proofWithoutPortMapping(before, review.mappingId)) {
+        return _unknown();
+      }
+      return NvmePortRevokeResult(
+        NvmePortRevokeOutcome.completed,
+        'Port association #${review.mappingId} is absent in a fresh read. Live client disconnection and other ports were not tested.',
+      );
+    } on Object {
+      return sent
+          ? _unknown()
+          : const NvmePortRevokeResult(
+              NvmePortRevokeOutcome.rejected,
+              'NVMe-oF port unmap preflight failed. Nothing was sent.',
+            );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  NvmePortRevokeResult _unknown() {
+    NvmeWriteFence.markUncertain(session);
+    _issued.clear();
+    return const NvmePortRevokeResult(
+      NvmePortRevokeOutcome.unknown,
+      'Port access may have changed. Do not retry; inspect the original server and reconnect.',
+    );
+  }
+}
+
+String _proofWithoutPortMapping(_Snapshot snapshot, int mappingId) => _proof(
+  _Snapshot(
+    NvmeOverview(
+      subsystems: snapshot.topology.subsystems,
+      ports: snapshot.topology.ports,
+      namespaces: snapshot.topology.namespaces,
+      portMappings: snapshot.topology.portMappings
+          .where((m) => m.id != mappingId)
+          .toList(),
+    ),
+    snapshot.hosts,
+  ),
+);
