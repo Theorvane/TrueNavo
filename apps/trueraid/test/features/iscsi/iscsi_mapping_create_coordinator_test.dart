@@ -59,6 +59,8 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         'iscsi.targetextent.query': _method(),
         'iscsi.targetextent.create': _method(create: true),
         'iscsi.targetextent.update': _method(update: true),
+        'iscsi.portal.query': _method(),
+        'iscsi.initiator.query': _method(),
         'service.query': _method(),
         'iscsi.global.sessions': _method(),
       },
@@ -85,11 +87,29 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
       'locked': false,
     },
   ];
+  final portals = <Map<String, Object?>>[
+    {
+      'id': 2,
+      'tag': 1,
+      'comment': '',
+      'listen': [
+        {'ip': '192.0.2.10', 'port': 3260},
+      ],
+    },
+  ];
+  final initiators = <Map<String, Object?>>[
+    {
+      'id': 4,
+      'comment': '',
+      'initiators': ['iqn.2026-09.example:client'],
+    },
+  ];
   final mappings = <Map<String, Object?>>[];
   final calls = <AdminRequest>[];
   bool sessions = false;
   bool unknown = false;
   bool mutateTarget = false;
+  bool mutatePortal = false;
   String state = 'STOPPED';
 
   @override
@@ -105,6 +125,16 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         return AdminCompleted(
           request,
           value: [for (final row in extents) Map<String, Object?>.from(row)],
+        );
+      case 'iscsi.portal.query':
+        return AdminCompleted(
+          request,
+          value: [for (final row in portals) Map<String, Object?>.from(row)],
+        );
+      case 'iscsi.initiator.query':
+        return AdminCompleted(
+          request,
+          value: [for (final row in initiators) Map<String, Object?>.from(row)],
         );
       case 'iscsi.targetextent.query':
         return AdminCompleted(
@@ -134,6 +164,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         };
         mappings.add(row);
         if (mutateTarget) targets.single['name'] = 'unexpected';
+        if (mutatePortal) portals.single['comment'] = 'unexpected';
         return AdminCompleted(request, value: Map<String, Object?>.from(row));
       case 'iscsi.targetextent.update':
         if (unknown) return AdminOutcomeUnknown(request);
@@ -181,7 +212,161 @@ class _Harness {
       .length;
 }
 
+void _bindTarget(_Harness h) {
+  h.api.targets.single['groups'] = [
+    {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+  ];
+}
+
 void main() {
+  test('maps initial LUN 0 on one explicit access-bound target', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    final review = await h.coordinator.prepareBound(3, 5);
+    expect(
+      review.confirmation,
+      'MAP ISCSI TARGET #3 PORTAL #2 INITIATOR #4 EXTENT #5 LUN 0',
+    );
+    expect(h.writes, 0);
+    final result = await h.coordinator.executeBound(
+      review,
+      review.confirmation,
+    );
+    expect(result.outcome, IscsiMappingCreateOutcome.completed);
+    expect(
+      h.api.calls
+          .singleWhere(
+            (call) => call.method.name == 'iscsi.targetextent.create',
+          )
+          .arguments,
+      [
+        {'target': 3, 'extent': 5, 'lunid': 0},
+      ],
+    );
+    expect(h.api.mappings.single['lunid'], 0);
+    expect(h.api.targets.single['groups'], [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ]);
+    expect(
+      (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+      IscsiMappingCreateOutcome.rejected,
+    );
+  });
+
+  test('bound mapping rejects CHAP, wildcard and existing LUNs', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 7},
+    ];
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    _bindTarget(h);
+    h.api.initiators.single['initiators'] = ['ALL'];
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    h.api.initiators.single['initiators'] = ['iqn.2026-09.example:client'];
+    (h.api.portals.single['listen'] as List).single['ip'] = '0.0.0.0';
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    (h.api.portals.single['listen'] as List).single['ip'] = '192.0.2.10';
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+    await expectLater(h.coordinator.prepareBound(3, 5), throwsStateError);
+    expect(h.writes, 0);
+  });
+
+  test(
+    'bound dependency drift rejects before write and unknown fences',
+    () async {
+      final h = _Harness();
+      _bindTarget(h);
+      var review = await h.coordinator.prepareBound(3, 5);
+      h.api.portals.single['comment'] = 'changed';
+      expect(
+        (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+        IscsiMappingCreateOutcome.rejected,
+      );
+      expect(h.writes, 0);
+      h.api.portals.single['comment'] = '';
+      review = await h.coordinator.prepareBound(3, 5);
+      h.api.unknown = true;
+      expect(
+        (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+        IscsiMappingCreateOutcome.unknown,
+      );
+      expect(h.coordinator.locked, isTrue);
+    },
+  );
+
+  test('bound mapping fences a changed portal after submission', () async {
+    final h = _Harness();
+    _bindTarget(h);
+    final review = await h.coordinator.prepareBound(3, 5);
+    h.api.mutatePortal = true;
+    expect(
+      (await h.coordinator.executeBound(review, review.confirmation)).outcome,
+      IscsiMappingCreateOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
+  });
+
+  testWidgets('bound mapping editor reviews the access group before submit', (
+    tester,
+  ) async {
+    final h = _Harness();
+    _bindTarget(h);
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingCreateEditor(overview: overview, bound: true),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-target')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#3 target-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-extent')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#5 disk-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-review')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.writes, 0);
+    await tester.enterText(
+      find.byKey(const Key('iscsi-mapping-bound-create-confirmation')),
+      'MAP ISCSI TARGET #3 PORTAL #2 INITIATOR #4 EXTENT #5 LUN 0',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-mapping-bound-create-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('iscsi-mapping-bound-create-submit')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.writes, 1);
+  });
+
   testWidgets(
     'renumber editor reviews and sends only after exact confirmation',
     (tester) async {

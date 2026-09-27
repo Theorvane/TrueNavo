@@ -42,14 +42,20 @@ final class IscsiMappingCreateReview {
     this.extentId,
     this.extentName,
     this.lun,
+    this.bound,
+    this.portalId,
+    this.initiatorId,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
   final int targetId, extentId, lun;
+  final bool bound;
+  final int? portalId, initiatorId;
   final DateTime issuedAt;
-  String get confirmation =>
-      'MAP ISCSI TARGET #$targetId EXTENT #$extentId LUN $lun';
+  String get confirmation => bound
+      ? 'MAP ISCSI TARGET #$targetId PORTAL #$portalId INITIATOR #$initiatorId EXTENT #$extentId LUN $lun'
+      : 'MAP ISCSI TARGET #$targetId EXTENT #$extentId LUN $lun';
 }
 
 final class IscsiMappingRenumberReview {
@@ -76,17 +82,25 @@ final class _Snapshot {
   const _Snapshot(
     this.targets,
     this.extents,
+    this.targetRows,
+    this.portalRows,
+    this.initiatorRows,
     this.availableTargets,
     this.availableExtents,
     this.mappings,
     this.targetDigest,
     this.extentDigest,
+    this.portalDigest,
+    this.initiatorDigest,
     this.service,
   );
   final Map<int, String> targets, extents;
+  final Map<int, Map> targetRows;
+  final Map<int, Map>? portalRows, initiatorRows;
   final Set<int> availableTargets, availableExtents;
   final List<List<int>> mappings;
   final String targetDigest, extentDigest;
+  final String? portalDigest, initiatorDigest;
   final IscsiServiceStatus service;
   String get proof => jsonEncode([
     targetDigest,
@@ -94,10 +108,12 @@ final class _Snapshot {
     mappings,
     service.state,
     service.enabledOnBoot,
+    if (portalDigest != null) portalDigest,
+    if (initiatorDigest != null) initiatorDigest,
   ]);
 }
 
-/// Maps one unused extent to an unbound iSCSI-only target at an explicit LUN.
+/// Maps one unused extent at a reviewed LUN, with a narrow bound-target path.
 /// Sequential reads cannot exclude another administrator's concurrent writes.
 final class IscsiMappingCreateCoordinator {
   IscsiMappingCreateCoordinator({
@@ -140,6 +156,12 @@ final class IscsiMappingCreateCoordinator {
         'service.query',
         'iscsi.global.sessions',
       ].every((name) => api.adminCatalog.method(name)?.supported == true);
+  bool get boundAvailable =>
+      available &&
+      [
+        'iscsi.portal.query',
+        'iscsi.initiator.query',
+      ].every((name) => api.adminCatalog.method(name)?.supported == true);
 
   AdminMethodSpec _method(String name) {
     final method = api.adminCatalog.method(name);
@@ -174,15 +196,19 @@ final class IscsiMappingCreateCoordinator {
     return result.value;
   }
 
-  ({Map<int, String> labels, Set<int> eligible, String digest}) _inventory(
-    Object? raw,
-    String kind,
-  ) {
+  ({
+    Map<int, String> labels,
+    Map<int, Map> byId,
+    Set<int> eligible,
+    String digest,
+  })
+  _inventory(Object? raw, String kind) {
     if (raw is! List || raw.length >= 100 || raw.any((item) => item is! Map)) {
       throw StateError('The $kind inventory is incomplete.');
     }
     final rows = <Map>[];
     final labels = <int, String>{};
+    final byId = <int, Map>{};
     final eligible = <int>{};
     for (final item in raw) {
       final row = item as Map;
@@ -218,6 +244,7 @@ final class IscsiMappingCreateCoordinator {
         }
       }
       labels[id] = name;
+      byId[id] = row;
       rows.add(row);
     }
     rows.sort((a, b) => (a['id'] as int).compareTo(b['id'] as int));
@@ -229,12 +256,42 @@ final class IscsiMappingCreateCoordinator {
     }
     return (
       labels: labels,
+      byId: byId,
       eligible: eligible,
       digest: sha256.convert(utf8.encode(encoded)).toString(),
     );
   }
 
-  Future<_Snapshot> _snapshot() async {
+  ({Map<int, Map> rows, String digest}) _accessInventory(
+    Object? raw,
+    String kind,
+  ) {
+    if (raw is! List || raw.length >= 100 || raw.any((item) => item is! Map)) {
+      throw StateError('The $kind inventory is incomplete.');
+    }
+    final rows = <int, Map>{};
+    for (final item in raw) {
+      final row = item as Map;
+      final id = row['id'];
+      if (id is! int || id < 1 || rows.containsKey(id)) {
+        throw StateError('The $kind inventory is incomplete.');
+      }
+      rows[id] = row;
+    }
+    final keys = rows.keys.toList()..sort();
+    final encoded = jsonEncode([for (final id in keys) rows[id]]);
+    if (encoded.length > 262144 ||
+        encoded.contains('[truncated]') ||
+        encoded.contains('[redacted]')) {
+      throw StateError('The $kind inventory is incomplete.');
+    }
+    return (
+      rows: rows,
+      digest: sha256.convert(utf8.encode(encoded)).toString(),
+    );
+  }
+
+  Future<_Snapshot> _snapshot({bool includeAccess = false}) async {
     final targetInventory = _inventory(
       await _read('iscsi.target.query', const []),
       'target',
@@ -269,6 +326,18 @@ final class IscsiMappingCreateCoordinator {
       mappings.add([id, target, extent, lun]);
     }
     mappings.sort((a, b) => a.first.compareTo(b.first));
+    final portals = includeAccess
+        ? _accessInventory(
+            await _read('iscsi.portal.query', const []),
+            'portal',
+          )
+        : null;
+    final initiators = includeAccess
+        ? _accessInventory(
+            await _read('iscsi.initiator.query', const []),
+            'initiator',
+          )
+        : null;
     final service = IscsiServiceStatus.parse(
       await _read('service.query', const [
         [
@@ -290,11 +359,16 @@ final class IscsiMappingCreateCoordinator {
     final snapshot = _Snapshot(
       targetInventory.labels,
       extentInventory.labels,
+      targetInventory.byId,
+      portals?.rows,
+      initiators?.rows,
       targetInventory.eligible,
       extentInventory.eligible,
       mappings,
       targetInventory.digest,
       extentInventory.digest,
+      portals?.digest,
+      initiators?.digest,
       service,
     );
     if (snapshot.proof.length > 32768) {
@@ -303,8 +377,103 @@ final class IscsiMappingCreateCoordinator {
     return snapshot;
   }
 
-  void _candidate(_Snapshot snapshot, int targetId, int extentId, int lun) {
-    if (!snapshot.availableTargets.contains(targetId)) {
+  ({int portalId, int initiatorId}) _boundAccess(
+    _Snapshot snapshot,
+    int targetId,
+  ) {
+    final target = snapshot.targetRows[targetId];
+    final groups = target?['groups'];
+    final networks = target?['auth_networks'];
+    if (target?['mode'] != 'ISCSI' ||
+        groups is! List ||
+        groups.length != 1 ||
+        groups.single is! Map ||
+        networks is! List ||
+        networks.isNotEmpty) {
+      throw StateError(
+        'Choose a target with one explicit no-CHAP access group.',
+      );
+    }
+    final group = groups.single as Map;
+    final portalId = group['portal'], initiatorId = group['initiator'];
+    if (group.keys.any(
+          (key) => !const {
+            'portal',
+            'initiator',
+            'authmethod',
+            'auth',
+          }.contains(key),
+        ) ||
+        portalId is! int ||
+        portalId < 1 ||
+        initiatorId is! int ||
+        initiatorId < 1 ||
+        group['authmethod'] != 'NONE' ||
+        group['auth'] != null) {
+      throw StateError(
+        'Choose a target with one explicit no-CHAP access group.',
+      );
+    }
+    final portal = snapshot.portalRows?[portalId];
+    final initiator = snapshot.initiatorRows?[initiatorId];
+    final listeners = portal?['listen'];
+    final names = initiator?['initiators'];
+    if (listeners is! List ||
+        listeners.length != 1 ||
+        listeners.single is! Map ||
+        names is! List ||
+        names.isEmpty ||
+        names.length > 10 ||
+        names.any(
+          (name) =>
+              name is! String ||
+              name.length > 223 ||
+              !RegExp(r'^(iqn\.|eui\.|naa\.)[a-z0-9.:-]+$').hasMatch(name),
+        ) ||
+        names.cast<String>().toSet().length != names.length) {
+      throw StateError(
+        'The portal or explicit initiator inventory is incomplete.',
+      );
+    }
+    final listener = listeners.single as Map;
+    final ip = listener['ip'], port = listener['port'];
+    if (ip is! String ||
+        !_explicitIpv4(ip) ||
+        port is! int ||
+        port < 1 ||
+        port > 65535) {
+      throw StateError('Choose a portal with one explicit IPv4 listener.');
+    }
+    return (portalId: portalId, initiatorId: initiatorId);
+  }
+
+  bool _explicitIpv4(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) return false;
+    final numbers = <int>[];
+    for (final part in parts) {
+      if (!RegExp(r'^(0|[1-9][0-9]{0,2})$').hasMatch(part)) return false;
+      final value = int.parse(part);
+      if (value > 255) return false;
+      numbers.add(value);
+    }
+    return numbers[0] != 0 &&
+        numbers[0] != 127 &&
+        numbers[0] < 224 &&
+        numbers[3] != 0 &&
+        numbers[3] != 255;
+  }
+
+  void _candidate(
+    _Snapshot snapshot,
+    int targetId,
+    int extentId,
+    int lun, {
+    bool bound = false,
+  }) {
+    if (bound) {
+      _boundAccess(snapshot, targetId);
+    } else if (!snapshot.availableTargets.contains(targetId)) {
       throw StateError('Only an unbound iSCSI-only target is supported.');
     }
     if (!snapshot.availableExtents.contains(extentId)) {
@@ -317,7 +486,8 @@ final class IscsiMappingCreateCoordinator {
         .where((mapping) => mapping[1] == targetId)
         .toList();
     final usedLuns = targetMappings.map((mapping) => mapping[3]).toSet();
-    if (targetMappings.length >= 32 ||
+    if ((bound && targetMappings.isNotEmpty) ||
+        targetMappings.length >= 32 ||
         targetMappings.any((mapping) => mapping[3] > 31) ||
         usedLuns.length != targetMappings.length ||
         (targetMappings.isEmpty && lun != 0) ||
@@ -523,9 +693,19 @@ final class IscsiMappingCreateCoordinator {
     int targetId,
     int extentId, {
     int lun = 0,
+  }) => _prepare(targetId, extentId, lun: lun, bound: false);
+
+  Future<IscsiMappingCreateReview> prepareBound(int targetId, int extentId) =>
+      _prepare(targetId, extentId, lun: 0, bound: true);
+
+  Future<IscsiMappingCreateReview> _prepare(
+    int targetId,
+    int extentId, {
+    required int lun,
+    required bool bound,
   }) async {
     _guard();
-    if (!available ||
+    if (!(bound ? boundAvailable : available) ||
         _busy ||
         targetId < 1 ||
         extentId < 1 ||
@@ -541,8 +721,9 @@ final class IscsiMappingCreateCoordinator {
     _issued.clear();
     _renumberIssued.clear();
     try {
-      final snapshot = await _snapshot();
-      _candidate(snapshot, targetId, extentId, lun);
+      final snapshot = await _snapshot(includeAccess: bound);
+      _candidate(snapshot, targetId, extentId, lun, bound: bound);
+      final access = bound ? _boundAccess(snapshot, targetId) : null;
       final review = IscsiMappingCreateReview._(
         session.endpoint!,
         targetId,
@@ -550,6 +731,9 @@ final class IscsiMappingCreateCoordinator {
         extentId,
         snapshot.extents[extentId]!,
         lun,
+        bound,
+        access?.portalId,
+        access?.initiatorId,
         snapshot.proof,
         _now().toUtc(),
       );
@@ -570,10 +754,22 @@ final class IscsiMappingCreateCoordinator {
   Future<IscsiMappingCreateResult> execute(
     IscsiMappingCreateReview review,
     String confirmation,
-  ) async {
+  ) => _execute(review, confirmation, bound: false);
+
+  Future<IscsiMappingCreateResult> executeBound(
+    IscsiMappingCreateReview review,
+    String confirmation,
+  ) => _execute(review, confirmation, bound: true);
+
+  Future<IscsiMappingCreateResult> _execute(
+    IscsiMappingCreateReview review,
+    String confirmation, {
+    required bool bound,
+  }) async {
     final issued = _issued.remove(review);
     final now = _now().toUtc();
     if (!issued ||
+        review.bound != bound ||
         _busy ||
         !isCurrent() ||
         IscsiWriteFence.isUncertain(session) ||
@@ -596,8 +792,24 @@ final class IscsiMappingCreateCoordinator {
     _busy = true;
     var sent = false;
     try {
-      final before = await _snapshot();
-      _candidate(before, review.targetId, review.extentId, review.lun);
+      final before = await _snapshot(includeAccess: bound);
+      _candidate(
+        before,
+        review.targetId,
+        review.extentId,
+        review.lun,
+        bound: bound,
+      );
+      if (bound) {
+        final access = _boundAccess(before, review.targetId);
+        if (access.portalId != review.portalId ||
+            access.initiatorId != review.initiatorId) {
+          return const IscsiMappingCreateResult(
+            IscsiMappingCreateOutcome.rejected,
+            'The access group changed since review. Nothing was sent.',
+          );
+        }
+      }
       if (before.proof != review.proof) {
         return const IscsiMappingCreateResult(
           IscsiMappingCreateOutcome.rejected,
@@ -637,13 +849,15 @@ final class IscsiMappingCreateCoordinator {
       if (before.mappings.any((mapping) => mapping[0] == newId)) {
         return _unknown();
       }
-      final after = await _snapshot();
+      final after = await _snapshot(includeAccess: bound);
       final expected = <List<int>>[
         ...before.mappings,
         [newId, review.targetId, review.extentId, review.lun],
       ]..sort((a, b) => a.first.compareTo(b.first));
       if (after.targetDigest != before.targetDigest ||
           after.extentDigest != before.extentDigest ||
+          after.portalDigest != before.portalDigest ||
+          after.initiatorDigest != before.initiatorDigest ||
           jsonEncode(after.mappings) != jsonEncode(expected) ||
           after.service.state != before.service.state ||
           after.service.enabledOnBoot != before.service.enabledOnBoot) {
@@ -651,7 +865,7 @@ final class IscsiMappingCreateCoordinator {
       }
       return IscsiMappingCreateResult(
         IscsiMappingCreateOutcome.completed,
-        'Only the reviewed LUN ${review.lun} mapping appeared; target and extent settings were unchanged.',
+        'Only the reviewed LUN ${review.lun} mapping appeared; target, extent and access settings were unchanged.',
       );
     } on Object {
       return sent
