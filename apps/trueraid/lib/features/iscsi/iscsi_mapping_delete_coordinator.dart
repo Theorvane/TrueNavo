@@ -43,14 +43,18 @@ final class IscsiMappingDeleteReview {
     this.extentId,
     this.extentName,
     this.lun,
+    this.portalId,
+    this.initiatorId,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
   final int id, targetId, extentId, lun;
+  final int? portalId, initiatorId;
   final DateTime issuedAt;
-  String get confirmation =>
-      'UNMAP ISCSI LUN #$id TARGET #$targetId EXTENT #$extentId';
+  String get confirmation => portalId == null
+      ? 'UNMAP ISCSI LUN #$id TARGET #$targetId EXTENT #$extentId'
+      : 'UNMAP ISCSI LUN #$id TARGET #$targetId EXTENT #$extentId PORTAL #$portalId INITIATOR #$initiatorId';
 }
 
 final class _Mapping {
@@ -63,19 +67,27 @@ final class _Snapshot {
   const _Snapshot(
     this.targets,
     this.targetModes,
+    this.targetRows,
+    this.portalRows,
+    this.initiatorRows,
     this.extents,
     this.mappings,
     this.service,
     this.targetDigest,
     this.extentDigest,
+    this.portalDigest,
+    this.initiatorDigest,
   );
   final Map<int, String> targets, targetModes, extents;
+  final Map<int, Map> targetRows, portalRows, initiatorRows;
   final List<_Mapping> mappings;
   final IscsiServiceStatus service;
-  final String targetDigest, extentDigest;
+  final String targetDigest, extentDigest, portalDigest, initiatorDigest;
   String get proof => jsonEncode([
     targetDigest,
     extentDigest,
+    portalDigest,
+    initiatorDigest,
     for (final mapping in mappings) mapping.proof,
     service.state,
     service.enabledOnBoot,
@@ -112,6 +124,8 @@ final class IscsiMappingDeleteCoordinator {
       [
         'iscsi.target.query',
         'iscsi.extent.query',
+        'iscsi.portal.query',
+        'iscsi.initiator.query',
         'iscsi.targetextent.query',
         'iscsi.targetextent.delete',
         'service.query',
@@ -149,16 +163,20 @@ final class IscsiMappingDeleteCoordinator {
     return result.value;
   }
 
-  ({Map<int, String> labels, Map<int, String> modes, String digest}) _inventory(
-    Object? raw,
-    String kind,
-  ) {
+  ({
+    Map<int, String> labels,
+    Map<int, String> modes,
+    Map<int, Map> rows,
+    String digest,
+  })
+  _inventory(Object? raw, String kind) {
     if (raw is! List || raw.length >= 100 || raw.any((row) => row is! Map)) {
       throw StateError('The $kind inventory is incomplete.');
     }
     final rows = <Map>[];
     final labels = <int, String>{};
     final modes = <int, String>{};
+    final byId = <int, Map>{};
     for (final item in raw) {
       final row = item as Map;
       final id = row['id'], name = row['name'];
@@ -176,6 +194,7 @@ final class IscsiMappingDeleteCoordinator {
         throw StateError('The target inventory is incomplete.');
       }
       labels[id] = name;
+      byId[id] = row;
       if (kind == 'target') modes[id] = row['mode'] as String;
       rows.add(row);
     }
@@ -189,6 +208,36 @@ final class IscsiMappingDeleteCoordinator {
     return (
       labels: labels,
       modes: modes,
+      rows: byId,
+      digest: sha256.convert(utf8.encode(encoded)).toString(),
+    );
+  }
+
+  ({Map<int, Map> rows, String digest}) _accessInventory(
+    Object? raw,
+    String kind,
+  ) {
+    if (raw is! List || raw.length >= 100 || raw.any((row) => row is! Map)) {
+      throw StateError('The $kind inventory is incomplete.');
+    }
+    final rows = <int, Map>{};
+    for (final item in raw) {
+      final row = item as Map;
+      final id = row['id'];
+      if (id is! int || id < 1 || rows.containsKey(id)) {
+        throw StateError('The $kind inventory is incomplete.');
+      }
+      rows[id] = row;
+    }
+    final ids = rows.keys.toList()..sort();
+    final encoded = jsonEncode([for (final id in ids) rows[id]]);
+    if (encoded.length > 262144 ||
+        encoded.contains('[truncated]') ||
+        encoded.contains('[redacted]')) {
+      throw StateError('The $kind inventory is incomplete.');
+    }
+    return (
+      rows: rows,
       digest: sha256.convert(utf8.encode(encoded)).toString(),
     );
   }
@@ -196,9 +245,13 @@ final class IscsiMappingDeleteCoordinator {
   Future<_Snapshot> _snapshot() async {
     final targetRows = await _read('iscsi.target.query', const []);
     final extentRows = await _read('iscsi.extent.query', const []);
+    final portalRows = await _read('iscsi.portal.query', const []);
+    final initiatorRows = await _read('iscsi.initiator.query', const []);
     final rawMappings = await _read('iscsi.targetextent.query', const []);
     final targetInventory = _inventory(targetRows, 'target');
     final extentInventory = _inventory(extentRows, 'extent');
+    final portalInventory = _accessInventory(portalRows, 'portal');
+    final initiatorInventory = _accessInventory(initiatorRows, 'initiator');
     if (rawMappings is! List ||
         rawMappings.length >= 100 ||
         rawMappings.any((row) => row is! Map)) {
@@ -245,16 +298,67 @@ final class IscsiMappingDeleteCoordinator {
     final snapshot = _Snapshot(
       targetInventory.labels,
       targetInventory.modes,
+      targetInventory.rows,
+      portalInventory.rows,
+      initiatorInventory.rows,
       extentInventory.labels,
       mappings,
       service,
       targetInventory.digest,
       extentInventory.digest,
+      portalInventory.digest,
+      initiatorInventory.digest,
     );
     if (snapshot.proof.length > 32768) {
       throw StateError('The iSCSI dependency inventory is too large.');
     }
     return snapshot;
+  }
+
+  ({int? portalId, int? initiatorId}) _candidate(
+    _Snapshot snapshot,
+    _Mapping mapping,
+  ) {
+    if (snapshot.targetModes[mapping.targetId] != 'ISCSI') {
+      throw StateError('Only iSCSI-only targets are supported for this unmap.');
+    }
+    final siblings = snapshot.mappings
+        .where((row) => row.targetId == mapping.targetId)
+        .toList();
+    if (mapping.lun == 0 && siblings.length > 1) {
+      throw StateError('Remove additional LUNs before unmapping LUN 0.');
+    }
+    final target = snapshot.targetRows[mapping.targetId];
+    final groups = target?['groups'];
+    final networks = target?['auth_networks'];
+    if (groups is! List || networks is! List || networks.isNotEmpty) {
+      throw StateError('The target access configuration is unsupported.');
+    }
+    if (groups.isEmpty) return (portalId: null, initiatorId: null);
+    if (groups.length != 1 || groups.single is! Map) {
+      throw StateError('Only one explicit no-CHAP access group is supported.');
+    }
+    final group = groups.single as Map;
+    final portalId = group['portal'], initiatorId = group['initiator'];
+    if (group.keys.any(
+          (key) => !const {
+            'portal',
+            'initiator',
+            'authmethod',
+            'auth',
+          }.contains(key),
+        ) ||
+        group['authmethod'] != 'NONE' ||
+        group['auth'] != null ||
+        portalId is! int ||
+        portalId < 1 ||
+        initiatorId is! int ||
+        initiatorId < 1 ||
+        !snapshot.portalRows.containsKey(portalId) ||
+        !snapshot.initiatorRows.containsKey(initiatorId)) {
+      throw StateError('Only one explicit no-CHAP access group is supported.');
+    }
+    return (portalId: portalId, initiatorId: initiatorId);
   }
 
   Future<IscsiMappingDeleteReview> prepare(int id) async {
@@ -271,11 +375,7 @@ final class IscsiMappingDeleteCoordinator {
     try {
       final snapshot = await _snapshot();
       final mapping = snapshot.mapping(id);
-      if (snapshot.targetModes[mapping.targetId] != 'ISCSI') {
-        throw StateError(
-          'Only iSCSI-only targets are supported for this unmap.',
-        );
-      }
+      final access = _candidate(snapshot, mapping);
       final review = IscsiMappingDeleteReview._(
         session.endpoint!,
         id,
@@ -284,6 +384,8 @@ final class IscsiMappingDeleteCoordinator {
         mapping.extentId,
         snapshot.extents[mapping.extentId]!,
         mapping.lun,
+        access.portalId,
+        access.initiatorId,
         snapshot.proof,
         _now().toUtc(),
       );
@@ -332,10 +434,12 @@ final class IscsiMappingDeleteCoordinator {
     try {
       final before = await _snapshot();
       final mapping = before.mapping(review.id);
-      if (before.targetModes[mapping.targetId] != 'ISCSI') {
+      final access = _candidate(before, mapping);
+      if (access.portalId != review.portalId ||
+          access.initiatorId != review.initiatorId) {
         return const IscsiMappingDeleteResult(
           IscsiMappingDeleteOutcome.rejected,
-          'The target mode changed. Nothing was sent.',
+          'The target access changed. Nothing was sent.',
         );
       }
       if (before.proof != review.proof) {
@@ -365,6 +469,8 @@ final class IscsiMappingDeleteCoordinator {
       ];
       if (after.targetDigest != before.targetDigest ||
           after.extentDigest != before.extentDigest ||
+          after.portalDigest != before.portalDigest ||
+          after.initiatorDigest != before.initiatorDigest ||
           jsonEncode([for (final mapping in after.mappings) mapping.proof]) !=
               jsonEncode(expected) ||
           after.service.state != before.service.state ||

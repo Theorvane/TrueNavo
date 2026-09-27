@@ -105,7 +105,7 @@ class _IscsiMappingDeleteEditorState
     final mappings = widget.overview.mappings;
     return TdPanel(
       title: 'Remove a target–extent LUN mapping',
-      description: 'Unmaps only one association from an iSCSI-only target. It does not delete the target or backing extent. Stop iSCSI and disconnect all clients first.',
+      description: 'Unmaps only one association from an iSCSI-only target with no access group or one explicit no-CHAP group. Additional LUNs must be removed before LUN 0. It does not delete the target or backing extent. Stop iSCSI and disconnect all clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -159,6 +159,10 @@ class _IscsiMappingDeleteEditorState
             Text('Mapping #${review.id}, LUN ${review.lun}'),
             Text('Target #${review.targetId}: ${review.targetName}'),
             Text('Extent #${review.extentId}: ${review.extentName}'),
+            if (review.portalId != null)
+              Text(
+                'Portal #${review.portalId} · initiator #${review.initiatorId}',
+              ),
             const Text(
               'Only this association is removed with force=false. Target, extent, mapping, service and session inventories are checked again. Concurrent server changes are still possible.',
             ),

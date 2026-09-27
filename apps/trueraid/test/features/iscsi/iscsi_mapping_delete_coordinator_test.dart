@@ -35,6 +35,8 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
       metadata: {
         'iscsi.target.query': _method(),
         'iscsi.extent.query': _method(),
+        'iscsi.portal.query': _method(),
+        'iscsi.initiator.query': _method(),
         'iscsi.targetextent.query': _method(),
         'iscsi.targetextent.delete': _method(delete: true),
         'service.query': _method(),
@@ -71,13 +73,30 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
   ];
   final mappings = <Map<String, Object?>>[
     {'id': 7, 'target': 3, 'extent': 5, 'lunid': 0},
-    {'id': 8, 'target': 3, 'extent': 6, 'lunid': 1},
+  ];
+  final portals = <Map<String, Object?>>[
+    {
+      'id': 2,
+      'tag': 1,
+      'comment': '',
+      'listen': [
+        {'ip': '192.0.2.10', 'port': 3260},
+      ],
+    },
+  ];
+  final initiators = <Map<String, Object?>>[
+    {
+      'id': 4,
+      'comment': '',
+      'initiators': ['iqn.2026-09.example:client'],
+    },
   ];
   final calls = <AdminRequest>[];
   String state = 'STOPPED';
   bool sessions = false;
   bool unknown = false;
   bool mutateTarget = false;
+  bool mutatePortal = false;
 
   @override
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
@@ -92,6 +111,16 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         return AdminCompleted(
           request,
           value: [for (final row in extents) Map<String, Object?>.from(row)],
+        );
+      case 'iscsi.portal.query':
+        return AdminCompleted(
+          request,
+          value: [for (final row in portals) Map<String, Object?>.from(row)],
+        );
+      case 'iscsi.initiator.query':
+        return AdminCompleted(
+          request,
+          value: [for (final row in initiators) Map<String, Object?>.from(row)],
         );
       case 'iscsi.targetextent.query':
         return AdminCompleted(
@@ -114,6 +143,7 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
         if (unknown) return AdminOutcomeUnknown(request);
         mappings.removeWhere((row) => row['id'] == request.arguments.first);
         if (mutateTarget) targets.single['name'] = 'unexpected';
+        if (mutatePortal) portals.single['comment'] = 'unexpected';
         return AdminCompleted(request, value: true);
       default:
         throw StateError('Unexpected fake call');
@@ -172,7 +202,7 @@ void main() {
             .arguments,
         [7, false],
       );
-      expect(h.api.mappings.map((row) => row['id']), [8]);
+      expect(h.api.mappings, isEmpty);
       expect(h.api.extents.length, 2);
       expect(
         (await h.coordinator.execute(review, review.confirmation)).outcome,
@@ -195,6 +225,76 @@ void main() {
     h.api.extents.removeAt(0);
     await expectLater(h.coordinator.prepare(7), throwsStateError);
     expect(h.writes, 0);
+  });
+
+  test('additional LUN must be removed before LUN zero', () async {
+    final h = _Harness();
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 6, 'lunid': 1});
+    await expectLater(h.coordinator.prepare(7), throwsStateError);
+    final review = await h.coordinator.prepare(8);
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      IscsiMappingDeleteOutcome.completed,
+    );
+    expect(h.api.mappings.single['lunid'], 0);
+  });
+
+  test('access-bound LUN unmap reviews portal and initiator', () async {
+    final h = _Harness();
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final review = await h.coordinator.prepare(7);
+    expect(
+      review.confirmation,
+      'UNMAP ISCSI LUN #7 TARGET #3 EXTENT #5 PORTAL #2 INITIATOR #4',
+    );
+    expect(review.proof, isNot(contains('iqn.2026-09.example:client')));
+    expect(h.writes, 0);
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      IscsiMappingDeleteOutcome.completed,
+    );
+    expect(
+      h.api.calls
+          .singleWhere(
+            (call) => call.method.name == 'iscsi.targetextent.delete',
+          )
+          .arguments,
+      [7, false],
+    );
+  });
+
+  test('bound unmap blocks CHAP and prewrite access drift', () async {
+    final h = _Harness();
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'CHAP', 'auth': 1},
+    ];
+    await expectLater(h.coordinator.prepare(7), throwsStateError);
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final review = await h.coordinator.prepare(7);
+    h.api.portals.single['comment'] = 'changed';
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      IscsiMappingDeleteOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+
+  test('bound unmap postread access drift fences session', () async {
+    final h = _Harness();
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final review = await h.coordinator.prepare(7);
+    h.api.mutatePortal = true;
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      IscsiMappingDeleteOutcome.unknown,
+    );
+    expect(h.coordinator.locked, isTrue);
   });
 
   test('wrong phrase, drift, expiry and session switch never write', () async {
@@ -291,6 +391,57 @@ void main() {
     await tester.enterText(
       find.byKey(const Key('iscsi-mapping-delete-confirmation')),
       'UNMAP ISCSI LUN #7 TARGET #3 EXTENT #5',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-mapping-delete-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-delete-submit')));
+    await tester.pumpAndSettle();
+    expect(h.writes, 1);
+  });
+
+  testWidgets('bound editor displays access IDs before unmapping', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.targets.single['groups'] = [
+      {'portal': 2, 'initiator': 4, 'authmethod': 'NONE', 'auth': null},
+    ];
+    final overview = IscsiOverview.parse(
+      portals: h.api.portals,
+      initiators: h.api.initiators,
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingDeleteEditor(overview: overview),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-delete-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('#7 target-a').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-delete-review')));
+    await tester.pumpAndSettle();
+    expect(find.text('Portal #2 · initiator #4'), findsOneWidget);
+    expect(h.writes, 0);
+    await tester.enterText(
+      find.byKey(const Key('iscsi-mapping-delete-confirmation')),
+      'UNMAP ISCSI LUN #7 TARGET #3 EXTENT #5 PORTAL #2 INITIATOR #4',
     );
     await tester.ensureVisible(
       find.byKey(const Key('iscsi-mapping-delete-submit')),
