@@ -324,6 +324,10 @@ String _proof(_Snapshot snapshot) {
               s.allowAnyHost,
               s.anaReported,
               s.ana,
+              s.piReported,
+              s.piEnable,
+              s.qidReported,
+              s.qidMax,
             ],
           )
           .toList()

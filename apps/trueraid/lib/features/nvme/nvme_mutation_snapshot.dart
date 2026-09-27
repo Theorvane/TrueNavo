@@ -55,6 +55,10 @@ final class NvmeMutationSnapshot {
                 s.allowAnyHost,
                 s.anaReported,
                 s.ana,
+                s.piReported,
+                s.piEnable,
+                s.qidReported,
+                s.qidMax,
               ],
             )
             .toList()

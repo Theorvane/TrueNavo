@@ -267,6 +267,22 @@ final class NvmeSubsystemRestrictCoordinator {
               before.topology.subsystems
                   .singleWhere((s) => s.id == review.id)
                   .ana ||
+          changed.single.piReported !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .piReported ||
+          changed.single.piEnable !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .piEnable ||
+          changed.single.qidReported !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .qidReported ||
+          changed.single.qidMax !=
+              before.topology.subsystems
+                  .singleWhere((s) => s.id == review.id)
+                  .qidMax ||
           changed.single.allowAnyHost ||
           after.topology.subsystems.length !=
               before.topology.subsystems.length ||
@@ -318,6 +334,10 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
               s.allowAnyHost,
               s.anaReported,
               s.ana,
+              s.piReported,
+              s.piEnable,
+              s.qidReported,
+              s.qidMax,
             ],
           )
           .toList()

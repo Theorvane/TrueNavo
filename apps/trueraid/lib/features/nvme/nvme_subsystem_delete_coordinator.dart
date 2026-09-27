@@ -291,6 +291,10 @@ String _proof(_Snapshot snapshot, {int? omitSubsystemId}) {
               s.allowAnyHost,
               s.anaReported,
               s.ana,
+              s.piReported,
+              s.piEnable,
+              s.qidReported,
+              s.qidMax,
             ],
           )
           .toList()

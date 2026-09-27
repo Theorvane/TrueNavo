@@ -129,9 +129,18 @@ class _Fake
           'subnqn': 'nqn.2026-09.example:finance',
           'allow_any_host': false,
           'ana': true,
+          'pi_enable': true,
+          'qid_max': 16,
           'serial': 'hidden-serial',
         },
-        {'id': 2, 'name': 'public', 'allow_any_host': true, 'ana': null},
+        {
+          'id': 2,
+          'name': 'public',
+          'allow_any_host': true,
+          'ana': null,
+          'pi_enable': null,
+          'qid_max': null,
+        },
       ],
       'nvmet.port.query' => [
         {
@@ -227,6 +236,25 @@ void main() {
       ]),
       isNull,
     );
+  });
+
+  test('subsystem projection rejects malformed PI and queue values', () {
+    const row = {'id': 1, 'name': 'test', 'allow_any_host': false};
+    expect(NvmeSubsystem.parse({...row, 'pi_enable': 'true'}), isNull);
+    expect(NvmeSubsystem.parse({...row, 'qid_max': -1}), isNull);
+    expect(NvmeSubsystem.parse({...row, 'qid_max': 2147483648}), isNull);
+    final absent = NvmeSubsystem.parse(row)!;
+    expect(absent.piReported, false);
+    expect(absent.qidReported, false);
+    final defaults = NvmeSubsystem.parse({
+      ...row,
+      'pi_enable': null,
+      'qid_max': null,
+    })!;
+    expect(defaults.piReported, true);
+    expect(defaults.qidReported, true);
+    expect(defaults.piEnable, isNull);
+    expect(defaults.qidMax, isNull);
   });
 
   testWidgets('service state is a separate selected read', (tester) async {
@@ -552,6 +580,8 @@ void main() {
         'subnqn',
         'allow_any_host',
         'ana',
+        'pi_enable',
+        'qid_max',
       ]);
       for (final call in fake.calls) {
         expect(call.arguments.first, isEmpty);
@@ -586,6 +616,20 @@ void main() {
             .value,
         0.5,
       );
+      expect(
+        find.textContaining(
+          'Protection information: 1 on · 0 off · 1 server default',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byKey(const Key('nvme-pi-enabled-ratio')),
+            )
+            .value,
+        0.5,
+      );
       expect(find.textContaining('private-address'), findsNothing);
       expect(find.textContaining('/mnt/private-backing'), findsNothing);
       expect(find.textContaining('hidden-serial'), findsNothing);
@@ -602,6 +646,10 @@ void main() {
       expect(find.text('Port #3 · TCP'), findsWidgets);
       expect(find.text('nqn.2026-09.example:finance'), findsOneWidget);
       expect(find.text('Configured on for this subsystem'), findsOneWidget);
+      expect(find.text('Protection information (PI)'), findsOneWidget);
+      expect(find.text('Configured on'), findsOneWidget);
+      expect(find.text('Maximum queue IDs'), findsOneWidget);
+      expect(find.text('16'), findsOneWidget);
       await tester.tap(find.byKey(const Key('nvme-refresh')));
       await tester.pumpAndSettle();
       expect(fake.calls.length, 8);

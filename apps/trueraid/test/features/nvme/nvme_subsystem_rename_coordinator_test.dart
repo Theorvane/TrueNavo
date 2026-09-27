@@ -56,6 +56,8 @@ class _Fake
       'subnqn': 'nqn.2026-09.example:stable',
       'allow_any_host': false,
       'ana': null,
+      'pi_enable': null,
+      'qid_max': null,
     },
     {'id': 2, 'name': 'other', 'allow_any_host': false},
   ];
@@ -63,6 +65,7 @@ class _Fake
   bool ambiguous = false;
   bool changeNqnAfterWrite = false;
   bool changeAnaAfterWrite = false;
+  bool changePiAfterWrite = false;
   bool attachHostAfterWrite = false;
   int hostReads = 0;
 
@@ -103,6 +106,9 @@ class _Fake
         }
         if (changeAnaAfterWrite) {
           row['ana'] = true;
+        }
+        if (changePiAfterWrite) {
+          row['pi_enable'] = true;
         }
         if (attachHostAfterWrite) {
           hostMappings.add({
@@ -266,6 +272,18 @@ void main() {
   test('ANA override drift after rename fences further edits', () async {
     final h = _Harness();
     h.api.changeAnaAfterWrite = true;
+    final review = await h.coordinator.prepare(1, 'new');
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmeRenameOutcome.unknown,
+    );
+    expect(h.writes, 1);
+    expect(h.coordinator.locked, true);
+  });
+
+  test('PI setting drift after rename fences further edits', () async {
+    final h = _Harness();
+    h.api.changePiAfterWrite = true;
     final review = await h.coordinator.prepare(1, 'new');
     expect(
       (await h.coordinator.execute(review, review.confirmation)).outcome,

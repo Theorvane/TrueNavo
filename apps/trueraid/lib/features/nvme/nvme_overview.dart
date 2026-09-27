@@ -62,10 +62,14 @@ final class NvmeSubsystem {
     this.id,
     this.name,
     this.allowAnyHost,
-    this.subnqn, [
+    this.subnqn, {
     this.ana,
     this.anaReported = false,
-  ]);
+    this.piEnable,
+    this.piReported = false,
+    this.qidMax,
+    this.qidReported = false,
+  });
   final int id;
   final String name;
   final bool allowAnyHost;
@@ -75,18 +79,28 @@ final class NvmeSubsystem {
   final bool? ana;
   final bool anaReported;
 
+  /// Null means server default only when the field was returned.
+  final bool? piEnable;
+  final bool piReported;
+  final int? qidMax;
+  final bool qidReported;
+
   static NvmeSubsystem? parse(Map row) {
     final id = _id(row['id']);
     final name = _label(row['name']);
     final allowAnyHost = row['allow_any_host'];
     final rawNqn = row['subnqn'];
     final ana = row['ana'];
+    final pi = row['pi_enable'];
+    final qid = row['qid_max'];
     final subnqn = rawNqn == null ? null : _nqn(rawNqn);
     if (id == null ||
         name == null ||
         allowAnyHost is! bool ||
         (rawNqn != null && subnqn == null) ||
-        (ana != null && ana is! bool)) {
+        (ana != null && ana is! bool) ||
+        (pi != null && pi is! bool) ||
+        (qid != null && (qid is! int || qid < 0 || qid > 2147483647))) {
       return null;
     }
     return NvmeSubsystem(
@@ -94,8 +108,12 @@ final class NvmeSubsystem {
       name,
       allowAnyHost,
       subnqn,
-      ana as bool?,
-      row.containsKey('ana'),
+      ana: ana as bool?,
+      anaReported: row.containsKey('ana'),
+      piEnable: pi as bool?,
+      piReported: row.containsKey('pi_enable'),
+      qidMax: qid as int?,
+      qidReported: row.containsKey('qid_max'),
     );
   }
 }
@@ -232,7 +250,7 @@ Future<NvmeOverview> loadNvmeOverviewFromAdmin({
     'nvmet.port_subsys.query',
   ];
   const fields = [
-    ['id', 'name', 'subnqn', 'allow_any_host', 'ana'],
+    ['id', 'name', 'subnqn', 'allow_any_host', 'ana', 'pi_enable', 'qid_max'],
     ['id', 'addr_trtype', 'enabled'],
     ['id', 'nsid', 'subsys.id', 'device_type', 'enabled', 'locked'],
     ['id', 'port.id', 'subsys.id'],

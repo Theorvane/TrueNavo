@@ -355,6 +355,16 @@ class _Content extends StatelessWidget {
         .where((s) => s.anaReported && s.ana == null)
         .length;
     final anaUnknown = value.subsystems.length - anaOn - anaOff - anaInherited;
+    final piOn = value.subsystems
+        .where((s) => s.piReported && s.piEnable == true)
+        .length;
+    final piOff = value.subsystems
+        .where((s) => s.piReported && s.piEnable == false)
+        .length;
+    final piDefault = value.subsystems
+        .where((s) => s.piReported && s.piEnable == null)
+        .length;
+    final piUnknown = value.subsystems.length - piOn - piOff - piDefault;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -401,6 +411,20 @@ class _Content extends StatelessWidget {
               ),
               const Text(
                 'Bar shows explicit overrides among reported ANA settings, not active paths or availability.',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Protection information: $piOn on · $piOff off · $piDefault server default · $piUnknown not returned',
+              ),
+              LinearProgressIndicator(
+                key: const Key('nvme-pi-enabled-ratio'),
+                value: piOn + piOff + piDefault == 0
+                    ? 0
+                    : piOn / (piOn + piOff + piDefault),
+                minHeight: 10,
+              ),
+              const Text(
+                'Bar shows configured PI on among reported settings, not verified data integrity.',
               ),
               if (value.unresolvedReferences > 0) ...[
                 const SizedBox(height: 12),
@@ -481,6 +505,27 @@ class _Content extends StatelessWidget {
                                   false => 'Configured off for this subsystem',
                                   null => 'Inherits global setting',
                                 },
+                        ),
+                      ),
+                      ListTile(
+                        title: const Text('Protection information (PI)'),
+                        subtitle: Text(
+                          !subsystem.piReported
+                              ? 'Not returned by this server'
+                              : switch (subsystem.piEnable) {
+                                  true => 'Configured on',
+                                  false => 'Configured off',
+                                  null => 'Server default',
+                                },
+                        ),
+                      ),
+                      ListTile(
+                        title: const Text('Maximum queue IDs'),
+                        subtitle: Text(
+                          !subsystem.qidReported
+                              ? 'Not returned by this server'
+                              : subsystem.qidMax?.toString() ??
+                                    'Server default',
                         ),
                       ),
                       for (final namespace in value.namespaces.where(

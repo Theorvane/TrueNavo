@@ -280,6 +280,10 @@ final class NvmeSubsystemAnaCoordinator {
           changed.single.allowAnyHost ||
           !changed.single.anaReported ||
           changed.single.ana != review.choice.wireValue ||
+          changed.single.piReported != target.piReported ||
+          changed.single.piEnable != target.piEnable ||
+          changed.single.qidReported != target.qidReported ||
+          changed.single.qidMax != target.qidMax ||
           after.topology.subsystems.length !=
               before.topology.subsystems.length ||
           after.proof(omitSubsystemId: review.id) !=
