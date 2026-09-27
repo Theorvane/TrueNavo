@@ -426,30 +426,13 @@ void main() {
           .value,
       0.5,
     );
-    expect(
-      find.text('ANA: 1 on · 0 off · 1 inherit · 0 not returned'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('PI: 1 on · 0 off · 1 server default · 0 not returned'),
-      findsOneWidget,
-    );
-    expect(
-      tester
-          .widget<LinearProgressIndicator>(
-            find.byKey(const Key('shares-nvme-ana-on-ratio')),
-          )
-          .value,
-      0.5,
-    );
-    expect(
-      tester
-          .widget<LinearProgressIndicator>(
-            find.byKey(const Key('shares-nvme-pi-on-ratio')),
-          )
-          .value,
-      0.5,
-    );
+    expect(find.text('ANA'), findsOneWidget);
+    expect(find.text('PI'), findsOneWidget);
+    expect(find.text('inherit: 1'), findsOneWidget);
+    expect(find.text('server default: 1'), findsOneWidget);
+    expect(find.text('on: 1'), findsNWidgets(2));
+    expect(find.byKey(const Key('shares-nvme-ana-donut')), findsOneWidget);
+    expect(find.byKey(const Key('shares-nvme-pi-donut')), findsOneWidget);
     expect(find.textContaining('private-address'), findsNothing);
     expect(find.textContaining('/nvme-secret-backing'), findsNothing);
     expect(h.nvmeReads, 1);
@@ -474,30 +457,11 @@ void main() {
     );
     addTearDown(h.container.dispose);
     await _pump(tester, h);
-    expect(
-      find.text('ANA: 0 on · 0 off · 0 inherit · 1 not returned'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('PI: 0 on · 0 off · 0 server default · 1 not returned'),
-      findsOneWidget,
-    );
-    expect(
-      tester
-          .widget<LinearProgressIndicator>(
-            find.byKey(const Key('shares-nvme-ana-on-ratio')),
-          )
-          .value,
-      0,
-    );
-    expect(
-      tester
-          .widget<LinearProgressIndicator>(
-            find.byKey(const Key('shares-nvme-pi-on-ratio')),
-          )
-          .value,
-      0,
-    );
+    expect(find.text('not returned: 1'), findsNWidgets(2));
+    expect(find.text('inherit: 0'), findsOneWidget);
+    expect(find.text('server default: 0'), findsOneWidget);
+    expect(find.byKey(const Key('shares-nvme-ana-donut')), findsOneWidget);
+    expect(find.byKey(const Key('shares-nvme-pi-donut')), findsOneWidget);
     expect(h.api.mutations, 0);
   });
   testWidgets('unavailable NVMe topology is unknown rather than zero', (
