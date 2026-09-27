@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 
 import 'nvme_overview.dart';
 
-/// Saved subsystem settings only. These rings do not attest client paths or
-/// actual data-integrity protection.
+/// Saved NVMe-oF inventory only. These rings do not attest client paths,
+/// listener availability or actual data-integrity protection.
 class NvmeSettingCharts extends StatelessWidget {
   const NvmeSettingCharts({
     required this.value,
@@ -37,6 +37,15 @@ class NvmeSettingCharts extends StatelessWidget {
     final piDefault = value.subsystems
         .where((s) => s.piReported && s.piEnable == null)
         .length;
+    final tcpPorts = value.ports.where((p) => p.transport == 'TCP').length;
+    final rdmaPorts = value.ports.where((p) => p.transport == 'RDMA').length;
+    final fcPorts = value.ports.where((p) => p.transport == 'FC').length;
+    final zvolNamespaces = value.namespaces
+        .where((n) => n.deviceType == 'ZVOL')
+        .length;
+    final fileNamespaces = value.namespaces
+        .where((n) => n.deviceType == 'FILE')
+        .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -47,6 +56,7 @@ class NvmeSettingCharts extends StatelessWidget {
             _SettingDonut(
               chartKey: Key('$keyPrefix-ana-donut'),
               title: 'ANA',
+              unit: 'subsystems',
               labels: const ['on', 'off', 'inherit', 'not returned'],
               counts: [
                 anaOn,
@@ -58,6 +68,7 @@ class NvmeSettingCharts extends StatelessWidget {
             _SettingDonut(
               chartKey: Key('$keyPrefix-pi-donut'),
               title: 'PI',
+              unit: 'subsystems',
               labels: const ['on', 'off', 'server default', 'not returned'],
               counts: [
                 piOn,
@@ -66,11 +77,25 @@ class NvmeSettingCharts extends StatelessWidget {
                 value.subsystems.length - piOn - piOff - piDefault,
               ],
             ),
+            _SettingDonut(
+              chartKey: Key('$keyPrefix-port-transport-donut'),
+              title: 'Port transports',
+              unit: 'ports',
+              labels: const ['TCP', 'RDMA', 'FC'],
+              counts: [tcpPorts, rdmaPorts, fcPorts],
+            ),
+            _SettingDonut(
+              chartKey: Key('$keyPrefix-namespace-type-donut'),
+              title: 'Namespace types',
+              unit: 'namespaces',
+              labels: const ['ZVOL', 'FILE'],
+              counts: [zvolNamespaces, fileNamespaces],
+            ),
           ],
         ),
         const SizedBox(height: 8),
         const Text(
-          'ANA and PI rings summarize saved settings, not listener health, client access or verified data protection.',
+          'Rings summarize returned saved configuration, including disabled ports and namespaces. They do not verify listener health, client access or data protection.',
         ),
       ],
     );
@@ -81,12 +106,14 @@ class _SettingDonut extends StatelessWidget {
   const _SettingDonut({
     required this.chartKey,
     required this.title,
+    required this.unit,
     required this.labels,
     required this.counts,
   });
 
   final Key chartKey;
   final String title;
+  final String unit;
   final List<String> labels;
   final List<int> counts;
 
@@ -112,8 +139,7 @@ class _SettingDonut extends StatelessWidget {
           Text(title, style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           Semantics(
-            label:
-                '$title saved settings among $total returned subsystems: $detail',
+            label: '$title among $total returned $unit: $detail',
             child: SizedBox.square(
               dimension: 112,
               child: CustomPaint(

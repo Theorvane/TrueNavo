@@ -618,6 +618,20 @@ void main() {
       );
       expect(find.byKey(const Key('nvme-ana-donut')), findsOneWidget);
       expect(find.byKey(const Key('nvme-pi-donut')), findsOneWidget);
+      expect(
+        find.byKey(const Key('nvme-port-transport-donut')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('nvme-namespace-type-donut')),
+        findsOneWidget,
+      );
+      expect(find.text('Port transports'), findsOneWidget);
+      expect(find.text('Namespace types'), findsOneWidget);
+      expect(find.text('TCP: 1'), findsOneWidget);
+      expect(find.text('RDMA: 0'), findsOneWidget);
+      expect(find.text('ZVOL: 1'), findsOneWidget);
+      expect(find.text('FILE: 0'), findsOneWidget);
       expect(find.text('ANA'), findsOneWidget);
       expect(find.text('PI'), findsOneWidget);
       expect(find.text('on: 1'), findsNWidgets(2));
@@ -681,6 +695,8 @@ void main() {
       expect(find.byKey(const Key('nvme-port-7')), findsOneWidget);
       expect(find.text('Port #7 · RDMA'), findsOneWidget);
       expect(find.text('Disabled · 0 subsystem associations'), findsOneWidget);
+      expect(find.text('TCP: 1'), findsOneWidget);
+      expect(find.text('RDMA: 1'), findsOneWidget);
       expect(find.textContaining('private-address'), findsNothing);
     },
   );

@@ -433,6 +433,17 @@ void main() {
     expect(find.text('on: 1'), findsNWidgets(2));
     expect(find.byKey(const Key('shares-nvme-ana-donut')), findsOneWidget);
     expect(find.byKey(const Key('shares-nvme-pi-donut')), findsOneWidget);
+    expect(
+      find.byKey(const Key('shares-nvme-port-transport-donut')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('shares-nvme-namespace-type-donut')),
+      findsOneWidget,
+    );
+    expect(find.text('TCP: 1'), findsOneWidget);
+    expect(find.text('ZVOL: 2'), findsOneWidget);
+    expect(find.text('FILE: 0'), findsOneWidget);
     expect(find.textContaining('private-address'), findsNothing);
     expect(find.textContaining('/nvme-secret-backing'), findsNothing);
     expect(h.nvmeReads, 1);
@@ -462,6 +473,16 @@ void main() {
     expect(find.text('server default: 0'), findsOneWidget);
     expect(find.byKey(const Key('shares-nvme-ana-donut')), findsOneWidget);
     expect(find.byKey(const Key('shares-nvme-pi-donut')), findsOneWidget);
+    expect(
+      find.byKey(const Key('shares-nvme-port-transport-donut')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('shares-nvme-namespace-type-donut')),
+      findsOneWidget,
+    );
+    expect(find.text('TCP: 0'), findsOneWidget);
+    expect(find.text('ZVOL: 0'), findsOneWidget);
     expect(h.api.mutations, 0);
   });
   testWidgets('unavailable NVMe topology is unknown rather than zero', (
