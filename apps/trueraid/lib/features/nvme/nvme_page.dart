@@ -8,6 +8,7 @@ import 'nvme_overview.dart';
 import 'nvme_subsystem_create_editor.dart';
 import 'nvme_subsystem_delete_editor.dart';
 import 'nvme_subsystem_restrict_editor.dart';
+import 'nvme_subsystem_rename_editor.dart';
 
 class NvmePage extends ConsumerStatefulWidget {
   const NvmePage({super.key});
@@ -121,6 +122,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeSubsystemDeleteEditor(),
                   const SizedBox(height: 20),
                   const NvmeSubsystemRestrictEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeSubsystemRenameEditor(),
                 ],
               ),
             ),
