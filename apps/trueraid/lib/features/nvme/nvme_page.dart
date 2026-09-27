@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 
+import '../dashboard/dashboard_controller.dart';
+import 'nvme_host_overview.dart';
 import 'nvme_overview.dart';
 import 'nvme_subsystem_create_editor.dart';
 
@@ -14,22 +16,38 @@ class NvmePage extends ConsumerStatefulWidget {
 
 class _NvmePageState extends ConsumerState<NvmePage> {
   final _filter = TextEditingController();
+  final _hostFilter = TextEditingController();
   NvmeOverview? _shown;
+  Object? _shownSession;
+  bool _showHosts = false;
 
   @override
   void dispose() {
     _filter.dispose();
+    _hostFilter.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(nvmeOverviewProvider);
+    final session = ref.watch(dashboardActiveSessionProvider);
+    if (!identical(session, _shownSession)) {
+      _shownSession = session;
+      _shown = null;
+      _showHosts = false;
+      _hostFilter.clear();
+    }
     final current = state.asData?.value;
     if (current != null && !identical(current, _shown)) {
       _shown = current;
       _filter.clear();
+      _hostFilter.clear();
+      _showHosts = false;
     }
+    final hostState = _showHosts && current != null
+        ? ref.watch(nvmeHostOverviewProvider)
+        : null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('NVMe-oF topology'),
@@ -39,7 +57,10 @@ class _NvmePageState extends ConsumerState<NvmePage> {
             tooltip: 'Reload NVMe-oF inventory',
             onPressed: state.isLoading
                 ? null
-                : () => ref.invalidate(nvmeOverviewProvider),
+                : () {
+                    setState(() => _showHosts = false);
+                    ref.invalidate(nvmeOverviewProvider);
+                  },
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -81,6 +102,17 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                     ),
                     _ => const Center(child: CircularProgressIndicator()),
                   },
+                  if (current != null) ...[
+                    const SizedBox(height: 20),
+                    _HostAccessPanel(
+                      topology: current,
+                      hostState: hostState,
+                      filter: _hostFilter,
+                      onChanged: () => setState(() {}),
+                      onLoad: () => setState(() => _showHosts = true),
+                      onReload: () => ref.invalidate(nvmeHostOverviewProvider),
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   const NvmeSubsystemCreateEditor(),
                 ],
@@ -89,6 +121,164 @@ class _NvmePageState extends ConsumerState<NvmePage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _HostAccessPanel extends StatelessWidget {
+  const _HostAccessPanel({
+    required this.topology,
+    required this.hostState,
+    required this.filter,
+    required this.onChanged,
+    required this.onLoad,
+    required this.onReload,
+  });
+
+  final NvmeOverview topology;
+  final AsyncValue<NvmeHostOverview>? hostState;
+  final TextEditingController filter;
+  final VoidCallback onChanged, onLoad, onReload;
+
+  @override
+  Widget build(BuildContext context) => TdPanel(
+    title: 'Host access configuration',
+    description: 'Load host identities only when needed. DH-CHAP keys are never requested. Saved associations do not prove a current session or client reachability.',
+    child: hostState == null
+        ? OutlinedButton(
+            key: const Key('nvme-host-load'),
+            onPressed: onLoad,
+            child: const Text('Load host access configuration'),
+          )
+        : switch (hostState!) {
+            AsyncData(:final value) => _HostAccessContent(
+              topology: topology,
+              value: value,
+              filter: filter,
+              onChanged: onChanged,
+              onReload: onReload,
+            ),
+            AsyncError() => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Host access inventory unavailable; counts are unknown, not zero.',
+                ),
+                OutlinedButton(
+                  onPressed: onReload,
+                  child: const Text('Retry host access read'),
+                ),
+              ],
+            ),
+            _ => const CircularProgressIndicator(),
+          },
+  );
+}
+
+class _HostAccessContent extends StatelessWidget {
+  const _HostAccessContent({
+    required this.topology,
+    required this.value,
+    required this.filter,
+    required this.onChanged,
+    required this.onReload,
+  });
+
+  final NvmeOverview topology;
+  final NvmeHostOverview value;
+  final TextEditingController filter;
+  final VoidCallback onChanged, onReload;
+
+  @override
+  Widget build(BuildContext context) {
+    final query = filter.text.trim().toLowerCase();
+    final visible = value.hosts
+        .where(
+          (host) =>
+              query.isEmpty ||
+              host.nqn.toLowerCase().contains(query) ||
+              host.id.toString() == query,
+        )
+        .toList();
+    final associatedHostIds = value.mappings.map((row) => row.hostId).toSet();
+    final associatedReturnedHosts = value.hosts
+        .where((host) => associatedHostIds.contains(host.id))
+        .length;
+    final unresolved = value.unresolvedReferences(
+      topology.subsystems.map((row) => row.id).toSet(),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '${value.hosts.length} hosts · ${value.mappings.length} host–subsystem associations',
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '$associatedReturnedHosts of ${value.hosts.length} hosts have a returned association',
+        ),
+        LinearProgressIndicator(
+          key: const Key('nvme-host-association-ratio'),
+          value: value.hosts.isEmpty
+              ? 0
+              : associatedReturnedHosts / value.hosts.length,
+          minHeight: 10,
+        ),
+        if (unresolved > 0) ...[
+          const SizedBox(height: 12),
+          Text(
+            '$unresolved host associations reference a host or subsystem not returned by these separate reads.',
+          ),
+        ],
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('nvme-host-filter'),
+          controller: filter,
+          decoration: const InputDecoration(
+            labelText: 'Find host NQN or exact ID',
+            prefixIcon: Icon(Icons.search),
+          ),
+          onChanged: (_) => onChanged(),
+        ),
+        Text('${visible.length} matching hosts'),
+        if (visible.length > 20)
+          const Text(
+            'Showing the first 20. Narrow the search to inspect others.',
+          ),
+        for (final host in visible.take(20))
+          Material(
+            type: MaterialType.transparency,
+            child: ExpansionTile(
+              key: Key('nvme-host-${host.id}'),
+              title: Text(host.nqn),
+              subtitle: Text(
+                'Host #${host.id} · ${value.mappings.where((row) => row.hostId == host.id).length} returned associations',
+              ),
+              children: [
+                for (final mapping in value.mappings.where(
+                  (row) => row.hostId == host.id,
+                ))
+                  ListTile(
+                    title: Text(
+                      topology.subsystems
+                              .where((row) => row.id == mapping.subsystemId)
+                              .map((row) => row.name)
+                              .firstOrNull ??
+                          'Subsystem #${mapping.subsystemId} not returned',
+                    ),
+                    subtitle: Text(
+                      'Association #${mapping.id} · subsystem #${mapping.subsystemId}',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        OutlinedButton(
+          key: const Key('nvme-host-refresh'),
+          onPressed: onReload,
+          child: const Text('Reload host access'),
+        ),
+      ],
     );
   }
 }

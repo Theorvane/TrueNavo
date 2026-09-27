@@ -116,6 +116,61 @@ void main() {
       );
     },
   );
+
+  test(
+    'NVMe host query selects public identities and strips DH-CHAP keys',
+    () async {
+      final wire = _Wire(advertiseNvme: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final rows = await repo.loadNvmeHostReferences();
+      expect(rows.hosts.single['hostnqn'], 'nqn.fixture:client');
+      expect(rows.hosts.single.containsKey('dhchap_key'), false);
+      expect(rows.mappings.single['host'], {'id': 3});
+      expect(rows.toString(), isNot(contains(_secret)));
+      final hostQuery = wire.requests.singleWhere(
+        (r) => r['method'] == 'nvmet.host.query',
+      );
+      final mappingQuery = wire.requests.singleWhere(
+        (r) => r['method'] == 'nvmet.host_subsys.query',
+      );
+      expect((hostQuery['params'] as List)[1], {
+        'select': ['id', 'hostnqn'],
+        'limit': 101,
+      });
+      expect((mappingQuery['params'] as List)[1], {
+        'select': ['id', 'host.id', 'subsys.id'],
+        'limit': 101,
+      });
+      expect(repo.adminCatalog.method('nvmet.host.query')?.supported, false);
+    },
+  );
+
+  test('unadvertised NVMe association method sends no host read', () async {
+    final wire = _Wire(advertiseNvme: true, advertiseNvmeMapping: false);
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    await expectLater(
+      repo.loadNvmeHostReferences(),
+      throwsA(isA<NvmeHostException>()),
+    );
+    expect(
+      wire.requests.where(
+        (r) => (r['method'] as String).startsWith('nvmet.host'),
+      ),
+      isEmpty,
+    );
+  });
 }
 
 final class _Connector implements RpcConnector {
@@ -126,8 +181,13 @@ final class _Connector implements RpcConnector {
 }
 
 final class _Wire implements RpcTransport {
-  _Wire({this.advertiseAuth = true});
+  _Wire({
+    this.advertiseAuth = true,
+    this.advertiseNvme = false,
+    this.advertiseNvmeMapping = true,
+  });
   final bool advertiseAuth;
+  final bool advertiseNvme, advertiseNvmeMapping;
   bool malformed = false;
   final _incoming = StreamController<String>();
   final requests = <Map<String, dynamic>>[];
@@ -157,6 +217,9 @@ final class _Wire implements RpcTransport {
             'downloadable': false,
             'roles': ['SHARING_ISCSI_AUTH_READ'],
           },
+        if (advertiseNvme) 'nvmet.host.query': _nvmeMetadata,
+        if (advertiseNvme && advertiseNvmeMapping)
+          'nvmet.host_subsys.query': _nvmeMetadata,
       },
       'iscsi.auth.query' =>
         malformed
@@ -175,6 +238,16 @@ final class _Wire implements RpcTransport {
                   'peersecret': _secret,
                 },
               ],
+      'nvmet.host.query' => [
+        {'id': 3, 'hostnqn': 'nqn.fixture:client', 'dhchap_key': _secret},
+      ],
+      'nvmet.host_subsys.query' => [
+        {
+          'id': 4,
+          'host': {'id': 3, 'dhchap_ctrl_key': _secret},
+          'subsys': {'id': 2},
+        },
+      ],
       _ => throw StateError('Unexpected fixture method'),
     };
     _incoming.add(
@@ -187,3 +260,16 @@ final class _Wire implements RpcTransport {
     if (!_incoming.isClosed) await _incoming.close();
   }
 }
+
+const _nvmeMetadata = <String, Object?>{
+  'accepts': <Object?>[],
+  'returns': [
+    <String, Object?>{'type': 'array'},
+  ],
+  'job': false,
+  'filterable': true,
+  'no_auth_required': false,
+  'uploadable': false,
+  'downloadable': false,
+  'roles': ['SHARING_NVME_TARGET_READ'],
+};

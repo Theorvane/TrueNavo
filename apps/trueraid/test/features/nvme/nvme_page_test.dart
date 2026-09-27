@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
 import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/nvme/nvme_overview.dart';
+import 'package:trueraid/features/nvme/nvme_host_overview.dart';
 import 'package:trueraid/features/nvme/nvme_page.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
@@ -14,6 +15,7 @@ const _names = [
   'nvmet.namespace.query',
   'nvmet.port_subsys.query',
 ];
+const _hostNames = ['nvmet.host.query', 'nvmet.host_subsys.query'];
 
 Map<String, Object?> _method() => {
   'accepts': <Object?>[],
@@ -31,19 +33,50 @@ Map<String, Object?> _method() => {
   'roles': ['READONLY_ADMIN'],
 };
 
-class _Fake implements SessionRepository, AuthenticatedAdminSession {
-  _Fake({this.supported = true}) {
+class _Fake
+    implements
+        SessionRepository,
+        AuthenticatedAdminSession,
+        AuthenticatedNvmeHostSession {
+  _Fake({this.supported = true, this.hostSupported = true}) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
       metadata: {
         for (final name in supported ? _names : _names.take(3)) name: _method(),
+        for (final name in hostSupported ? _hostNames : _hostNames.take(1))
+          name: _method(),
       },
     );
   }
   final bool supported;
+  final bool hostSupported;
   @override
   late final AdminCatalog adminCatalog;
   final calls = <AdminRequest>[];
+  final hostCalls = <String>[];
+
+  @override
+  Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    if (!hostSupported) throw const NvmeHostException();
+    hostCalls.addAll(_hostNames);
+    return NvmeHostPublicRows.project(
+      [
+        {
+          'id': 6,
+          'hostnqn': 'nqn.2026-09.example:alpha',
+          'dhchap_key': 'private-host-key',
+        },
+        {'id': 7, 'hostnqn': 'nqn.2026-09.example:beta'},
+      ],
+      [
+        {
+          'id': 8,
+          'host': {'id': 6, 'dhchap_ctrl_key': 'private-controller-key'},
+          'subsys': {'id': 1},
+        },
+      ],
+    );
+  }
 
   @override
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
@@ -94,6 +127,46 @@ class _Fake implements SessionRepository, AuthenticatedAdminSession {
 }
 
 void main() {
+  test('host projection is bounded and flags unresolved associations', () {
+    final overview = NvmeHostOverview.parse(
+      hosts: [
+        {'id': 1, 'hostnqn': 'nqn.example:one', 'dhchap_key': 'hidden'},
+      ],
+      mappings: [
+        {
+          'id': 2,
+          'host': {'id': 1},
+          'subsys': {'id': 4},
+        },
+        {
+          'id': 3,
+          'host': {'id': 9},
+          'subsys': {'id': 4},
+        },
+      ],
+    );
+    expect(overview.unresolvedReferences({4}), 1);
+    expect(overview.hosts.single.toString(), isNot(contains('hidden')));
+    expect(() => overview.hosts.clear(), throwsUnsupportedError);
+    expect(
+      () => NvmeHostOverview.parse(
+        hosts: List.generate(101, (i) => {'id': i + 1, 'hostnqn': 'nqn:$i'}),
+        mappings: [],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => NvmeHostOverview.parse(
+        hosts: [
+          {'id': 1, 'hostnqn': 'nqn:one'},
+          {'id': 1, 'hostnqn': 'nqn:two'},
+        ],
+        mappings: [],
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('projection rejects truncation and excludes backing details', () {
     final result = NvmeOverview.parse(
       subsystems: [
@@ -289,5 +362,94 @@ void main() {
     await tester.pumpAndSettle();
     expect(fake.calls, isEmpty);
     expect(find.textContaining('Counts are unknown, not zero'), findsOneWidget);
+  });
+
+  testWidgets('host access is opt-in, selected and secret-free', (
+    tester,
+  ) async {
+    final fake = _Fake();
+    final session = AuthenticatedSession(
+      profileId: 'fixture',
+      repository: fake,
+      availableMethodNames: _names.toSet(),
+      endpoint: 'wss://fixture.example/api/current',
+    );
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    tester.binding.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(
+      tester.binding.platformDispatcher.clearTextScaleFactorTestValue,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => session),
+        ],
+        child: MaterialApp(theme: TrueRAIDTheme.dark(), home: const NvmePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(fake.calls.map((call) => call.method.name), _names);
+    final load = find.byKey(const Key('nvme-host-load'));
+    await tester.ensureVisible(load);
+    await tester.tap(load);
+    await tester.pumpAndSettle();
+    expect(fake.calls.map((call) => call.method.name), _names);
+    expect(fake.hostCalls, _hostNames);
+    expect(
+      find.textContaining('2 hosts · 1 host–subsystem associations'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const Key('nvme-host-association-ratio')),
+          )
+          .value,
+      0.5,
+    );
+    expect(find.textContaining('private-host-key'), findsNothing);
+    expect(find.textContaining('private-controller-key'), findsNothing);
+    final host = find.byKey(const Key('nvme-host-6'));
+    await tester.ensureVisible(host);
+    await tester.tap(host);
+    await tester.pumpAndSettle();
+    expect(find.text('finance'), findsWidgets);
+    expect(find.textContaining('Association #8'), findsOneWidget);
+    final filter = find.byKey(const Key('nvme-host-filter'));
+    await tester.ensureVisible(filter);
+    await tester.enterText(filter, 'beta');
+    await tester.pumpAndSettle();
+    expect(find.text('1 matching hosts'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('missing host association method never sends a host read', (
+    tester,
+  ) async {
+    final fake = _Fake(hostSupported: false);
+    final session = AuthenticatedSession(
+      profileId: 'fixture',
+      repository: fake,
+      availableMethodNames: _names.toSet(),
+      endpoint: 'wss://fixture.example/api/current',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => session),
+        ],
+        child: MaterialApp(theme: TrueRAIDTheme.dark(), home: const NvmePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('nvme-host-load')));
+    await tester.tap(find.byKey(const Key('nvme-host-load')));
+    await tester.pumpAndSettle();
+    expect(fake.calls.map((call) => call.method.name), _names);
+    expect(fake.hostCalls, isEmpty);
+    expect(find.textContaining('counts are unknown, not zero'), findsOneWidget);
   });
 }

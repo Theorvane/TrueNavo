@@ -67,6 +67,7 @@ part 'session_init_shutdown_tasks.dart';
 part 'session_audit_settings.dart';
 part 'session_audit_export.dart';
 part 'session_iscsi_auth.dart';
+part 'session_nvme_hosts.dart';
 
 typedef JsonRpcClientFactory = JsonRpcClient Function(RpcTransport transport);
 
@@ -143,7 +144,8 @@ final class TrueNasSessionRepository
         AuthenticatedInitShutdownTasksSession,
         AuthenticatedAuditSettingsSession,
         AuthenticatedAuditExportSession,
-        AuthenticatedIscsiAuthSession {
+        AuthenticatedIscsiAuthSession,
+        AuthenticatedNvmeHostSession {
   TrueNasSessionRepository({
     required RpcConnector connector,
     CredentialVault? credentialVault,
@@ -1596,6 +1598,54 @@ final class TrueNasSessionRepository
       return IscsiAuthInventory.parse(raw, DateTime.now().toUtc());
     } on Object {
       throw const IscsiAuthException();
+    }
+  }
+
+  @override
+  Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    final management = _management;
+    final client = _client;
+    if (management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !management.isCurrent() ||
+        !management.methods.contains('nvmet.host.query') ||
+        !management.methods.contains('nvmet.host_subsys.query') ||
+        client == null ||
+        !client.isOpen) {
+      throw const NvmeHostException();
+    }
+    try {
+      final hosts = await client
+          .call(
+            'nvmet.host.query',
+            id: _id(),
+            params: const [
+              [],
+              {
+                'select': ['id', 'hostnqn'],
+                'limit': 101,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      final mappings = await client
+          .call(
+            'nvmet.host_subsys.query',
+            id: _id(),
+            params: const [
+              [],
+              {
+                'select': ['id', 'host.id', 'subsys.id'],
+                'limit': 101,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      return NvmeHostPublicRows.project(hosts, mappings);
+    } on Object {
+      throw const NvmeHostException();
     }
   }
 
