@@ -351,6 +351,7 @@ void main() {
     ('iscsi.portal.delete', IscsiPage),
     ('iscsi.portal.create', IscsiPage),
     ('iscsi.targetextent.delete', IscsiPage),
+    ('iscsi.targetextent.create', IscsiPage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -507,7 +508,7 @@ void main() {
   testWidgets('cancelled review erases secret inputs without sending', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-include-data.password');
     await tester.enterText(
@@ -524,7 +525,7 @@ void main() {
   testWidgets('oversized confirmation cannot acknowledge hidden changes', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
     await tester.enterText(_key('admin-value-data.name'), 'x' * 2049);
     await _tap(tester, 'admin-review-submit');
     expect(find.textContaining('too large or deeply nested'), findsOneWidget);
@@ -615,7 +616,7 @@ void main() {
   testWidgets(
     'write action sends only after explicit review and acknowledgement',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
+      final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-review-submit');
       expect(api.requests, isEmpty);
@@ -634,7 +635,7 @@ void main() {
   );
 
   testWidgets('cancelling review does not submit changes', (tester) async {
-    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-review-submit');
     await tester.tap(find.text('Cancel'));
@@ -646,7 +647,7 @@ void main() {
   testWidgets('invalid native form cannot open review or send requests', (
     tester,
   ) async {
-    final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
+    final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
     await _tap(tester, 'admin-review-submit');
     expect(find.byType(AdminReviewDialog), findsNothing);
     expect(find.textContaining('Check the highlighted fields'), findsOneWidget);
@@ -667,7 +668,7 @@ void main() {
   testWidgets(
     'confirmation redacts secrets while submitted request keeps value',
     (tester) async {
-      final (_, api) = await _pump(tester, _page('iscsi.targetextent.create'));
+      final (_, api) = await _pump(tester, _page('nvmet.subsys.create'));
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-include-data.password');
       await tester.enterText(
@@ -701,7 +702,7 @@ void main() {
     (tester) async {
       final (container, api) = await _pump(
         tester,
-        _page('iscsi.targetextent.create'),
+        _page('nvmet.subsys.create'),
       );
       await tester.enterText(_key('admin-value-data.name'), 'Media');
       await _tap(tester, 'admin-review-submit');
@@ -736,10 +737,10 @@ void main() {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
     await _reveal(tester, 'admin-directory-search');
-    await tester.enterText(_key('admin-directory-search'), 'Map target extent');
+    await tester.enterText(_key('admin-directory-search'), 'Create NVMe subsystem');
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await _tap(tester, 'admin-open-iscsi.targetextent.create');
+    await _tap(tester, 'admin-open-nvmet.subsys.create');
     await _reveal(tester, 'admin-value-data.name');
     await tester.enterText(_key('admin-value-data.name'), 'Media');
     await _tap(tester, 'admin-review-submit');
@@ -929,7 +930,7 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
           },
         },
       ]),
-      'iscsi.targetextent.create': _metadata([
+      'nvmet.subsys.create': _metadata([
         {
           '_name_': 'data',
           '_required_': true,
@@ -938,6 +939,18 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
           'properties': {
             'name': {'type': 'string', 'minLength': 1},
             'password': {'type': 'string', 'secret': true, 'minLength': 1},
+          },
+        },
+      ]),
+      'iscsi.targetextent.create': _metadata([
+        {
+          '_name_': 'data',
+          '_required_': true,
+          'type': 'object',
+          'properties': {
+            'target': {'type': 'integer'},
+            'extent': {'type': 'integer'},
+            'lunid': {'type': 'integer'},
           },
         },
       ]),

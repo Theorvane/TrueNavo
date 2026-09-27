@@ -49,6 +49,7 @@ void main() {
     'iscsi.target.update',
     'iscsi.target.get_instance',
     'iscsi.targetextent.delete',
+    'iscsi.targetextent.create',
     'disk.temperatures',
     'pool.scrub.query',
     'pool.scrub.create',
@@ -555,6 +556,17 @@ class _AdminManager
         ..._method(),
         'accepts': [
           {'_name_': 'id', '_required_': true, 'type': 'integer'},
+        ],
+      },
+      'iscsi.targetextent.create': {
+        ..._method(),
+        'accepts': [
+          {
+            '_name_': 'data',
+            '_required_': true,
+            'type': 'object',
+            'properties': <String, Object?>{},
+          },
         ],
       },
       'iscsi.portal.update': _method(),

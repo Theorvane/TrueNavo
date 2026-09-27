@@ -56,6 +56,7 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'iscsi.target.update' ||
       'iscsi.target.get_instance' ||
       'iscsi.initiator.update' ||
+      'iscsi.targetextent.create' ||
       'iscsi.targetextent.delete' => 'Use the dedicated iSCSI workflow.',
       'iscsi.initiator.create' => 'Use the dedicated iSCSI workflow.',
       'iscsi.initiator.delete' => 'Use the dedicated iSCSI workflow.',

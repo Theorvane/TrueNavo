@@ -19,6 +19,7 @@ import 'iscsi_initiator_iqn_add_editor.dart';
 import 'iscsi_initiator_iqn_remove_editor.dart';
 import 'iscsi_mapping_chart.dart';
 import 'iscsi_mapping_delete_editor.dart';
+import 'iscsi_mapping_create_editor.dart';
 import 'iscsi_portal_comment_editor.dart';
 import 'iscsi_portal_create_editor.dart';
 import 'iscsi_portal_delete_editor.dart';
@@ -276,6 +277,8 @@ class _IscsiContentState extends State<_IscsiContent> {
         IscsiInitiatorIqnRemoveEditor(overview: value),
         const SizedBox(height: 16),
         IscsiMappingDeleteEditor(overview: value),
+        const SizedBox(height: 16),
+        IscsiMappingCreateEditor(overview: value),
         const SizedBox(height: 16),
         IscsiExtentCommentEditor(overview: value),
         const SizedBox(height: 16),
