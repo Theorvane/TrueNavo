@@ -9,6 +9,7 @@ import 'nvme_host_access_grant_editor.dart';
 import 'nvme_host_delete_editor.dart';
 import 'nvme_port_access_revoke_editor.dart';
 import 'nvme_port_access_grant_editor.dart';
+import 'nvme_port_delete_editor.dart';
 import 'nvme_overview.dart';
 import 'nvme_subsystem_create_editor.dart';
 import 'nvme_subsystem_delete_editor.dart';
@@ -139,6 +140,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmePortAccessRevokeEditor(),
                   const SizedBox(height: 20),
                   const NvmePortAccessGrantEditor(),
+                  const SizedBox(height: 20),
+                  const NvmePortDeleteEditor(),
                 ],
               ),
             ),
@@ -376,6 +379,25 @@ class _Content extends StatelessWidget {
               ],
             ],
           ),
+        ),
+        const SizedBox(height: 16),
+        TdPanel(
+          title: 'Port inventory',
+          description: 'Saved configuration only. A disabled port or missing association does not prove that no client was recently connected.',
+          child: value.ports.isEmpty
+              ? const Text('No ports returned.')
+              : Column(
+                  children: [
+                    for (final port in value.ports)
+                      ListTile(
+                        key: Key('nvme-port-${port.id}'),
+                        title: Text('Port #${port.id} · ${port.transport}'),
+                        subtitle: Text(
+                          '${port.enabled ? 'Configured enabled' : 'Disabled'} · ${value.portMappings.where((m) => m.portId == port.id).length} subsystem associations',
+                        ),
+                      ),
+                  ],
+                ),
         ),
         const SizedBox(height: 16),
         TdPanel(

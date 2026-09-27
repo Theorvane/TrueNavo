@@ -7,6 +7,8 @@ import 'package:trueraid/features/management/server_operation_lock.dart';
 import 'package:trueraid/features/nvme/nvme_host_access_grant_coordinator.dart';
 import 'package:trueraid/features/nvme/nvme_port_access_grant_coordinator.dart';
 import 'package:trueraid/features/nvme/nvme_port_access_grant_editor.dart';
+import 'package:trueraid/features/nvme/nvme_port_delete_coordinator.dart';
+import 'package:trueraid/features/nvme/nvme_port_delete_editor.dart';
 import 'package:trueraid/features/nvme/nvme_subsystem_create_coordinator.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
@@ -50,6 +52,7 @@ class _Fake
         'nvmet.host_subsys.query': _method(),
         if (advertiseCreate) 'nvmet.host_subsys.create': _method(),
         if (advertisePortCreate) 'nvmet.port_subsys.create': _method(),
+        'nvmet.port.delete': _method(),
       },
     );
   }
@@ -79,6 +82,8 @@ class _Fake
   bool driftBeforeWrite = false;
   bool unknownPortWrite = false;
   bool driftAfterPortWrite = false;
+  bool unknownPortDelete = false;
+  bool driftAfterPortDelete = false;
 
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
@@ -95,6 +100,12 @@ class _Fake
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
     calls.add(request);
     final name = request.method.name;
+    if (name == 'nvmet.port.delete') {
+      if (unknownPortDelete) return AdminOutcomeUnknown(request);
+      ports.removeWhere((row) => row['id'] == request.arguments.first);
+      if (driftAfterPortDelete) subsystems.first['name'] = 'changed';
+      return AdminCompleted(request, value: true);
+    }
     if (driftBeforeWrite && name == 'nvmet.subsys.query') {
       subsystems.first['name'] = 'changed';
     }
@@ -177,12 +188,21 @@ class _Harness {
       isCurrent: () => current,
       now: () => clock,
     );
+    portDeleteCoordinator = NvmePortDeleteCoordinator(
+      session: session,
+      api: api,
+      hostsApi: api,
+      lock: ServerOperationLock(),
+      isCurrent: () => current,
+      now: () => clock,
+    );
   }
 
   final _Fake api;
   late final AuthenticatedSession session;
   late final NvmeHostAccessGrantCoordinator coordinator;
   late final NvmePortAccessGrantCoordinator portCoordinator;
+  late final NvmePortDeleteCoordinator portDeleteCoordinator;
   bool current = true;
   DateTime clock = DateTime.utc(2026);
 }
@@ -434,6 +454,131 @@ void main() {
     await tester.tap(find.byKey(const Key('nvme-port-grant-submit')));
     await tester.pumpAndSettle();
     expect(h.api.portWrites, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  test(
+    'deletes only disabled unused port with force false and fresh readback',
+    () async {
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      final review = await h.portDeleteCoordinator.prepare(7);
+      expect(review.confirmation, 'DELETE DISABLED NVME PORT 7 TCP');
+      expect(h.api.calls.length, 4);
+      final result = await h.portDeleteCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmePortDeleteOutcome.completed);
+      expect(h.api.calls[8].method.name, 'nvmet.port.delete');
+      expect(h.api.calls[8].arguments, [
+        7,
+        {'force': false},
+      ]);
+      expect(h.api.ports, isEmpty);
+      expect(h.api.hostReads, 3);
+    },
+  );
+
+  test(
+    'enabled and mapped ports plus wrong phrase and drift block deletion',
+    () async {
+      final enabled = _Harness();
+      enabled.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': true});
+      await expectLater(
+        enabled.portDeleteCoordinator.prepare(7),
+        throwsStateError,
+      );
+      final mapped = _Harness();
+      mapped.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      mapped.api.portMappings.add({
+        'id': 4,
+        'port': {'id': 7},
+        'subsys': {'id': 1},
+      });
+      await expectLater(
+        mapped.portDeleteCoordinator.prepare(7),
+        throwsStateError,
+      );
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      final first = await h.portDeleteCoordinator.prepare(7);
+      expect(
+        (await h.portDeleteCoordinator.execute(first, 'wrong')).outcome,
+        NvmePortDeleteOutcome.rejected,
+      );
+      final second = await h.portDeleteCoordinator.prepare(7);
+      h.api.ports.first['enabled'] = true;
+      expect(
+        (await h.portDeleteCoordinator.execute(
+          second,
+          second.confirmation,
+        )).outcome,
+        NvmePortDeleteOutcome.rejected,
+      );
+      expect(
+        h.api.calls.where((c) => c.method.name == 'nvmet.port.delete'),
+        isEmpty,
+      );
+    },
+  );
+
+  test('ambiguous or divergent port deletion fences further edits', () async {
+    for (final drift in [false, true]) {
+      final h = _Harness();
+      h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+      final review = await h.portDeleteCoordinator.prepare(7);
+      h.api.unknownPortDelete = !drift;
+      h.api.driftAfterPortDelete = drift;
+      final result = await h.portDeleteCoordinator.execute(
+        review,
+        review.confirmation,
+      );
+      expect(result.outcome, NvmePortDeleteOutcome.unknown);
+      expect(h.portDeleteCoordinator.locked, true);
+      expect(NvmeWriteFence.isUncertain(h.session), true);
+    }
+  });
+
+  testWidgets('port delete editor reviews target before fake delete', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.ports.add({'id': 7, 'addr_trtype': 'TCP', 'enabled': false});
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: NvmePortDeleteEditor()),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(find.byKey(const Key('nvme-port-delete-id')), '7');
+    await tester.tap(find.byKey(const Key('nvme-port-delete-review')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Disabled port #7'), findsOneWidget);
+    expect(
+      h.api.calls.where((c) => c.method.name == 'nvmet.port.delete'),
+      isEmpty,
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-delete-confirmation')),
+      'DELETE DISABLED NVME PORT 7 TCP',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-delete-submit')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-delete-submit')));
+    await tester.pumpAndSettle();
+    expect(
+      h.api.calls.where((c) => c.method.name == 'nvmet.port.delete'),
+      hasLength(1),
+    );
     expect(tester.takeException(), isNull);
   });
 }

@@ -38,7 +38,11 @@ class _Fake
         SessionRepository,
         AuthenticatedAdminSession,
         AuthenticatedNvmeHostSession {
-  _Fake({this.supported = true, this.hostSupported = true}) {
+  _Fake({
+    this.supported = true,
+    this.hostSupported = true,
+    this.unassociatedPort = false,
+  }) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
       metadata: {
@@ -50,6 +54,7 @@ class _Fake
   }
   final bool supported;
   final bool hostSupported;
+  final bool unassociatedPort;
   @override
   late final AdminCatalog adminCatalog;
   final calls = <AdminRequest>[];
@@ -99,6 +104,8 @@ class _Fake
           'enabled': true,
           'addr_traddr': 'private-address',
         },
+        if (unassociatedPort)
+          {'id': 7, 'addr_trtype': 'RDMA', 'enabled': false},
       ],
       'nvmet.namespace.query' => [
         {
@@ -358,13 +365,42 @@ void main() {
       await tester.tap(tile);
       await tester.pumpAndSettle();
       expect(find.text('Namespace 1 · ZVOL'), findsOneWidget);
-      expect(find.text('Port #3 · TCP'), findsOneWidget);
+      expect(find.text('Port #3 · TCP'), findsWidgets);
       expect(find.text('nqn.2026-09.example:finance'), findsOneWidget);
       await tester.tap(find.byKey(const Key('nvme-refresh')));
       await tester.pumpAndSettle();
       expect(fake.calls.length, 8);
       expect(tester.widget<TextField>(filter).controller!.text, isEmpty);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'unused disabled port is identifiable without exposing its address',
+    (tester) async {
+      final fake = _Fake(unassociatedPort: true);
+      final session = AuthenticatedSession(
+        profileId: 'fixture',
+        repository: fake,
+        availableMethodNames: _names.toSet(),
+        endpoint: 'wss://fixture.example/api/current',
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            dashboardActiveSessionProvider.overrideWith((ref) => session),
+          ],
+          child: MaterialApp(
+            theme: TrueRAIDTheme.dark(),
+            home: const NvmePage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('nvme-port-7')), findsOneWidget);
+      expect(find.text('Port #7 · RDMA'), findsOneWidget);
+      expect(find.text('Disabled · 0 subsystem associations'), findsOneWidget);
+      expect(find.textContaining('private-address'), findsNothing);
     },
   );
 
