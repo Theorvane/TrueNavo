@@ -19,7 +19,7 @@ class IscsiMappingCreateEditor extends ConsumerStatefulWidget {
 class _IscsiMappingCreateEditorState
     extends ConsumerState<IscsiMappingCreateEditor> {
   final _confirmation = TextEditingController();
-  int? _target, _extent;
+  int? _target, _extent, _lun;
   IscsiMappingCreateReview? _review;
   Object? _reviewSession;
   String? _message;
@@ -31,6 +31,7 @@ class _IscsiMappingCreateEditorState
     if (!identical(oldWidget.overview, widget.overview)) {
       _target = null;
       _extent = null;
+      _lun = null;
       _review = null;
       _confirmation.clear();
     }
@@ -49,7 +50,7 @@ class _IscsiMappingCreateEditorState
       _message = null;
     });
     try {
-      final review = await coordinator.prepare(_target!, _extent!);
+      final review = await coordinator.prepare(_target!, _extent!, lun: _lun!);
       if (!mounted) return;
       setState(() {
         _review = review;
@@ -86,6 +87,7 @@ class _IscsiMappingCreateEditorState
     if (result.outcome == IscsiMappingCreateOutcome.completed) {
       _target = null;
       _extent = null;
+      _lun = null;
       _confirmation.clear();
       ref.invalidate(iscsiOverviewProvider);
     }
@@ -98,7 +100,8 @@ class _IscsiMappingCreateEditorState
     final review =
         identical(session, _reviewSession) &&
             _target == _review?.targetId &&
-            _extent == _review?.extentId
+            _extent == _review?.extentId &&
+            _lun == _review?.lun
         ? _review
         : null;
     final enabled =
@@ -106,19 +109,23 @@ class _IscsiMappingCreateEditorState
         coordinator != null &&
         coordinator.available &&
         !coordinator.locked;
-    final mappedTargets = widget.overview.mappings
-        .map((m) => m.targetId)
-        .toSet();
     final mappedExtents = widget.overview.mappings
         .map((m) => m.extentId)
         .toSet();
+    final targetMappings = widget.overview.mappings
+        .where((mapping) => mapping.targetId == _target)
+        .toList();
+    final usedLuns = targetMappings.map((mapping) => mapping.lun).toSet();
+    final lunChoices = targetMappings.isEmpty
+        ? const <int>[0]
+        : usedLuns.contains(0) && usedLuns.length == targetMappings.length
+        ? [
+            for (var lun = 1; lun <= 31; lun++)
+              if (!usedLuns.contains(lun)) lun,
+          ]
+        : <int>[];
     final targets = widget.overview.targets
-        .where(
-          (target) =>
-              target.mode == 'iSCSI' &&
-              target.groups.isEmpty &&
-              !mappedTargets.contains(target.id),
-        )
+        .where((target) => target.mode == 'iSCSI' && target.groups.isEmpty)
         .toList();
     final extents = widget.overview.extents
         .where(
@@ -130,8 +137,8 @@ class _IscsiMappingCreateEditorState
         )
         .toList();
     return TdPanel(
-      title: 'Map an unused extent at LUN 0',
-      description: 'One initial LUN on an unbound iSCSI-only target. The extent must be enabled, unlocked and unused. No portal or client access is configured here. Stop iSCSI and disconnect all clients first.',
+      title: 'Map an unused extent to a LUN',
+      description: 'First mapping uses LUN 0; subsequent mappings use a free LUN 1–31. Only an unbound iSCSI-only target and enabled, unlocked, unused extent qualify. Stop iSCSI and disconnect all clients first.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -158,6 +165,38 @@ class _IscsiMappingCreateEditorState
             onChanged: enabled
                 ? (id) => setState(() {
                     _target = id;
+                    final used = widget.overview.mappings
+                        .where((mapping) => mapping.targetId == id)
+                        .map((mapping) => mapping.lun)
+                        .toSet();
+                    _lun = used.isEmpty
+                        ? 0
+                        : used.contains(0)
+                        ? [
+                            for (var lun = 1; lun <= 31; lun++)
+                              if (!used.contains(lun)) lun,
+                          ].firstOrNull
+                        : null;
+                    _review = null;
+                    _message = null;
+                  })
+                : null,
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<int>(
+            key: const Key('iscsi-mapping-create-lun'),
+            initialValue: lunChoices.contains(_lun) ? _lun : null,
+            decoration: const InputDecoration(
+              labelText: 'LUN number',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (final lun in lunChoices)
+                DropdownMenuItem(value: lun, child: Text('LUN $lun')),
+            ],
+            onChanged: enabled && _target != null && lunChoices.isNotEmpty
+                ? (lun) => setState(() {
+                    _lun = lun;
                     _review = null;
                     _message = null;
                   })
@@ -195,10 +234,15 @@ class _IscsiMappingCreateEditorState
           const SizedBox(height: 8),
           OutlinedButton(
             key: const Key('iscsi-mapping-create-review'),
-            onPressed: enabled && _target != null && _extent != null
+            onPressed:
+                enabled &&
+                    _target != null &&
+                    _extent != null &&
+                    _lun != null &&
+                    lunChoices.contains(_lun)
                 ? () => _prepare(coordinator)
                 : null,
-            child: const Text('Review LUN 0 mapping'),
+            child: const Text('Review LUN mapping'),
           ),
           if (coordinator == null || !coordinator.available)
             const Text(
@@ -213,8 +257,8 @@ class _IscsiMappingCreateEditorState
             Text('Server: ${review.endpoint}'),
             Text('Target #${review.targetId}: ${review.targetName}'),
             Text('Extent #${review.extentId}: ${review.extentName}'),
-            const Text(
-              'Assign exact LUN 0. No target, extent or existing mapping is edited. Complete inventories, service and sessions are checked again; external administrators can still race these reads.',
+            Text(
+              'Assign exact LUN ${review.lun}. No target, extent or existing mapping is edited. Complete inventories, service and sessions are checked again; external administrators can still race these reads.',
             ),
             TextField(
               key: const Key('iscsi-mapping-create-confirmation'),
@@ -228,7 +272,7 @@ class _IscsiMappingCreateEditorState
             FilledButton(
               key: const Key('iscsi-mapping-create-submit'),
               onPressed: _busy ? null : () => _submit(coordinator, review),
-              child: const Text('Map LUN 0'),
+              child: const Text('Map LUN'),
             ),
             TextButton(
               onPressed: _busy

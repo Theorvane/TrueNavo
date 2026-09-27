@@ -158,6 +158,62 @@ class _Harness {
 
 void main() {
   test(
+    'adds a second explicit LUN without changing the existing mapping',
+    () async {
+      final h = _Harness();
+      h.api.extents.add({
+        'id': 6,
+        'name': 'disk-b',
+        'type': 'DISK',
+        'path': 'zvol/tank/second',
+        'enabled': true,
+        'locked': false,
+      });
+      h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+      final review = await h.coordinator.prepare(3, 6, lun: 1);
+      expect(review.confirmation, 'MAP ISCSI TARGET #3 EXTENT #6 LUN 1');
+      expect(h.writes, 0);
+      final result = await h.coordinator.execute(review, review.confirmation);
+      expect(result.outcome, IscsiMappingCreateOutcome.completed);
+      expect(
+        h.api.calls
+            .singleWhere(
+              (call) => call.method.name == 'iscsi.targetextent.create',
+            )
+            .arguments,
+        [
+          {'target': 3, 'extent': 6, 'lunid': 1},
+        ],
+      );
+      expect(h.api.mappings, [
+        {'id': 8, 'target': 3, 'extent': 5, 'lunid': 0},
+        {'id': 7, 'target': 3, 'extent': 6, 'lunid': 1},
+      ]);
+    },
+  );
+
+  test('duplicate or missing LUN zero, used extent and out-of-range LUN block review', () async {
+    final h = _Harness();
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+    await expectLater(h.coordinator.prepare(3, 6, lun: 0), throwsStateError);
+    await expectLater(h.coordinator.prepare(3, 5, lun: 1), throwsStateError);
+    await expectLater(h.coordinator.prepare(3, 6, lun: 32), throwsStateError);
+    h.api.mappings.single['lunid'] = 1;
+    await expectLater(h.coordinator.prepare(3, 6, lun: 2), throwsStateError);
+    h.api.mappings.clear();
+    await expectLater(h.coordinator.prepare(3, 6, lun: 1), throwsStateError);
+    expect(h.writes, 0);
+  });
+
+  test(
     'creates only initial LUN 0 mapping with exact payload and readback',
     () async {
       final h = _Harness();
@@ -311,5 +367,71 @@ void main() {
     await tester.tap(find.byKey(const Key('iscsi-mapping-create-submit')));
     await tester.pumpAndSettle();
     expect(h.writes, 1);
+  });
+
+  testWidgets('editor selects a free LUN on an already mapped target', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.api.extents.add({
+      'id': 6,
+      'name': 'disk-b',
+      'type': 'DISK',
+      'path': 'zvol/tank/second',
+      'enabled': true,
+      'locked': false,
+    });
+    h.api.mappings.add({'id': 8, 'target': 3, 'extent': 5, 'lunid': 0});
+    final overview = IscsiOverview.parse(
+      portals: [],
+      initiators: [],
+      targets: h.api.targets,
+      extents: h.api.extents,
+      mappings: h.api.mappings,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: IscsiMappingCreateEditor(overview: overview),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-create-target')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#3 target-a').last);
+    await tester.pumpAndSettle();
+    expect(find.text('LUN 1'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('iscsi-mapping-create-lun')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('LUN 2').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-create-extent')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('#6 disk-b').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-create-review')));
+    await tester.pumpAndSettle();
+    expect(h.writes, 0);
+    await tester.enterText(
+      find.byKey(const Key('iscsi-mapping-create-confirmation')),
+      'MAP ISCSI TARGET #3 EXTENT #6 LUN 2',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('iscsi-mapping-create-submit')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('iscsi-mapping-create-submit')));
+    await tester.pumpAndSettle();
+    expect(h.writes, 1);
+    expect(h.api.mappings.last['lunid'], 2);
   });
 }

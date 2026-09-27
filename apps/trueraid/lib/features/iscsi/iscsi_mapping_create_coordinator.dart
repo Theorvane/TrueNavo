@@ -41,14 +41,15 @@ final class IscsiMappingCreateReview {
     this.targetName,
     this.extentId,
     this.extentName,
+    this.lun,
     this.proof,
     this.issuedAt,
   );
   final String endpoint, targetName, extentName, proof;
-  final int targetId, extentId;
+  final int targetId, extentId, lun;
   final DateTime issuedAt;
   String get confirmation =>
-      'MAP ISCSI TARGET #$targetId EXTENT #$extentId LUN 0';
+      'MAP ISCSI TARGET #$targetId EXTENT #$extentId LUN $lun';
 }
 
 final class _Snapshot {
@@ -76,7 +77,7 @@ final class _Snapshot {
   ]);
 }
 
-/// Maps one unused extent to one unbound iSCSI-only target at explicit LUN 0.
+/// Maps one unused extent to an unbound iSCSI-only target at an explicit LUN.
 /// Sequential reads cannot exclude another administrator's concurrent writes.
 final class IscsiMappingCreateCoordinator {
   IscsiMappingCreateCoordinator({
@@ -268,24 +269,46 @@ final class IscsiMappingCreateCoordinator {
     return snapshot;
   }
 
-  void _candidate(_Snapshot snapshot, int targetId, int extentId) {
+  void _candidate(_Snapshot snapshot, int targetId, int extentId, int lun) {
     if (!snapshot.availableTargets.contains(targetId)) {
       throw StateError('Only an unbound iSCSI-only target is supported.');
     }
     if (!snapshot.availableExtents.contains(extentId)) {
       throw StateError('Choose an enabled, unlocked disk or file extent.');
     }
-    if (snapshot.mappings.any(
-      (mapping) => mapping[1] == targetId || mapping[2] == extentId,
-    )) {
-      throw StateError('The target or extent is already mapped.');
+    if (lun < 0 || lun > 31) {
+      throw StateError('Choose a LUN number between 0 and 31.');
+    }
+    final targetMappings = snapshot.mappings
+        .where((mapping) => mapping[1] == targetId)
+        .toList();
+    final usedLuns = targetMappings.map((mapping) => mapping[3]).toSet();
+    if (targetMappings.length >= 32 ||
+        targetMappings.any((mapping) => mapping[3] > 31) ||
+        usedLuns.length != targetMappings.length ||
+        (targetMappings.isEmpty && lun != 0) ||
+        (targetMappings.isNotEmpty && (!usedLuns.contains(0) || lun == 0)) ||
+        usedLuns.contains(lun)) {
+      throw StateError('The requested LUN is unavailable on this target.');
+    }
+    if (snapshot.mappings.any((mapping) => mapping[2] == extentId)) {
+      throw StateError('The extent is already mapped.');
     }
   }
 
-  Future<IscsiMappingCreateReview> prepare(int targetId, int extentId) async {
+  Future<IscsiMappingCreateReview> prepare(
+    int targetId,
+    int extentId, {
+    int lun = 0,
+  }) async {
     _guard();
-    if (!available || _busy || targetId < 1 || extentId < 1) {
-      throw StateError('Choose one target and one extent to review.');
+    if (!available ||
+        _busy ||
+        targetId < 1 ||
+        extentId < 1 ||
+        lun < 0 ||
+        lun > 31) {
+      throw StateError('Choose a target, an extent and LUN 0–31 to review.');
     }
     final owner = lock.acquire();
     if (owner == null) {
@@ -295,13 +318,14 @@ final class IscsiMappingCreateCoordinator {
     _issued.clear();
     try {
       final snapshot = await _snapshot();
-      _candidate(snapshot, targetId, extentId);
+      _candidate(snapshot, targetId, extentId, lun);
       final review = IscsiMappingCreateReview._(
         session.endpoint!,
         targetId,
         snapshot.targets[targetId]!,
         extentId,
         snapshot.extents[extentId]!,
+        lun,
         snapshot.proof,
         _now().toUtc(),
       );
@@ -349,7 +373,7 @@ final class IscsiMappingCreateCoordinator {
     var sent = false;
     try {
       final before = await _snapshot();
-      _candidate(before, review.targetId, review.extentId);
+      _candidate(before, review.targetId, review.extentId, review.lun);
       if (before.proof != review.proof) {
         return const IscsiMappingCreateResult(
           IscsiMappingCreateOutcome.rejected,
@@ -361,7 +385,11 @@ final class IscsiMappingCreateCoordinator {
         AdminRequest(
           method: _method('iscsi.targetextent.create'),
           arguments: [
-            {'target': review.targetId, 'extent': review.extentId, 'lunid': 0},
+            {
+              'target': review.targetId,
+              'extent': review.extentId,
+              'lunid': review.lun,
+            },
           ],
         ),
       );
@@ -378,7 +406,7 @@ final class IscsiMappingCreateCoordinator {
           (response['id'] as int) < 1 ||
           response['target'] != review.targetId ||
           response['extent'] != review.extentId ||
-          response['lunid'] != 0) {
+          response['lunid'] != review.lun) {
         return _unknown();
       }
       final newId = response['id'] as int;
@@ -388,7 +416,7 @@ final class IscsiMappingCreateCoordinator {
       final after = await _snapshot();
       final expected = <List<int>>[
         ...before.mappings,
-        [newId, review.targetId, review.extentId, 0],
+        [newId, review.targetId, review.extentId, review.lun],
       ]..sort((a, b) => a.first.compareTo(b.first));
       if (after.targetDigest != before.targetDigest ||
           after.extentDigest != before.extentDigest ||
@@ -397,9 +425,9 @@ final class IscsiMappingCreateCoordinator {
           after.service.enabledOnBoot != before.service.enabledOnBoot) {
         return _unknown();
       }
-      return const IscsiMappingCreateResult(
+      return IscsiMappingCreateResult(
         IscsiMappingCreateOutcome.completed,
-        'Only the reviewed LUN 0 mapping appeared; target and extent settings were unchanged.',
+        'Only the reviewed LUN ${review.lun} mapping appeared; target and extent settings were unchanged.',
       );
     } on Object {
       return sent
