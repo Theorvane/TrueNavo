@@ -354,6 +354,7 @@ void main() {
     ('iscsi.targetextent.delete', IscsiPage),
     ('iscsi.targetextent.create', IscsiPage),
     ('iscsi.targetextent.update', IscsiPage),
+    ('nvmet.subsys.delete', NvmePage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -951,6 +952,10 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
             'password': {'type': 'string', 'secret': true, 'minLength': 1},
           },
         },
+      ]),
+      'nvmet.subsys.delete': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
+        {'_name_': 'options', '_required_': false, 'type': 'object'},
       ]),
       // Synthetic generic-form fixture retained on a different NVMe method;
       // subsystem creation now has a dedicated reviewed workflow.

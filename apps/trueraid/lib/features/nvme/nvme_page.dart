@@ -6,6 +6,7 @@ import '../dashboard/dashboard_controller.dart';
 import 'nvme_host_overview.dart';
 import 'nvme_overview.dart';
 import 'nvme_subsystem_create_editor.dart';
+import 'nvme_subsystem_delete_editor.dart';
 
 class NvmePage extends ConsumerStatefulWidget {
   const NvmePage({super.key});
@@ -115,6 +116,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   ],
                   const SizedBox(height: 20),
                   const NvmeSubsystemCreateEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeSubsystemDeleteEditor(),
                 ],
               ),
             ),
