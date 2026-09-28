@@ -43,6 +43,7 @@ final class NvmeMutationSnapshot {
     int? omitPortMappingId,
     int? omitPortId,
     int? omitSubsystemId,
+    int? omitNamespaceId,
   }) {
     final subsystems =
         topology.subsystems
@@ -85,6 +86,7 @@ final class NvmeMutationSnapshot {
           ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
     final namespaces =
         topology.namespaces
+            .where((n) => n.id != omitNamespaceId)
             .map(
               (n) => [
                 n.id,

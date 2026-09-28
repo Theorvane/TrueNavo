@@ -1,5 +1,9 @@
 # TrueNAS WebUI parity: implementation ledger
 
+## Current continuation: backing-preserving namespace configuration removal
+
+The native NVMe-oF page supports removing a disabled, explicitly unlocked namespace with a known NSID only in a restricted subsystem without host or port associations. The namespace database ID is resolved independently from NSID, subsystem and port IDs. A five-minute endpoint-bound review requires both configuration-loss consent and an exact confirmation phrase. Complete bounded topology and protected host references are reread before the single `nvmet.namespace.delete(namespaceId, {remove: false})` request and afterward. Backing-file removal is never requested. Fresh readback must show only the target namespace absent and all other projected configuration unchanged; ambiguous outcomes fence further edits until reconnection. Generic delete submission is blocked. Sequential reads cannot exclude concurrent administration or prove backing integrity or client inactivity. Synthetic API/widget tests only; no live NAS write occurred. See the official [namespace delete contract](https://api.truenas.com/v25.10/api_methods_nvmet.namespace.delete.html). Namespace creation and broader backing-aware management remain outstanding; TD-037 remains partial.
+
 Updated 2026-09-28. Target: every applicable TrueNAS WebUI workflow in the existing 88-row capability matrix, implemented as native application features. This is an implementation ledger, **not a claim of full parity, official affiliation, or production certification**.
 
 The complete row-by-row status is in [WEBUI_PARITY_STATUS.csv](WEBUI_PARITY_STATUS.csv). Requirement IDs match [TRUERAID_CAPABILITY_MATRIX.csv](TRUERAID_CAPABILITY_MATRIX.csv); the requirements themselves have not been narrowed to match the current implementation.

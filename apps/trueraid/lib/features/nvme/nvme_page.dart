@@ -17,6 +17,7 @@ import 'nvme_port_pi_editor.dart';
 import 'nvme_port_queue_editor.dart';
 import 'nvme_port_inline_editor.dart';
 import 'nvme_port_create_editor.dart';
+import 'nvme_namespace_delete_editor.dart';
 import 'nvme_overview.dart';
 import 'nvme_setting_charts.dart';
 import 'nvme_subsystem_create_editor.dart';
@@ -177,6 +178,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmePortInlineEditor(),
                   const SizedBox(height: 20),
                   const NvmePortCreateEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeNamespaceDeleteEditor(),
                 ],
               ),
             ),

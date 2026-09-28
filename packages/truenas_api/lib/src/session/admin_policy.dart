@@ -899,6 +899,13 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'NVMe namespaces',
     'Backing storage exposed by NVMe targets.',
   ),
+  AdminOperationDefinition.destructive(
+    AdminDomain.shares,
+    'nvmet.namespace.delete',
+    'Remove NVMe namespace configuration',
+    'Remove namespace configuration through the native backing-preserving review.',
+    warning: 'Namespace configuration must be recreated to restore this mapping. Backing-file removal is unavailable in the native workflow.',
+  ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'nvmet.namespace.create',

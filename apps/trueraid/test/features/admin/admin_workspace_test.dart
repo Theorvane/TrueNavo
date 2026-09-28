@@ -362,6 +362,7 @@ void main() {
     ('nvmet.port_subsys.delete', NvmePage),
     ('nvmet.port_subsys.create', NvmePage),
     ('nvmet.port.delete', NvmePage),
+    ('nvmet.namespace.delete', NvmePage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -810,6 +811,16 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
+  testWidgets('namespace generic delete cannot bypass backing preservation', (
+    tester,
+  ) async {
+    final (_, api) = await _pump(tester, _page('nvmet.namespace.delete'));
+    expect(api.adminCatalog.method('nvmet.namespace.delete'), isNotNull);
+    expect(find.text('This action is unavailable'), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
+    expect(api.requests, isEmpty);
+  });
+
   testWidgets('directory and review fit 320px with large text', (tester) async {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
@@ -1045,6 +1056,10 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
         {'_name_': 'data', '_required_': true, 'type': 'object'},
       ]),
       'nvmet.port.delete': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
+        {'_name_': 'options', '_required_': false, 'type': 'object'},
+      ]),
+      'nvmet.namespace.delete': _metadata([
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
         {'_name_': 'options', '_required_': false, 'type': 'object'},
       ]),
