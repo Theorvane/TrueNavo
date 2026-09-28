@@ -6,7 +6,283 @@ import 'package:truenas_api/truenas_api.dart';
 
 const _secret = 'fixture-chap-secret-never-exposed';
 
+NvmeHostAuthentication _clearTarget() =>
+    NvmeHostAuthenticationInventory.project([
+      {
+        'id': 3,
+        'hostnqn': 'nqn.2026-09.example:old',
+        'dhchap_key': _secret,
+        'dhchap_ctrl_key': _secret,
+        'dhchap_dhgroup': '4096-BIT',
+        'dhchap_hash': 'SHA-256',
+      },
+    ]).hosts.single;
+
 void main() {
+  for (final raw in <Object?>[
+    null,
+    _secret,
+    <Object?>[],
+    [_secret, _secret],
+  ]) {
+    test(
+      'exact authentication target rejects incomplete shape ${raw.runtimeType} ${raw is List ? raw.length : 0}',
+      () async {
+        final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true)
+          ..overrideHostQuery = true
+          ..hostQueryResult = raw;
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        await expectLater(
+          repo.loadNvmeHostAuthenticationTarget(3),
+          throwsA(
+            isA<NvmeHostException>().having(
+              (e) => e.toString(),
+              'safe error',
+              isNot(contains(_secret)),
+            ),
+          ),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.update'),
+          isEmpty,
+        );
+      },
+    );
+  }
+  for (final id in [0, -1]) {
+    test('invalid authentication target ID $id sends no read', () async {
+      final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.loadNvmeHostAuthenticationTarget(id),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(
+        wire.requests.where(
+          (r) => (r['method'] as String).startsWith('nvmet.'),
+        ),
+        isEmpty,
+      );
+    });
+  }
+  test(
+    'disconnected authentication clearing never sends NVMe requests',
+    () async {
+      final wire = _Wire();
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await expectLater(
+        repo.clearNvmeHostAuthentication(expected: _clearTarget()),
+        throwsA(isA<NvmeHostException>()),
+      );
+      await expectLater(
+        repo.loadNvmeHostAuthenticationTarget(3),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(wire.requests, isEmpty);
+    },
+  );
+  test('protected authentication clearing sends only three nulls and strips all key values', () async {
+    final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
+    wire.hostRow.addAll({
+      'dhchap_key': _secret,
+      'dhchap_ctrl_key': _secret,
+      'dhchap_dhgroup': '4096-BIT',
+    });
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    final before = await repo.loadNvmeHostAuthenticationTarget(3);
+    expect(before.sameReturnedSettings(_clearTarget()), true);
+    expect(before.toString(), isNot(contains(_secret)));
+    final cleared = await repo.clearNvmeHostAuthentication(expected: before);
+    expect(
+      [
+        cleared.id,
+        cleared.nqn,
+        cleared.hash,
+        cleared.hasReturnedAuthentication,
+      ],
+      [3, 'nqn.2026-09.example:old', 'SHA-256', false],
+    );
+    expect(cleared.toString(), isNot(contains(_secret)));
+    final write = wire.requests.singleWhere(
+      (r) => r['method'] == 'nvmet.host.update',
+    );
+    expect(write['params'], [
+      3,
+      {'dhchap_key': null, 'dhchap_ctrl_key': null, 'dhchap_dhgroup': null},
+    ]);
+    for (final read in wire.requests.where(
+      (r) => r['method'] == 'nvmet.host.query',
+    )) {
+      expect(read['params'], [
+        [
+          ['id', '=', 3],
+        ],
+        {
+          'select': [
+            'id',
+            'hostnqn',
+            'dhchap_key',
+            'dhchap_ctrl_key',
+            'dhchap_dhgroup',
+            'dhchap_hash',
+          ],
+          'limit': 2,
+        },
+      ]);
+    }
+    expect(
+      wire.requests
+          .where((r) => (r['method'] as String).startsWith('nvmet.'))
+          .map((r) => r['method']),
+      ['nvmet.host.query', 'nvmet.host.query', 'nvmet.host.update'],
+    );
+  });
+  for (final changed in [
+    'id',
+    'hostnqn',
+    'dhchap_hash',
+    'dhchap_key',
+    'dhchap_ctrl_key',
+    'dhchap_dhgroup',
+    'missing key',
+    'invalid key',
+    'missing update',
+    'missing query',
+  ]) {
+    test('clearing SDK rejects $changed before writing', () async {
+      final wire = _Wire(
+        advertiseNvme: changed != 'missing query',
+        advertiseNvmeHostUpdate: changed != 'missing update',
+      );
+      wire.hostRow.addAll({
+        'dhchap_key': _secret,
+        'dhchap_ctrl_key': _secret,
+        'dhchap_dhgroup': '4096-BIT',
+      });
+      switch (changed) {
+        case 'id':
+          wire.hostRow['id'] = 999;
+        case 'hostnqn':
+          wire.hostRow['hostnqn'] = 'nqn.2026-09.example:other';
+        case 'dhchap_hash':
+          wire.hostRow['dhchap_hash'] = 'SHA-512';
+        case 'dhchap_key':
+          wire.hostRow['dhchap_key'] = null;
+        case 'dhchap_ctrl_key':
+          wire.hostRow['dhchap_ctrl_key'] = null;
+        case 'dhchap_dhgroup':
+          wire.hostRow['dhchap_dhgroup'] = '8192-BIT';
+        case 'missing key':
+          wire.hostRow.remove('dhchap_key');
+        case 'invalid key':
+          wire.hostRow['dhchap_key'] = {'unexpected_private': _secret};
+      }
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.clearNvmeHostAuthentication(expected: _clearTarget()),
+        throwsA(
+          isA<NvmeHostException>().having(
+            (e) => e.toString(),
+            'safe error',
+            isNot(contains(_secret)),
+          ),
+        ),
+      );
+      expect(
+        wire.requests.where((r) => r['method'] == 'nvmet.host.update'),
+        isEmpty,
+      );
+    });
+  }
+  for (final failure in [
+    'auth after update',
+    'controller after update',
+    'group after update',
+    'hash after update',
+    'ID after update',
+    'NQN after update',
+  ]) {
+    test('clearing SDK rejects $failure after one update', () async {
+      final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true)
+        ..renameFailure = failure;
+      wire.hostRow.addAll({
+        'dhchap_key': _secret,
+        'dhchap_ctrl_key': _secret,
+        'dhchap_dhgroup': '4096-BIT',
+      });
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.clearNvmeHostAuthentication(expected: _clearTarget()),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(
+        wire.requests.where((r) => r['method'] == 'nvmet.host.update'),
+        hasLength(1),
+      );
+    });
+  }
+  test(
+    'unset expected metadata rejects clearing without a host read',
+    () async {
+      final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      const unset = NvmeHostAuthentication(
+        id: 3,
+        nqn: 'nqn.2026-09.example:old',
+        hash: 'SHA-256',
+        group: null,
+        hostKeyReturned: false,
+        controllerKeyReturned: false,
+      );
+      await expectLater(
+        repo.clearNvmeHostAuthentication(expected: unset),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(
+        wire.requests.where(
+          (r) => (r['method'] as String).startsWith('nvmet.'),
+        ),
+        isEmpty,
+      );
+    },
+  );
   for (final input in [
     (0, 'SHA-256', 'SHA-384'),
     (-1, 'SHA-256', 'SHA-384'),
@@ -1016,6 +1292,8 @@ final class _Wire implements RpcTransport {
   Object? hashes = ['SHA-256', 'SHA-384', 'SHA-512'];
   Object? groups = ['2048-BIT', '3072-BIT', '4096-BIT', '6144-BIT', '8192-BIT'];
   String? renameFailure;
+  bool overrideHostQuery = false;
+  Object? hostQueryResult;
   final hostRow = <String, Object?>{
     'id': 3,
     'hostnqn': 'nqn.2026-09.example:old',
@@ -1083,6 +1361,7 @@ final class _Wire implements RpcTransport {
                   'peersecret': _secret,
                 },
               ],
+      'nvmet.host.query' when overrideHostQuery => hostQueryResult,
       'nvmet.host.query' when advertiseNvmeHostUpdate => [Map.of(hostRow)],
       'nvmet.host.dhchap_hash_choices' => hashes,
       'nvmet.host.dhchap_dhgroup_choices' => groups,
@@ -1133,9 +1412,16 @@ final class _Wire implements RpcTransport {
     if (payload.containsKey('dhchap_hash')) {
       hostRow['dhchap_hash'] = payload['dhchap_hash'];
     }
+    for (final key in ['dhchap_key', 'dhchap_ctrl_key', 'dhchap_dhgroup']) {
+      if (payload.containsKey(key)) hostRow[key] = payload[key];
+    }
     switch (renameFailure) {
       case 'auth after update':
         hostRow['dhchap_key'] = _secret;
+      case 'controller after update':
+        hostRow['dhchap_ctrl_key'] = _secret;
+      case 'group after update':
+        hostRow['dhchap_dhgroup'] = '2048-BIT';
       case 'hash after update':
         hostRow['dhchap_hash'] = 'SHA-512';
       case 'ID after update':

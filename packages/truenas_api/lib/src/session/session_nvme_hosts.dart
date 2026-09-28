@@ -12,6 +12,15 @@ abstract interface class AuthenticatedNvmeHostAuthenticationSession {
   Future<NvmeHostAuthenticationInventory> loadNvmeHostAuthentication();
 }
 
+/// Unassociated-host orchestration belongs to the app; this SDK path privately
+/// projects key values and submits only explicit key/group nulls.
+abstract interface class AuthenticatedNvmeHostAuthenticationClearSession {
+  Future<NvmeHostAuthentication> loadNvmeHostAuthenticationTarget(int id);
+  Future<NvmeHostAuthentication> clearNvmeHostAuthentication({
+    required NvmeHostAuthentication expected,
+  });
+}
+
 /// Public algorithm discovery only; never reads hosts or generates keys.
 abstract interface class AuthenticatedNvmeHostChoicesSession {
   Future<NvmeHostAuthenticationChoices> loadNvmeHostAuthenticationChoices();
@@ -75,6 +84,18 @@ final class NvmeHostAuthentication {
   final bool hostKeyReturned, controllerKeyReturned;
   bool get inconsistent =>
       !hostKeyReturned && (controllerKeyReturned || group != null);
+  bool get hasReturnedAuthentication =>
+      hostKeyReturned || controllerKeyReturned || group != null;
+
+  /// Public metadata comparison only: cannot detect rotations with unchanged
+  /// presence flags, or attest actual key absence under redaction.
+  bool sameReturnedSettings(NvmeHostAuthentication other) =>
+      id == other.id &&
+      nqn == other.nqn &&
+      hash == other.hash &&
+      group == other.group &&
+      hostKeyReturned == other.hostKeyReturned &&
+      controllerKeyReturned == other.controllerKeyReturned;
 }
 
 final class NvmeHostAuthenticationInventory {

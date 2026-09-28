@@ -944,8 +944,8 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'nvmet.host.update',
-    'Change unassociated NVMe host NQN or hash',
-    'Separate NQN-only and hash-only protected uncredentialed-host workflows.',
+    'Edit unassociated NVMe host configuration',
+    'Protected NQN-only or hash-only editing and separately reviewed authentication removal.',
     warning: 'Existing initiator configuration may need to change. NVMe configuration reloads; concurrent administration is not excluded.',
     blockedReason: _secretFlow,
   ),
