@@ -18,6 +18,8 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
       _destination = TextEditingController();
   NvmeNamespaceMoveReview? _review;
   NvmeNamespaceMoveCoordinator? _owner;
+  NvmeNamespaceMoveCoordinator? _candidateOwner;
+  List<NvmeNamespaceMoveCandidate>? _candidates;
   Object? _session, _reviewSession;
   bool _busy = false, _reload = false, _limitations = false;
   String? _message;
@@ -48,6 +50,46 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
     _destination.dispose();
     _phrase.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCandidates(NvmeNamespaceMoveCoordinator coordinator) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _destination.clear();
+      _message = null;
+    });
+    try {
+      final candidates = await coordinator.loadCandidates();
+      if (!mounted ||
+          epoch != _epoch ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(
+            coordinator,
+            ref.read(nvmeNamespaceMoveCoordinatorProvider),
+          )) {
+        return;
+      }
+      setState(() {
+        _candidates = candidates;
+        _candidateOwner = coordinator;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          identical(session, ref.read(dashboardActiveSessionProvider))) {
+        setState(
+          () => _message = 'Move target discovery failed. No configuration request was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _prepare(NvmeNamespaceMoveCoordinator coordinator) async {
@@ -113,6 +155,8 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
       _busy = false;
       if (identical(session, ref.read(dashboardActiveSessionProvider))) {
         _discard();
+        _candidates = null;
+        _candidateOwner = null;
         _message = result.message;
       }
     });
@@ -130,21 +174,124 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
       _discard();
       _id.clear();
       _destination.clear();
+      _candidates = null;
+      _candidateOwner = null;
       _message = null;
       _session = session;
     }
     if (_owner != null && !identical(coordinator, _owner)) _discard();
+    if (_candidateOwner != null && !identical(coordinator, _candidateOwner)) {
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _destination.clear();
+    }
     final active =
         !_busy &&
         coordinator?.available == true &&
         coordinator?.locked == false;
     final review = _review;
+    final candidates = _candidates;
+    final selected = candidates
+        ?.where((c) => c.target.id == _targetId)
+        .singleOrNull;
+    final selectedDestination = selected?.destinations
+        .where((s) => s.id == _destinationId)
+        .singleOrNull;
     return TdPanel(
       title: 'Move isolated disabled ZVOL namespace configuration',
       description: 'Saved configuration only, moving a disabled unlocked ZVOL namespace to a different restricted subsystem. The destination can be empty or contain only disabled unlocked ZVOLs with known unique NSIDs that do not collide with the moved NSID. Both subsystems must have distinct known NQNs and no host or port mappings. Backing paths, sizes and identifiers are not read or edited. Runtime client IO, backing identity and health are not proven.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          OutlinedButton(
+            key: const Key('nvme-namespace-move-discover'),
+            onPressed: active ? () => _loadCandidates(coordinator!) : null,
+            child: const Text('Load or refresh eligible move targets'),
+          ),
+          if (candidates != null) ...[
+            const Text(
+              'Discovery is a public configuration snapshot, not a safety or runtime guarantee. Selection only fills IDs; review and submission each reread the server.',
+            ),
+            if (candidates.isEmpty)
+              const Text(
+                'No eligible namespace and destination pairs were found.',
+              ),
+            if (candidates.isNotEmpty) ...[
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Choose namespace',
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    key: const Key('nvme-namespace-move-source-choice'),
+                    isExpanded: true,
+                    value: selected?.target.id,
+                    hint: const Text('Select a namespace'),
+                    items: [
+                      for (final candidate in candidates)
+                        DropdownMenuItem(
+                          value: candidate.target.id,
+                          child: Text(
+                            '#${candidate.target.id} · NSID ${candidate.target.nsid} · ${candidate.source.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: active
+                        ? (id) => setState(() {
+                            _discard();
+                            _id.text = id?.toString() ?? '';
+                            _destination.clear();
+                            _message = null;
+                          })
+                        : null,
+                  ),
+                ),
+              ),
+              if (selected != null) ...[
+                Text(
+                  'Source: ${selected.source.name} — ${selected.source.subnqn}; namespace #${selected.target.id}, NSID ${selected.target.nsid}',
+                ),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Choose destination subsystem',
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int>(
+                      key: const Key('nvme-namespace-move-destination-choice'),
+                      isExpanded: true,
+                      value: selectedDestination?.id,
+                      hint: const Text('Select a destination'),
+                      items: [
+                        for (final destination in selected.destinations)
+                          DropdownMenuItem(
+                            value: destination.id,
+                            child: Text(
+                              '#${destination.id} · ${destination.name}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: active
+                          ? (id) => setState(() {
+                              _discard();
+                              _destination.text = id?.toString() ?? '';
+                              _message = null;
+                            })
+                          : null,
+                    ),
+                  ),
+                ),
+                if (selectedDestination != null)
+                  Text(
+                    'Destination: ${selectedDestination.name} — ${selectedDestination.subnqn}',
+                  ),
+              ],
+            ],
+          ],
           TextField(
             key: const Key('nvme-namespace-move-id'),
             controller: _id,
@@ -154,7 +301,10 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
             decoration: const InputDecoration(
               labelText: 'Exact namespace database ID (not NSID)',
             ),
-            onChanged: (_) => setState(_discard),
+            onChanged: (_) => setState(() {
+              _discard();
+              _destination.clear();
+            }),
           ),
           TextField(
             key: const Key('nvme-namespace-move-new'),

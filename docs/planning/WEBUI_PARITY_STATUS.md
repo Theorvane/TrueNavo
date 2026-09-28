@@ -1,6 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: relocation into a populated isolated ZVOL subsystem
+## Current continuation: native NVMe namespace move target discovery and selection
+
+The relocation panel now offers an explicit on-demand load/refresh action and separate namespace/destination selectors. No inventory request occurs on panel mount. Discovery uses the existing complete bounded public topology and protected host/mapping projections under the shared server-operation lock, reusing the same eligibility rules as relocation. Results contain immutable ID-sorted public namespace/source/destination metadata only: invalid or attached sources, unsafe destinations and NSID collisions are excluded. Failed or malformed discovery is reported as unavailable, not an empty eligible list. The selectors show source namespace ID/NSID plus subsystem names and NQNs; manual exact-ID entry remains available.
+
+Discovery only fills IDs; it neither changes configuration nor authorizes dispatch. It cancels old issued reviews, and selection changes clear consents and confirmation. Refresh clears old options and selections; provider/connection replacement, disposal and late responses cannot restore old-server options. The normal independent fresh review and submission preflight remain mandatory, with the existing single-use five-minute review, two consents and post-write readback/fence rules. Discovery is not proof of backing ownership/health, runtime IO or an atomic view. Fake API tests cover immutable bounded results, exclusion rules, lock/lifecycle guards, stale reviews, empty/error distinctions and server replacement; actual dropdown selection and manual input are tested at 320/430px in dark/light themes with 200% text and keyboard insets. No live NAS read or write occurred. Namespace creation, FILE/attached changes and associated-host credential management remain pending; TD-037 stays partial.
+
+## Previous continuation: relocation into a populated isolated ZVOL subsystem
 
 The native namespace relocation workflow now accepts a destination that is empty or already contains only disabled unlocked ZVOL namespaces. Every destination NSID must be known, valid and unique, and none may collide with the moved namespace's preserved NSID. FILE residents, enabled or locked residents, unknown locks or IDs, duplicate/reserved IDs and collisions fail closed. Both subsystems still require distinct known NQNs, restricted host access and no host/port mappings. The review exposes an immutable ID-sorted resident list with database IDs and NSIDs; no resident is renumbered or reconfigured.
 
