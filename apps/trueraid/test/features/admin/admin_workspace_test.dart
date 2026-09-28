@@ -360,6 +360,7 @@ void main() {
     ('nvmet.host_subsys.create', NvmePage),
     ('nvmet.host.delete', NvmePage),
     ('nvmet.host.create', NvmePage),
+    ('nvmet.host.generate_key', NvmePage),
     ('nvmet.host.update', NvmePage),
     ('nvmet.port_subsys.delete', NvmePage),
     ('nvmet.port_subsys.create', NvmePage),
@@ -833,6 +834,16 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
+  testWidgets('key generation cannot expose secrets through the generic form', (
+    tester,
+  ) async {
+    final (_, api) = await _pump(tester, _page('nvmet.host.generate_key'));
+    expect(api.adminCatalog.method('nvmet.host.generate_key'), isNotNull);
+    expect(find.text('This action is unavailable'), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
+    expect(api.requests, isEmpty);
+  });
+
   testWidgets('host NQN generic update cannot bypass credential guards', (
     tester,
   ) async {
@@ -1083,6 +1094,10 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       ]),
       'nvmet.host.create': _metadata([
         {'_name_': 'data', '_required_': true, 'type': 'object'},
+      ]),
+      'nvmet.host.generate_key': _metadata([
+        {'_name_': 'dhchap_hash', '_required_': false, 'type': 'string'},
+        {'_name_': 'nqn', '_required_': false, 'type': 'string'},
       ]),
       'nvmet.host.update': _metadata([
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
