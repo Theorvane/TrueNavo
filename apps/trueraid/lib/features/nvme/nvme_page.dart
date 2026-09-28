@@ -20,6 +20,7 @@ import 'nvme_port_create_editor.dart';
 import 'nvme_namespace_delete_editor.dart';
 import 'nvme_namespace_enabled_editor.dart';
 import 'nvme_namespace_nsid_editor.dart';
+import 'nvme_namespace_move_editor.dart';
 import 'nvme_host_create_editor.dart';
 import 'nvme_host_key_create_editor.dart';
 import 'nvme_host_key_replace_editor.dart';
@@ -201,6 +202,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeNamespaceEnabledEditor(),
                   const SizedBox(height: 20),
                   const NvmeNamespaceNsidEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeNamespaceMoveEditor(),
                   const SizedBox(height: 20),
                   const NvmeHostCreateEditor(),
                   const SizedBox(height: 20),
