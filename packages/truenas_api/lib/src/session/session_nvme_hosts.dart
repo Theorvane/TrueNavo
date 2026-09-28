@@ -173,6 +173,84 @@ abstract interface class AuthenticatedNvmeHostKeyCreateSession {
   });
 }
 
+/// SDK-only credential replacement foundation. Native review/consent and full
+/// public topology fencing are required before exposing this to app users.
+abstract interface class AuthenticatedNvmeHostKeyReplaceSession {
+  Future<NvmeHostKeyReplacementReview> reviewNvmeHostKeyReplacement(int id);
+  Future<NvmeHostAuthentication> replaceNvmeHostImportedKeys({
+    required NvmeHostKeyReplacementReview review,
+    required String hash,
+    required String? group,
+    required NvmeHostKeyDraft keys,
+  });
+}
+
+/// Opaque, connection-bound, single-use proof of returned credential fields.
+/// No old key value or fingerprint getter/serializer is exposed. Redaction
+/// can hide changes; this does not prove actual credential state or inactivity.
+final class NvmeHostKeyReplacementReview {
+  NvmeHostKeyReplacementReview._(
+    this.target,
+    this.issuedAt,
+    this._owner,
+    this._references,
+    this._salt,
+    this._digest,
+  );
+  final NvmeHostAuthentication target;
+  final DateTime issuedAt;
+  final Object _owner;
+  final String _references;
+  Uint8List? _salt, _digest;
+  bool _claimed = false;
+  bool get isDisposed => _salt == null;
+  void _claim() {
+    if (_claimed || isDisposed) throw const NvmeHostException();
+    _claimed = true;
+  }
+
+  void dispose() {
+    _salt?.fillRange(0, _salt!.length, 0);
+    _digest?.fillRange(0, _digest!.length, 0);
+    _salt = null;
+    _digest = null;
+  }
+
+  @override
+  String toString() => 'NvmeHostKeyReplacementReview(redacted)';
+}
+
+Uint8List _nvmeCredentialProof(Object? raw, Uint8List salt) {
+  final target = NvmeHostAuthenticationInventory.project([raw]).hosts.single;
+  final row = raw as Map;
+  final bytes = utf8.encode(
+    jsonEncode([
+      target.id,
+      target.nqn,
+      target.hash,
+      target.group,
+      row['dhchap_key'],
+      row['dhchap_ctrl_key'],
+    ]),
+  );
+  try {
+    return Uint8List.fromList(
+      crypto.Hmac(crypto.sha256, salt).convert(bytes).bytes,
+    );
+  } finally {
+    bytes.fillRange(0, bytes.length, 0);
+  }
+}
+
+bool _nvmeSameDigest(Uint8List a, Uint8List b) {
+  if (a.length != b.length) return false;
+  var difference = 0;
+  for (var i = 0; i < a.length; i++) {
+    difference |= a[i] ^ b[i];
+  }
+  return difference == 0;
+}
+
 /// Opaque, single-use, caller-disposable key material. No public key getter,
 /// JSON serializer or key-bearing toString. Buffer wiping is best effort:
 /// Dart strings and transport serialization copies cannot be zeroized here.

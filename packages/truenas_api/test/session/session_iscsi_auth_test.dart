@@ -25,7 +25,479 @@ NvmeHostAuthentication _clearTarget() =>
       },
     ]).hosts.single;
 
+_Wire _replacementWire() => _Wire(
+  advertiseNvme: true,
+  advertiseNvmeHostUpdate: true,
+  advertiseNvmeHashes: true,
+  advertiseNvmeGroups: true,
+)..keyReplace = true;
+
+class _ReplaceHarness {
+  _ReplaceHarness({_Wire? wire}) : wire = wire ?? _replacementWire() {
+    repo = TrueNasSessionRepository(
+      connector: _Connector(this.wire),
+      nvmeHostKeyNow: () => clock,
+    );
+  }
+  final _Wire wire;
+  late final TrueNasSessionRepository repo;
+  DateTime clock = DateTime.utc(2026, 9, 28);
+  Future<void> connect() async {
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+  }
+
+  Future<NvmeHostAuthentication> replace(
+    NvmeHostKeyReplacementReview review,
+    NvmeHostKeyDraft keys, {
+    String hash = 'SHA-384',
+    String? group,
+  }) => repo.replaceNvmeHostImportedKeys(
+    review: review,
+    hash: hash,
+    group: group,
+    keys: keys,
+  );
+  int get writes =>
+      wire.requests.where((r) => r['method'] == 'nvmet.host.update').length;
+}
+
 void main() {
+  for (final oldAuthentication in [false, true]) {
+    for (final controller in [false, true]) {
+      test(
+        'protected replacement preserves identity and verifies exact keys old=$oldAuthentication controller=$controller',
+        () async {
+          final h = _ReplaceHarness();
+          if (oldAuthentication) {
+            h.wire.hostRow.addAll({
+              'dhchap_key': _secret,
+              'dhchap_ctrl_key': _secret,
+              'dhchap_dhgroup': '2048-BIT',
+            });
+          }
+          await h.connect();
+          final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+          addTearDown(review.dispose);
+          expect(review.target.hostKeyReturned, oldAuthentication);
+          expect(review.toString(), 'NvmeHostKeyReplacementReview(redacted)');
+          expect(() => jsonEncode(review), throwsA(isA<Object>()));
+          expect(h.writes, 0);
+          final hostKey = _importedKey('01'),
+              controllerKey = controller ? _importedKey('02') : null;
+          final keys = NvmeHostKeyDraft.import(
+            hostKey: hostKey,
+            controllerKey: controllerKey,
+          );
+          final result = await h.replace(
+            review,
+            keys,
+            group: controller ? '4096-BIT' : null,
+          );
+          expect(result.id, 3);
+          expect(result.nqn, 'nqn.2026-09.example:old');
+          expect(result.hash, 'SHA-384');
+          expect(result.controllerKeyReturned, controller);
+          expect(result.toString(), isNot(contains(hostKey)));
+          expect(review.isDisposed, true);
+          expect(keys.isDisposed, true);
+          expect(h.writes, 1);
+          final write = h.wire.requests.singleWhere(
+            (r) => r['method'] == 'nvmet.host.update',
+          );
+          expect(write['params'], [
+            3,
+            {
+              'dhchap_key': hostKey,
+              'dhchap_ctrl_key': controllerKey,
+              'dhchap_hash': 'SHA-384',
+              'dhchap_dhgroup': controller ? '4096-BIT' : null,
+            },
+          ]);
+          final reads = h.wire.requests
+              .where(
+                (r) =>
+                    r['method'] == 'nvmet.host.query' &&
+                    ((r['params'] as List).first as List).isNotEmpty,
+              )
+              .toList();
+          expect(reads.length, 3);
+          for (final r in reads) {
+            expect((r['params'] as List).first, [
+              ['id', '=', 3],
+            ]);
+            expect(((r['params'] as List).last as Map)['limit'], 2);
+          }
+          final next = NvmeHostKeyDraft.import(hostKey: hostKey);
+          await expectLater(
+            h.replace(review, next),
+            throwsA(isA<NvmeHostException>()),
+          );
+          expect(next.isDisposed, true);
+          expect(h.writes, 1);
+        },
+      );
+    }
+  }
+  for (final change in [
+    'host key',
+    'controller key',
+    'hash',
+    'group',
+    'NQN',
+    'association',
+    'other host',
+    'expired',
+    'clock backwards',
+    'cancel',
+    'unsupported hash',
+    'unsupported group',
+  ]) {
+    test(
+      'replacement preflight rejects $change and wipes owned objects',
+      () async {
+        final h = _ReplaceHarness();
+        h.wire.hostRow.addAll({
+          'dhchap_key': _secret,
+          'dhchap_ctrl_key': _secret,
+          'dhchap_dhgroup': '2048-BIT',
+        });
+        await h.connect();
+        final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+        addTearDown(review.dispose);
+        switch (change) {
+          case 'host key':
+            h.wire.hostRow['dhchap_key'] = _importedKey('01');
+          case 'controller key':
+            h.wire.hostRow['dhchap_ctrl_key'] = _importedKey('02');
+          case 'hash':
+            h.wire.hostRow['dhchap_hash'] = 'SHA-512';
+          case 'group':
+            h.wire.hostRow['dhchap_dhgroup'] = '8192-BIT';
+          case 'NQN':
+            h.wire.hostRow['hostnqn'] = 'nqn.2026-09.example:changed';
+          case 'association':
+            h.wire.replacementMappings.add({
+              'id': 2,
+              'host': {'id': 3},
+              'subsys': {'id': 2},
+            });
+          case 'other host':
+            h.wire.replacementOther['hostnqn'] = 'nqn.2026-09.example:changed';
+          case 'expired':
+            h.clock = h.clock.add(const Duration(minutes: 5));
+          case 'clock backwards':
+            h.clock = h.clock.subtract(const Duration(seconds: 1));
+          case 'cancel':
+            review.dispose();
+          case 'unsupported hash':
+            h.wire.hashes = ['SHA-256'];
+          case 'unsupported group':
+            h.wire.groups = [];
+        }
+        final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+        await expectLater(
+          h.replace(review, keys, group: '4096-BIT'),
+          throwsA(
+            isA<NvmeHostException>().having(
+              (e) => e.toString(),
+              'safe error',
+              isNot(contains(_secret)),
+            ),
+          ),
+        );
+        expect(h.writes, 0);
+        expect(keys.isDisposed, true);
+        expect(review.isDisposed, true);
+      },
+    );
+  }
+  for (final failure in [
+    'wrong ID',
+    'wrong NQN',
+    'wrong hash',
+    'wrong group',
+    'wrong host key',
+    'wrong controller key',
+    'redacted result',
+    'missing field',
+    'missing readback',
+    'duplicate readback',
+    'rotated readback',
+    'redacted readback',
+    'readback ID',
+    'public drift',
+    'new mapping',
+  ]) {
+    test(
+      'replacement postwrite $failure rejects without retries or secret leaks',
+      () async {
+        final h = _ReplaceHarness();
+        await h.connect();
+        final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+        h.wire.keyReplaceFailure = failure;
+        final keys = NvmeHostKeyDraft.import(
+          hostKey: _importedKey('01'),
+          controllerKey: _importedKey('02'),
+        );
+        await expectLater(
+          h.replace(review, keys, group: '4096-BIT'),
+          throwsA(
+            isA<NvmeHostException>().having(
+              (e) => e.toString(),
+              'safe error',
+              isNot(contains(_importedKey('01'))),
+            ),
+          ),
+        );
+        expect(h.writes, 1);
+        expect(review.isDisposed, true);
+        expect(keys.isDisposed, true);
+        expect(
+          h.wire.requests.where((r) => r['method'] == 'nvmet.host.create'),
+          isEmpty,
+        );
+      },
+    );
+  }
+  for (final issue in [
+    'mapping',
+    'duplicate NQN',
+    'missing target',
+    'inconsistent credentials',
+    'invalid ID',
+  ]) {
+    test('replacement review rejects $issue without writes', () async {
+      final h = _ReplaceHarness();
+      switch (issue) {
+        case 'mapping':
+          h.wire.replacementMappings.add({
+            'id': 2,
+            'host': {'id': 3},
+            'subsys': {'id': 2},
+          });
+        case 'duplicate NQN':
+          h.wire.replacementOther['hostnqn'] = h.wire.hostRow['hostnqn'];
+        case 'missing target':
+          h.wire.hostRow['id'] = 99;
+        case 'inconsistent credentials':
+          h.wire.hostRow['dhchap_ctrl_key'] = _secret;
+      }
+      await h.connect();
+      await expectLater(
+        h.repo.reviewNvmeHostKeyReplacement(issue == 'invalid ID' ? 0 : 3),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(h.writes, 0);
+    });
+  }
+  test('foreign repository cannot consume review or original draft', () async {
+    final h = _ReplaceHarness(), other = _ReplaceHarness();
+    await h.connect();
+    await other.connect();
+    final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+    final foreignKeys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+    await expectLater(
+      other.replace(review, foreignKeys),
+      throwsA(isA<NvmeHostException>()),
+    );
+    expect(foreignKeys.isDisposed, true);
+    expect(review.isDisposed, false);
+    final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+    await h.replace(review, keys);
+    expect(h.writes, 1);
+    expect(other.writes, 0);
+  });
+  test(
+    'concurrent reuse cannot wipe in-flight replacement proof or draft',
+    () async {
+      final h = _ReplaceHarness();
+      await h.connect();
+      final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+      final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+      h.wire.pauseHashes = Completer<void>();
+      final pending = h.replace(review, keys);
+      await h.wire.hashesStarted.future;
+      await expectLater(
+        h.replace(review, keys),
+        throwsA(isA<NvmeHostException>()),
+      );
+      final otherKeys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+      await expectLater(
+        h.replace(review, otherKeys),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(keys.isDisposed, false);
+      expect(review.isDisposed, false);
+      expect(otherKeys.isDisposed, true);
+      h.wire.pauseHashes!.complete();
+      await pending;
+      expect(keys.isDisposed, true);
+      expect(review.isDisposed, true);
+      expect(h.writes, 1);
+    },
+  );
+  test('review expiry during algorithm discovery prevents dispatch', () async {
+    final h = _ReplaceHarness();
+    await h.connect();
+    final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+    final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+    h.wire.pauseHashes = Completer<void>();
+    final pending = h.replace(review, keys);
+    await h.wire.hashesStarted.future;
+    h.clock = h.clock.add(const Duration(minutes: 5));
+    h.wire.pauseHashes!.complete();
+    await expectLater(pending, throwsA(isA<NvmeHostException>()));
+    expect(h.writes, 0);
+    expect(keys.isDisposed, true);
+    expect(review.isDisposed, true);
+  });
+  for (final issue in [
+    'no update',
+    'no query',
+    'no mappings',
+    'no hashes',
+    'no groups',
+    'version',
+  ]) {
+    test('replacement requires advertised capability: $issue', () async {
+      final wire = _Wire(
+        advertiseNvme: issue != 'no query',
+        advertiseNvmeMapping: issue != 'no mappings',
+        advertiseNvmeHostUpdate: issue != 'no update',
+        advertiseNvmeHashes: issue != 'no hashes',
+        advertiseNvmeGroups: issue != 'no groups',
+      )..keyReplace = true;
+      if (issue == 'version') wire.serverVersion = '24.10.2';
+      final h = _ReplaceHarness(wire: wire);
+      await h.connect();
+      await expectLater(
+        h.repo.reviewNvmeHostKeyReplacement(3),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(
+        wire.requests.where(
+          (r) => (r['method'] as String).startsWith('nvmet.'),
+        ),
+        isEmpty,
+      );
+    });
+  }
+  for (final issue in ['review cancelled', 'keys cancelled']) {
+    test('replacement $issue during preflight sends nothing', () async {
+      final h = _ReplaceHarness();
+      await h.connect();
+      final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+      final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+      h.wire.pauseHashes = Completer<void>();
+      final pending = h.replace(review, keys);
+      await h.wire.hashesStarted.future;
+      if (issue == 'review cancelled') {
+        review.dispose();
+      } else {
+        keys.dispose();
+      }
+      h.wire.pauseHashes!.complete();
+      await expectLater(pending, throwsA(isA<NvmeHostException>()));
+      expect(h.writes, 0);
+      expect(keys.isDisposed, true);
+      expect(review.isDisposed, true);
+    });
+  }
+  test(
+    'reconnection rejects previous connection review without consuming it',
+    () async {
+      final old = _replacementWire(), fresh = _replacementWire();
+      final connector = _RotatingConnector([old, fresh]);
+      final repo = TrueNasSessionRepository(connector: connector);
+      addTearDown(repo.close);
+      Future<void> connect() => repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await connect();
+      final review = await repo.reviewNvmeHostKeyReplacement(3);
+      addTearDown(review.dispose);
+      await connect();
+      final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+      await expectLater(
+        repo.replaceNvmeHostImportedKeys(
+          review: review,
+          hash: 'SHA-256',
+          group: null,
+          keys: keys,
+        ),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(keys.isDisposed, true);
+      expect(review.isDisposed, false);
+      expect(
+        fresh.requests.where(
+          (r) => (r['method'] as String).startsWith('nvmet.'),
+        ),
+        isEmpty,
+      );
+    },
+  );
+  for (final issue in [
+    'missing field',
+    'bad key shape',
+    'duplicate IDs',
+    'inventory boundary',
+  ]) {
+    test('replacement review rejects malformed $issue', () async {
+      final h = _ReplaceHarness();
+      await h.connect();
+      if (issue == 'missing field') h.wire.hostRow.remove('dhchap_key');
+      if (issue == 'bad key shape') {
+        h.wire.hostRow['dhchap_key'] = {'secret': _secret};
+      }
+      if (issue == 'duplicate IDs') h.wire.replacementOther['id'] = 3;
+      if (issue == 'inventory boundary') {
+        h.wire.overrideHostQuery = true;
+        h.wire.hostQueryResult = [
+          for (var id = 1; id <= 101; id++)
+            {'id': id, 'hostnqn': 'nqn.2026-09.example:$id'},
+        ];
+      }
+      await expectLater(
+        h.repo.reviewNvmeHostKeyReplacement(3),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(h.writes, 0);
+    });
+  }
+  for (final issue in ['bad hash', 'bad group', 'disposed keys']) {
+    test(
+      'replacement invalid input $issue is consumed without dispatch',
+      () async {
+        final h = _ReplaceHarness();
+        await h.connect();
+        final review = await h.repo.reviewNvmeHostKeyReplacement(3);
+        addTearDown(review.dispose);
+        final keys = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+        if (issue == 'disposed keys') keys.dispose();
+        await expectLater(
+          h.replace(
+            review,
+            keys,
+            hash: issue == 'bad hash' ? 'MD5' : 'SHA-256',
+            group: issue == 'bad group' ? 'bad' : null,
+          ),
+          throwsA(isA<NvmeHostException>()),
+        );
+        expect(h.writes, 0);
+        expect(keys.isDisposed, true);
+        // Failure to claim an already consumed draft must not consume a review.
+        expect(review.isDisposed, issue != 'disposed keys');
+      },
+    );
+  }
   for (final format in ['01', '02', '03']) {
     test(
       'opaque imported-key draft supports format $format and idempotent disposal',
@@ -1574,6 +2046,14 @@ final class _Connector implements RpcConnector {
   Future<RpcTransport> connect(Uri endpoint) async => wire;
 }
 
+final class _RotatingConnector implements RpcConnector {
+  _RotatingConnector(this.wires);
+  final List<_Wire> wires;
+  int _index = 0;
+  @override
+  Future<RpcTransport> connect(Uri endpoint) async => wires[_index++];
+}
+
 final class _Wire implements RpcTransport {
   _Wire({
     this.advertiseAuth = true,
@@ -1598,6 +2078,15 @@ final class _Wire implements RpcTransport {
   String? renameFailure;
   bool overrideHostQuery = false;
   bool keyCreate = false;
+  bool keyReplace = false;
+  String? keyReplaceFailure;
+  final replacementMappings = <Map<String, Object?>>[];
+  final replacementOther = <String, Object?>{
+    'id': 8,
+    'hostnqn': 'nqn.2026-09.example:other',
+  };
+  bool replacementWritten = false;
+  String serverVersion = '25.10.1';
   String? keyCreateFailure;
   Map<String, Object?>? createdHost;
   Completer<void>? pauseHashes;
@@ -1631,7 +2120,7 @@ final class _Wire implements RpcTransport {
     final result = switch (request['method']) {
       'auth.login_ex' => {'response_type': 'SUCCESS'},
       'auth.me' => {'pw_name': 'fixture-user'},
-      'system.info' => {'version': '25.10.1'},
+      'system.info' => {'version': serverVersion},
       'core.get_methods' => {
         if (advertiseAuth)
           'iscsi.auth.query': {
@@ -1677,9 +2166,11 @@ final class _Wire implements RpcTransport {
               ],
       'nvmet.host.query' when overrideHostQuery => hostQueryResult,
       'nvmet.host.query' when keyCreate => _keyQuery(request),
+      'nvmet.host.query' when keyReplace => _replacementQuery(request),
       'nvmet.host.query' when advertiseNvmeHostUpdate => [Map.of(hostRow)],
       'nvmet.host.dhchap_hash_choices' => hashes,
       'nvmet.host.dhchap_dhgroup_choices' => groups,
+      'nvmet.host.update' when keyReplace => _replaceKeys(request),
       'nvmet.host.update' => _rename(request),
       'nvmet.host.query' => [
         {'id': 3, 'hostnqn': 'nqn.fixture:client', 'dhchap_key': _secret},
@@ -1709,6 +2200,7 @@ final class _Wire implements RpcTransport {
             'subsys': {'id': 2},
           },
         ],
+      'nvmet.host_subsys.query' when keyReplace => replacementMappings,
       'nvmet.host_subsys.query' => [
         {
           'id': 4,
@@ -1819,6 +2311,65 @@ final class _Wire implements RpcTransport {
         createdHost!.remove('dhchap_ctrl_key');
     }
     return Map.of(createdHost!);
+  }
+
+  Object? _replacementQuery(Map<String, dynamic> request) {
+    final filter = (request['params'] as List).first as List;
+    if (filter.isEmpty) return [Map.of(hostRow), Map.of(replacementOther)];
+    if (replacementWritten && keyReplaceFailure == 'missing readback') {
+      return [];
+    }
+    final row = Map.of(hostRow);
+    if (replacementWritten && keyReplaceFailure == 'duplicate readback') {
+      return [row, row];
+    }
+    if (replacementWritten && keyReplaceFailure == 'rotated readback') {
+      row['dhchap_key'] = _importedKey('01', seed: 99);
+    }
+    if (replacementWritten && keyReplaceFailure == 'redacted readback') {
+      row['dhchap_key'] = '********';
+    }
+    if (replacementWritten && keyReplaceFailure == 'readback ID') {
+      row['id'] = 99;
+    }
+    return [row];
+  }
+
+  Object _replaceKeys(Map<String, dynamic> request) {
+    final params = request['params'] as List;
+    expect(params.first, 3);
+    hostRow.addAll(Map<String, Object?>.from(params.last as Map));
+    replacementWritten = true;
+    if (keyReplaceFailure == 'public drift') {
+      replacementOther['hostnqn'] = 'nqn.2026-09.example:changed';
+    }
+    if (keyReplaceFailure == 'new mapping') {
+      replacementMappings.add({
+        'id': 9,
+        'host': {'id': 3},
+        'subsys': {'id': 2},
+      });
+    }
+    final row = Map.of(hostRow);
+    switch (keyReplaceFailure) {
+      case 'wrong ID':
+        row['id'] = 99;
+      case 'wrong NQN':
+        row['hostnqn'] = 'nqn.2026-09.example:wrong';
+      case 'wrong hash':
+        row['dhchap_hash'] = 'SHA-512';
+      case 'wrong group':
+        row['dhchap_dhgroup'] = '8192-BIT';
+      case 'wrong host key':
+        row['dhchap_key'] = _importedKey('01', seed: 99);
+      case 'wrong controller key':
+        row['dhchap_ctrl_key'] = _importedKey('01', seed: 99);
+      case 'redacted result':
+        row['dhchap_key'] = '********';
+      case 'missing field':
+        row.remove('dhchap_ctrl_key');
+    }
+    return row;
   }
 }
 

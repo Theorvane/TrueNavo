@@ -151,6 +151,7 @@ final class TrueNasSessionRepository
         AuthenticatedNvmeHostChoicesSession,
         AuthenticatedNvmeHostCreateSession,
         AuthenticatedNvmeHostKeyCreateSession,
+        AuthenticatedNvmeHostKeyReplaceSession,
         AuthenticatedNvmeHostRenameSession,
         AuthenticatedNvmeHostHashSession,
         AuthenticatedNvmeHostAccessSession,
@@ -177,6 +178,7 @@ final class TrueNasSessionRepository
     this.initShutdownTasksNow,
     this.auditSettingsNow,
     this.auditExportNow,
+    this.nvmeHostKeyNow,
     // Preserve the public connector argument and private storage name.
     // ignore: prefer_initializing_formals
   }) : _connector = connector,
@@ -207,6 +209,7 @@ final class TrueNasSessionRepository
   final DateTime Function()? initShutdownTasksNow;
   final DateTime Function()? auditSettingsNow;
   final DateTime Function()? auditExportNow;
+  final DateTime Function()? nvmeHostKeyNow;
   _SessionManagement? _management;
   _SessionAdmin? _admin;
   _SessionNetwork? _network;
@@ -1829,6 +1832,252 @@ final class TrueNasSessionRepository
       return NvmeHostAuthenticationInventory.project(raw);
     } on Object {
       throw const NvmeHostException();
+    }
+  }
+
+  _SessionManagement _nvmeKeyReplacementSession() {
+    final management = _management;
+    if (management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !management.isCurrent() ||
+        _client?.isOpen != true ||
+        ![
+          'nvmet.host.query',
+          'nvmet.host_subsys.query',
+          'nvmet.host.update',
+          'nvmet.host.dhchap_hash_choices',
+          'nvmet.host.dhchap_dhgroup_choices',
+        ].every(management.methods.contains)) {
+      throw const NvmeHostException();
+    }
+    return management;
+  }
+
+  Future<Object?> _nvmeKeyReplacementTarget(
+    int id,
+    _SessionManagement management,
+  ) async {
+    if (!management.isCurrent() ||
+        !identical(_management, management) ||
+        _client?.isOpen != true) {
+      throw const NvmeHostException();
+    }
+    final raw = await _client!
+        .call(
+          'nvmet.host.query',
+          id: _id(),
+          params: [
+            [
+              ['id', '=', id],
+            ],
+            {
+              'select': [
+                'id',
+                'hostnqn',
+                'dhchap_key',
+                'dhchap_ctrl_key',
+                'dhchap_hash',
+                'dhchap_dhgroup',
+              ],
+              'limit': 2,
+            },
+          ],
+        )
+        .timeout(managementRequestTimeout);
+    if (!management.isCurrent() ||
+        raw is! List ||
+        raw.length != 1 ||
+        NvmeHostAuthenticationInventory.project(raw).hosts.single.id != id) {
+      throw const NvmeHostException();
+    }
+    return raw.single;
+  }
+
+  String _nvmeUnassociatedReferenceProof(
+    NvmeHostPublicRows rows,
+    NvmeHostAuthentication target,
+  ) {
+    if (rows.hosts
+                .where(
+                  (h) => h['id'] == target.id && h['hostnqn'] == target.nqn,
+                )
+                .length !=
+            1 ||
+        rows.hosts
+                .where(
+                  (h) =>
+                      (h['hostnqn'] as String).toLowerCase() ==
+                      target.nqn.toLowerCase(),
+                )
+                .length !=
+            1 ||
+        rows.mappings.any((m) => (m['host'] as Map)['id'] == target.id)) {
+      throw const NvmeHostException();
+    }
+    return _nvmeHostReferenceProof(rows);
+  }
+
+  @override
+  Future<NvmeHostKeyReplacementReview> reviewNvmeHostKeyReplacement(
+    int id,
+  ) async {
+    Uint8List? salt, digest;
+    var retained = false;
+    try {
+      if (id <= 0) throw const NvmeHostException();
+      final management = _nvmeKeyReplacementSession();
+      final before = await loadNvmeHostReferences();
+      final raw = await _nvmeKeyReplacementTarget(id, management);
+      final target = NvmeHostAuthenticationInventory.project([raw])
+          .hosts
+          .single;
+      if (target.inconsistent) throw const NvmeHostException();
+      final proof = _nvmeUnassociatedReferenceProof(before, target);
+      final after = await loadNvmeHostReferences();
+      if (!management.isCurrent() ||
+          _nvmeUnassociatedReferenceProof(after, target) != proof) {
+        throw const NvmeHostException();
+      }
+      final random = math.Random.secure();
+      salt = Uint8List.fromList(List.generate(32, (_) => random.nextInt(256)));
+      digest = _nvmeCredentialProof(raw, salt);
+      final review = NvmeHostKeyReplacementReview._(
+        target,
+        (nvmeHostKeyNow ?? DateTime.now)().toUtc(),
+        management,
+        proof,
+        salt,
+        digest,
+      );
+      retained = true;
+      return review;
+    } on Object {
+      throw const NvmeHostException();
+    } finally {
+      if (!retained) {
+        salt?.fillRange(0, salt.length, 0);
+        digest?.fillRange(0, digest.length, 0);
+      }
+    }
+  }
+
+  @override
+  Future<NvmeHostAuthentication> replaceNvmeHostImportedKeys({
+    required NvmeHostKeyReplacementReview review,
+    required String hash,
+    required String? group,
+    required NvmeHostKeyDraft keys,
+  }) async {
+    var ownsKeys = false, ownsReview = false;
+    try {
+      keys._claim();
+      ownsKeys = true;
+      final management = _nvmeKeyReplacementSession();
+      if (!identical(review._owner, management)) {
+        throw const NvmeHostException();
+      }
+      review._claim();
+      ownsReview = true;
+      void guardReview() {
+        final now = (nvmeHostKeyNow ?? DateTime.now)().toUtc();
+        if (!management.isCurrent() ||
+            review.isDisposed ||
+            keys.isDisposed ||
+            now.isBefore(review.issuedAt) ||
+            now.difference(review.issuedAt) >= const Duration(minutes: 5)) {
+          throw const NvmeHostException();
+        }
+      }
+
+      guardReview();
+      if (!const {'SHA-256', 'SHA-384', 'SHA-512'}.contains(hash) ||
+          (group != null &&
+              !const {
+                '2048-BIT',
+                '3072-BIT',
+                '4096-BIT',
+                '6144-BIT',
+                '8192-BIT',
+              }.contains(group))) {
+        throw const NvmeHostException();
+      }
+      final choices = await loadNvmeHostAuthenticationChoices();
+      guardReview();
+      if (!choices.hashes.contains(hash) ||
+          (group != null && !choices.groups.contains(group))) {
+        throw const NvmeHostException();
+      }
+      final before = await loadNvmeHostReferences();
+      guardReview();
+      if (_nvmeUnassociatedReferenceProof(before, review.target) !=
+          review._references) {
+        throw const NvmeHostException();
+      }
+      final old = await _nvmeKeyReplacementTarget(review.target.id, management);
+      guardReview();
+      final oldDigest = _nvmeCredentialProof(old, review._salt!);
+      try {
+        if (!_nvmeSameDigest(oldDigest, review._digest!)) {
+          throw const NvmeHostException();
+        }
+      } finally {
+        oldDigest.fillRange(0, oldDigest.length, 0);
+      }
+      // Reread mappings immediately before sending; reads are still non-atomic.
+      final latest = await loadNvmeHostReferences();
+      guardReview();
+      if (_nvmeUnassociatedReferenceProof(latest, review.target) !=
+          review._references) {
+        throw const NvmeHostException();
+      }
+      final raw = await _client!
+          .call(
+            'nvmet.host.update',
+            id: _id(),
+            params: [
+              review.target.id,
+              {
+                'dhchap_key': keys._hostText,
+                'dhchap_ctrl_key': keys._controllerText,
+                'dhchap_hash': hash,
+                'dhchap_dhgroup': group,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      NvmeHostAuthentication verify(Object? row) {
+        final result = NvmeHostAuthenticationInventory.project([row])
+            .hosts
+            .single;
+        if (row is! Map ||
+            result.id != review.target.id ||
+            result.nqn != review.target.nqn ||
+            result.hash != hash ||
+            result.group != group ||
+            row['dhchap_key'] != keys._hostText ||
+            row['dhchap_ctrl_key'] != keys._controllerText) {
+          throw const NvmeHostException();
+        }
+        return result;
+      }
+
+      verify(raw);
+      final confirmed = verify(
+        await _nvmeKeyReplacementTarget(review.target.id, management),
+      );
+      final after = await loadNvmeHostReferences();
+      if (!management.isCurrent() ||
+          _nvmeUnassociatedReferenceProof(after, confirmed) !=
+              review._references) {
+        throw const NvmeHostException();
+      }
+      return confirmed;
+    } on Object {
+      throw const NvmeHostException();
+    } finally {
+      if (ownsKeys) keys.dispose();
+      if (ownsReview) review.dispose();
     }
   }
 
