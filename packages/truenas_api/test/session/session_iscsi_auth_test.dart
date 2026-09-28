@@ -7,6 +7,186 @@ import 'package:truenas_api/truenas_api.dart';
 const _secret = 'fixture-chap-secret-never-exposed';
 
 void main() {
+  for (final input in [
+    (0, 'SHA-256', 'SHA-384'),
+    (-1, 'SHA-256', 'SHA-384'),
+    (3, 'SHA-1', 'SHA-384'),
+    (3, 'SHA-256', 'sha-384'),
+    (3, 'SHA-256', 'SHA-256'),
+  ]) {
+    test('invalid hash SDK input $input sends no NVMe request', () async {
+      final wire = _Wire(
+        advertiseNvme: true,
+        advertiseNvmeHostUpdate: true,
+        advertiseNvmeHashes: true,
+        advertiseNvmeGroups: true,
+      );
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.changeUncredentialedNvmeHostHash(
+          id: input.$1,
+          expectedNqn: 'nqn.2026-09.example:old',
+          expectedHash: input.$2,
+          newHash: input.$3,
+        ),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(
+        wire.requests.where(
+          (r) => (r['method'] as String).startsWith('nvmet.'),
+        ),
+        isEmpty,
+      );
+    });
+  }
+  test(
+    'hash-only SDK update privately preflights keys and preserves NQN',
+    () async {
+      final wire = _Wire(
+        advertiseNvme: true,
+        advertiseNvmeHostUpdate: true,
+        advertiseNvmeHashes: true,
+        advertiseNvmeGroups: true,
+      );
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final host = await repo.changeUncredentialedNvmeHostHash(
+        id: 3,
+        expectedNqn: 'nqn.2026-09.example:old',
+        expectedHash: 'SHA-256',
+        newHash: 'SHA-384',
+      );
+      expect(
+        [host.id, host.nqn, host.hash],
+        [3, 'nqn.2026-09.example:old', 'SHA-384'],
+      );
+      final write = wire.requests.singleWhere(
+        (r) => r['method'] == 'nvmet.host.update',
+      );
+      expect(write['params'], [
+        3,
+        {'dhchap_hash': 'SHA-384'},
+      ]);
+      expect(host.toString(), isNot(contains(_secret)));
+      expect(
+        wire.requests
+            .where((r) => (r['method'] as String).startsWith('nvmet.'))
+            .map((r) => r['method']),
+        [
+          'nvmet.host.dhchap_hash_choices',
+          'nvmet.host.dhchap_dhgroup_choices',
+          'nvmet.host.query',
+          'nvmet.host.update',
+        ],
+      );
+    },
+  );
+  for (final change in [
+    'dhchap_key',
+    'dhchap_ctrl_key',
+    'dhchap_dhgroup',
+    'id',
+    'hostnqn',
+    'dhchap_hash',
+    'choices',
+    'malformed choices',
+    'missing choices',
+    'missing update',
+  ]) {
+    test('hash SDK rejects $change before writing', () async {
+      final wire = _Wire(
+        advertiseNvme: true,
+        advertiseNvmeHostUpdate: change != 'missing update',
+        advertiseNvmeHashes: change != 'missing choices',
+        advertiseNvmeGroups: true,
+      );
+      if (wire.hostRow.containsKey(change)) {
+        wire.hostRow[change] = switch (change) {
+          'id' => 999,
+          'dhchap_dhgroup' => '4096-BIT',
+          'dhchap_hash' => 'SHA-512',
+          _ => _secret,
+        };
+      }
+      if (change == 'choices') wire.hashes = ['SHA-256'];
+      if (change == 'malformed choices') wire.hashes = [_secret];
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.changeUncredentialedNvmeHostHash(
+          id: 3,
+          expectedNqn: 'nqn.2026-09.example:old',
+          expectedHash: 'SHA-256',
+          newHash: 'SHA-384',
+        ),
+        throwsA(
+          isA<NvmeHostException>().having(
+            (e) => e.toString(),
+            'safe',
+            isNot(contains(_secret)),
+          ),
+        ),
+      );
+      expect(
+        wire.requests.where((r) => r['method'] == 'nvmet.host.update'),
+        isEmpty,
+      );
+    });
+  }
+  for (final failure in [
+    'auth after update',
+    'hash after update',
+    'ID after update',
+    'NQN after update',
+  ]) {
+    test(
+      'hash SDK rejects unsafe returned fields $failure after exactly one write',
+      () async {
+        final wire = _Wire(
+          advertiseNvme: true,
+          advertiseNvmeHostUpdate: true,
+          advertiseNvmeHashes: true,
+          advertiseNvmeGroups: true,
+        )..renameFailure = failure;
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        await expectLater(
+          repo.changeUncredentialedNvmeHostHash(
+            id: 3,
+            expectedNqn: 'nqn.2026-09.example:old',
+            expectedHash: 'SHA-256',
+            newHash: 'SHA-384',
+          ),
+          throwsA(isA<NvmeHostException>()),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.update'),
+          hasLength(1),
+        );
+      },
+    );
+  }
   test(
     'algorithm discovery calls only two public parameterless reads',
     () async {
@@ -948,7 +1128,11 @@ final class _Wire implements RpcTransport {
   }
 
   Object _rename(Map<String, dynamic> request) {
-    hostRow['hostnqn'] = ((request['params'] as List)[1] as Map)['hostnqn'];
+    final payload = (request['params'] as List)[1] as Map;
+    if (payload.containsKey('hostnqn')) hostRow['hostnqn'] = payload['hostnqn'];
+    if (payload.containsKey('dhchap_hash')) {
+      hostRow['dhchap_hash'] = payload['dhchap_hash'];
+    }
     switch (renameFailure) {
       case 'auth after update':
         hostRow['dhchap_key'] = _secret;

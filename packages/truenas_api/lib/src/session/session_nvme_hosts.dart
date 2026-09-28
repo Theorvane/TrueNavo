@@ -153,6 +153,17 @@ abstract interface class AuthenticatedNvmeHostRenameSession {
   });
 }
 
+/// Hash-only editing; nullable key/group fields must be returned unset.
+abstract interface class AuthenticatedNvmeHostHashSession {
+  Future<NvmeUncredentialedHost> loadUncredentialedNvmeHost(int id);
+  Future<NvmeUncredentialedHost> changeUncredentialedNvmeHostHash({
+    required int id,
+    required String expectedNqn,
+    required String expectedHash,
+    required String newHash,
+  });
+}
+
 final class NvmeUncredentialedHost {
   const NvmeUncredentialedHost(this.id, this.nqn, this.hash);
   final int id;

@@ -20,6 +20,7 @@ import 'nvme_port_create_editor.dart';
 import 'nvme_namespace_delete_editor.dart';
 import 'nvme_host_create_editor.dart';
 import 'nvme_host_rename_editor.dart';
+import 'nvme_host_hash_editor.dart';
 import 'nvme_host_authentication_panel.dart';
 import 'nvme_host_authentication_choices_panel.dart';
 import 'nvme_overview.dart';
@@ -194,6 +195,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeHostCreateEditor(),
                   const SizedBox(height: 20),
                   const NvmeHostRenameEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeHostHashEditor(),
                 ],
               ),
             ),
