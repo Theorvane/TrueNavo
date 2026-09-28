@@ -6,6 +6,7 @@ import '../dashboard/dashboard_controller.dart';
 import 'nvme_host_overview.dart';
 import 'nvme_overview.dart';
 import 'nvme_port_create_coordinator.dart';
+import 'nvme_port_address_choices.dart';
 
 class NvmePortCreateEditor extends ConsumerStatefulWidget {
   const NvmePortCreateEditor({super.key});
@@ -25,6 +26,45 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
   String? _message;
   bool _busy = false;
   String _transport = 'TCP';
+  NvmePortAddressChoices? _choices;
+  Object? _choicesSession;
+
+  Future<void> _loadChoices(NvmePortCreateCoordinator coordinator) async {
+    _discardReview();
+    final session = ref.read(dashboardActiveSessionProvider);
+    final transport = _transport;
+    setState(() {
+      _busy = true;
+      _choices = null;
+      _message = null;
+    });
+    try {
+      final choices = await coordinator.loadAddressChoices(transport);
+      if (!mounted) return;
+      if (!identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          transport != _transport) {
+        setState(
+          () => _message =
+              'Connection or transport changed. Reload address choices.',
+        );
+        return;
+      }
+      setState(() {
+        _choices = choices;
+        _choicesSession = session;
+      });
+    } on StateError catch (error) {
+      if (mounted) setState(() => _message = error.message.toString());
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _message = 'Transport address choices could not be read.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -105,6 +145,10 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
   Widget build(BuildContext context) {
     final coordinator = ref.watch(nvmePortCreateCoordinatorProvider);
     final session = ref.watch(dashboardActiveSessionProvider);
+    final choices =
+        identical(session, _choicesSession) && _choices?.transport == _transport
+        ? _choices
+        : null;
     final review =
         identical(session, _reviewSession) &&
             identical(coordinator, _reviewCoordinator) &&
@@ -120,7 +164,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
         !coordinator.locked;
     return TdPanel(
       title: 'Create a disabled NVMe-oF TCP/RDMA port',
-      description: 'Creates only a disabled TCP or RDMA port at an explicit IPv4 or global/ULA IPv6 address. Wildcard, scoped/link-local and IPv4-mapped IPv6 inputs are unavailable. No subsystem association or service start is requested. Enabling later may open a listener; RDMA hardware support, interface ownership and client access are not tested.',
+      description: 'Creates only a disabled TCP or RDMA port at a server-advertised IPv4 or global/ULA IPv6 address. Address choices are reread during review, before submission and after creation. Wildcard, scoped/link-local and mapped inputs are unavailable. No service start is requested. Hardware support and client access are not tested.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -141,12 +185,53 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
                     if (value == null) return;
                     setState(() {
                       _discardReview();
+                      _choices = null;
                       _transport = value;
                     });
                   }
                 : null,
           ),
           const SizedBox(height: 16),
+          OutlinedButton(
+            key: const Key('nvme-port-create-load-addresses'),
+            onPressed: enabled ? () => _loadChoices(coordinator) : null,
+            child: Text('Load $_transport address choices'),
+          ),
+          if (choices != null) ...[
+            Text(
+              '${choices.choices.length} usable addresses; ${choices.excludedCount} outside this editor’s supported formats.',
+            ),
+            if (choices.choices.isEmpty)
+              const Text(
+                'No supported addresses advertised. Creation is unavailable for this transport.',
+              ),
+            if (choices.choices.isNotEmpty)
+              DropdownButton<String>(
+                key: const Key('nvme-port-create-address-choice'),
+                isExpanded: true,
+                hint: const Text('Choose a server-advertised address'),
+                items: [
+                  for (final choice in choices.choices)
+                    DropdownMenuItem(
+                      value: choice.address,
+                      child: Text(
+                        '${choice.address} — ${choice.description}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: enabled
+                    ? (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _discardReview();
+                          _address.text = value;
+                        });
+                      }
+                    : null,
+              ),
+          ],
           TextField(
             key: const Key('nvme-port-create-address'),
             controller: _address,

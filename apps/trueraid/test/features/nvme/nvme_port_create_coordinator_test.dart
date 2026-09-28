@@ -34,7 +34,7 @@ class _Fake
         SessionRepository,
         AuthenticatedAdminSession,
         AuthenticatedNvmeHostSession {
-  _Fake() {
+  _Fake({bool advertiseChoices = true}) {
     adminCatalog = AdminCatalog.fromMetadata(
       version: '25.10.1',
       metadata: {
@@ -42,6 +42,7 @@ class _Fake
         'nvmet.host.query': _method(),
         'nvmet.host_subsys.query': _method(),
         'nvmet.port.create': _method(),
+        if (advertiseChoices) 'nvmet.port.transport_address_choices': _method(),
       },
     );
   }
@@ -76,6 +77,12 @@ class _Fake
   bool normalizeIpv6 = false;
   bool wrongTransportResponse = false;
   bool wrongTransportReadback = false;
+  final addressChoices = <String, Object?>{
+    '10.0.0.2': 'Test IPv4',
+    '2001:db8::2': 'Test IPv6',
+    'fd00::2': 'Test ULA',
+  };
+  bool removeChoicesAfterCreate = false;
   bool ambiguous = false;
   bool driftAfterWrite = false;
   bool queueDriftAfterWrite = false;
@@ -88,6 +95,8 @@ class _Fake
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
     calls.add(request);
     switch (request.method.name) {
+      case 'nvmet.port.transport_address_choices':
+        return AdminCompleted(request, value: Map.of(addressChoices));
       case 'nvmet.subsys.query':
         return AdminCompleted(request, value: [Map.of(subsystem)]);
       case 'nvmet.namespace.query':
@@ -117,6 +126,7 @@ class _Fake
           'pi_enable': null,
         };
         created.add(row);
+        if (removeChoicesAfterCreate) addressChoices.clear();
         if (normalizeIpv6) row['addr_traddr'] = '2001:0db8:0:0:0:0:0:0002';
         final returned = Map.of(row);
         if (wrongTransportResponse) returned['addr_trtype'] = 'TCP';
@@ -144,7 +154,8 @@ class _Fake
 }
 
 class _Harness {
-  _Harness() : api = _Fake() {
+  _Harness({bool advertiseChoices = true})
+    : api = _Fake(advertiseChoices: advertiseChoices) {
     session = AuthenticatedSession(
       profileId: 'fixture',
       repository: api,
@@ -174,6 +185,91 @@ const _choice = NvmePortCreateChoice('10.0.0.2', 4420);
 const _rdma = NvmePortCreateChoice('10.0.0.2', 4420, transport: 'RDMA');
 
 void main() {
+  test(
+    'missing choice method disables creation with no fallback write',
+    () async {
+      final h = _Harness(advertiseChoices: false);
+      expect(h.coordinator.available, false);
+      await expectLater(h.coordinator.prepare(_choice), throwsStateError);
+      expect(h.api.calls, isEmpty);
+    },
+  );
+  test(
+    'loading transport choices is read-only and uses force_ana=false',
+    () async {
+      final h = _Harness();
+      final choices = await h.coordinator.loadAddressChoices('RDMA');
+      expect(choices.transport, 'RDMA');
+      expect(choices.contains('10.0.0.2'), true);
+      expect(
+        h.api.calls.single.method.name,
+        'nvmet.port.transport_address_choices',
+      );
+      expect(h.api.calls.single.arguments, ['RDMA', false]);
+      expect(h.writes, 0);
+    },
+  );
+  test(
+    'empty missing or malformed advertised choices prevent creation',
+    () async {
+      for (final mode in ['empty', 'missing', 'malformed']) {
+        final h = _Harness();
+        if (mode == 'empty') h.api.addressChoices.clear();
+        if (mode == 'missing') h.api.addressChoices.remove('10.0.0.2');
+        if (mode == 'malformed') h.api.addressChoices['10.0.0.2'] = 123;
+        await expectLater(h.coordinator.prepare(_choice), throwsStateError);
+        expect(h.writes, 0);
+      }
+    },
+  );
+  test(
+    'address choice removal or description drift invalidates review',
+    () async {
+      for (final remove in [true, false]) {
+        final h = _Harness();
+        final review = await h.coordinator.prepare(_rdma);
+        if (remove) {
+          h.api.addressChoices.remove('10.0.0.2');
+        } else {
+          h.api.addressChoices['10.0.0.2'] = 'Changed';
+        }
+        expect(
+          (await h.coordinator.execute(review, review.confirmation)).outcome,
+          NvmePortCreateOutcome.rejected,
+        );
+        expect(h.writes, 0);
+      }
+    },
+  );
+  test(
+    'choice removal after creation fences rather than confirming success',
+    () async {
+      final h = _Harness();
+      h.api.removeChoicesAfterCreate = true;
+      final review = await h.coordinator.prepare(_rdma);
+      expect(
+        (await h.coordinator.execute(review, review.confirmation)).outcome,
+        NvmePortCreateOutcome.unknown,
+      );
+      expect(h.writes, 1);
+      expect(h.coordinator.locked, true);
+    },
+  );
+  test('reloading choices revokes the previously issued review', () async {
+    final h = _Harness();
+    final review = await h.coordinator.prepare(_choice);
+    await h.coordinator.loadAddressChoices('TCP');
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmePortCreateOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+  test('unsupported transport choice read does not call the API', () async {
+    final h = _Harness();
+    await expectLater(h.coordinator.loadAddressChoices('FC'), throwsStateError);
+    expect(h.api.calls, isEmpty);
+  });
   test('unsupported transports reject before reads', () async {
     final h = _Harness();
     for (final transport in ['FC', 'UDP', 'rdma', '', 'RDMA ']) {
@@ -721,6 +817,50 @@ void main() {
     await tester.tap(find.byKey(const Key('nvme-port-create-submit')));
     await tester.pumpAndSettle();
     expect(h.writes, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('server address picker loads and populates without writes', (
+    tester,
+  ) async {
+    final h = _Harness();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          nvmePortCreateCoordinatorProvider.overrideWith(
+            (ref) => h.coordinator,
+          ),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: NvmePortCreateEditor()),
+          ),
+        ),
+      ),
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-load-addresses')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-create-load-addresses')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('3 usable addresses'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-address-choice')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-create-address-choice')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('10.0.0.2 — Test IPv4').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('nvme-port-create-address')))
+          .controller!
+          .text,
+      '10.0.0.2',
+    );
+    expect(h.writes, 0);
     expect(tester.takeException(), isNull);
   });
 

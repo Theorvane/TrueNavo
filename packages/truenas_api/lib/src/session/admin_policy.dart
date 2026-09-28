@@ -866,6 +866,12 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'NVMe ports',
     'NVMe target transport endpoints.',
   ),
+  AdminOperationDefinition.read(
+    AdminDomain.shares,
+    'nvmet.port.transport_address_choices',
+    'NVMe transport address choices',
+    'Server-advertised transport binding addresses and descriptions.',
+  ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'nvmet.port.create',

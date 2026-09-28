@@ -8,6 +8,7 @@ import '../dashboard/dashboard_controller.dart';
 import '../management/server_operation_lock.dart';
 import 'nvme_mutation_snapshot.dart';
 import 'nvme_overview.dart';
+import 'nvme_port_address_choices.dart';
 import 'nvme_tcp_bind_address.dart';
 import 'nvme_subsystem_create_coordinator.dart' show NvmeWriteFence;
 
@@ -89,11 +90,13 @@ final class _Binding {
 }
 
 final class _Snapshot {
-  const _Snapshot(this.inventory, this.bindings);
+  const _Snapshot(this.inventory, this.bindings, this.addressChoices);
   final NvmeMutationSnapshot inventory;
   final List<_Binding> bindings;
+  final NvmePortAddressChoices addressChoices;
   String proof({int? omitPortId}) => jsonEncode([
     inventory.proof(omitPortId: omitPortId),
+    addressChoices.proof,
     for (final b in bindings)
       if (b.id != omitPortId) b.proof,
   ]);
@@ -130,6 +133,7 @@ final class NvmePortCreateCoordinator {
         'nvmet.namespace.query',
         'nvmet.port_subsys.query',
         'nvmet.port.create',
+        'nvmet.port.transport_address_choices',
       ].every((name) => api.adminCatalog.method(name)?.supported == true);
 
   void _guard() {
@@ -142,7 +146,52 @@ final class NvmePortCreateCoordinator {
     }
   }
 
-  Future<_Snapshot> _snapshot() async {
+  Future<NvmePortAddressChoices> _readAddressChoices(String transport) async {
+    _guard();
+    final method = api.adminCatalog.method(
+      'nvmet.port.transport_address_choices',
+    );
+    if (method == null ||
+        !method.supported ||
+        !const {'TCP', 'RDMA'}.contains(transport)) {
+      throw StateError(
+        'Transport address choices are unavailable. Nothing was sent.',
+      );
+    }
+    final response = await api.invokeAdmin(
+      AdminRequest(method: method, arguments: [transport, false]),
+    );
+    _guard();
+    if (response is! AdminCompleted) {
+      throw StateError('Transport address choices could not be read.');
+    }
+    return NvmePortAddressChoices.parse(transport, response.value);
+  }
+
+  Future<NvmePortAddressChoices> loadAddressChoices(String transport) async {
+    _guard();
+    if (_busy) throw StateError('Another server operation is in progress.');
+    final owner = lock.acquire();
+    if (owner == null) {
+      throw StateError('Another server operation is in progress.');
+    }
+    _busy = true;
+    _issued.clear();
+    try {
+      return await _readAddressChoices(transport);
+    } on StateError {
+      rethrow;
+    } on Object {
+      throw StateError(
+        'Transport address choices could not be read. Nothing was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
+  }
+
+  Future<_Snapshot> _snapshot(String transport) async {
     final inventory = await NvmeMutationSnapshot.load(
       api: api,
       hostsApi: hostsApi,
@@ -219,10 +268,17 @@ final class NvmePortCreateCoordinator {
         )) {
       throw StateError('Port inventories disagree. Nothing was sent.');
     }
-    return _Snapshot(inventory, bindings);
+    final choices = await _readAddressChoices(transport);
+    return _Snapshot(inventory, bindings, choices);
   }
 
   void _canCreate(_Snapshot snapshot, NvmePortCreateChoice choice) {
+    if (snapshot.addressChoices.transport != choice.transport ||
+        !snapshot.addressChoices.contains(choice.address)) {
+      throw StateError(
+        'The server does not advertise this address for the selected transport. Nothing was sent.',
+      );
+    }
     if (snapshot.bindings.length >= 100) {
       throw StateError(
         'The bounded port inventory cannot verify another create.',
@@ -264,7 +320,7 @@ final class NvmePortCreateCoordinator {
     _busy = true;
     _issued.clear();
     try {
-      final before = await _snapshot();
+      final before = await _snapshot(choice.transport);
       _canCreate(before, choice);
       final review = NvmePortCreateReview._(
         session.endpoint!,
@@ -315,7 +371,7 @@ final class NvmePortCreateCoordinator {
     _busy = true;
     var sent = false;
     try {
-      final before = await _snapshot();
+      final before = await _snapshot(review.choice.transport);
       _canCreate(before, review.choice);
       if (before.proof() != review.proof) {
         return const NvmePortCreateResult(
@@ -367,7 +423,7 @@ final class NvmePortCreateCoordinator {
           row['enabled'] != false) {
         return _unknown();
       }
-      final after = await _snapshot();
+      final after = await _snapshot(review.choice.transport);
       final binding = after.bindings.where((b) => b.id == id).singleOrNull;
       final port = after.inventory.topology.portById(id);
       if (binding == null ||
