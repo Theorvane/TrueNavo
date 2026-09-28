@@ -118,7 +118,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
         !coordinator.locked;
     return TdPanel(
       title: 'Create a disabled NVMe-oF TCP port',
-      description: 'Creates only a disabled TCP port at an explicit IPv4 address. No subsystem association or service start is requested. Enabling this port later may open a listener. Server interface ownership and client access are not tested.',
+      description: 'Creates only a disabled TCP port at an explicit IPv4 or global/ULA IPv6 address. Wildcard, scoped/link-local and IPv4-mapped IPv6 inputs are unavailable. No subsystem association or service start is requested. Enabling later may open a listener; interface ownership and client access are not tested.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -126,9 +126,9 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
             key: const Key('nvme-port-create-address'),
             controller: _address,
             enabled: enabled,
-            maxLength: 15,
+            maxLength: 39,
             decoration: const InputDecoration(
-              labelText: 'Explicit IPv4 bind address',
+              labelText: 'Explicit IPv4 or IPv6 bind address',
               border: OutlineInputBorder(),
             ),
             onChanged: (_) => setState(_discardReview),
@@ -161,9 +161,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
           if (review != null && coordinator != null) ...[
             const Divider(),
             Text('Server: ${review.endpoint}'),
-            Text(
-              'TCP ${review.choice.address}:${review.choice.servicePort}, disabled',
-            ),
+            Text('TCP ${review.choice.bindingLabel}, disabled'),
             const Text(
               'Payload: TCP transport, explicit address, service port and enabled=false only. No association or service operation is submitted.',
             ),

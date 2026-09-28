@@ -8,6 +8,7 @@ import '../dashboard/dashboard_controller.dart';
 import '../management/server_operation_lock.dart';
 import 'nvme_mutation_snapshot.dart';
 import 'nvme_overview.dart';
+import 'nvme_tcp_bind_address.dart';
 import 'nvme_subsystem_create_coordinator.dart' show NvmeWriteFence;
 
 final nvmePortCreateCoordinatorProvider = Provider<NvmePortCreateCoordinator?>((
@@ -30,23 +31,18 @@ final nvmePortCreateCoordinatorProvider = Provider<NvmePortCreateCoordinator?>((
   );
 });
 
-/// Deliberately excludes wildcard, IPv6, RDMA and FC creation for now.
+/// Deliberately excludes wildcard, scoped/link-local IPv6, RDMA and FC.
 final class NvmePortCreateChoice {
   const NvmePortCreateChoice(this.address, this.servicePort);
   final String address;
   final int servicePort;
-  bool get valid {
-    if (servicePort < 1024 ||
-        servicePort > 65535 ||
-        !RegExp(r'^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$')
-            .hasMatch(address)) {
-      return false;
-    }
-    final parts = address.split('.').map(int.parse).toList();
-    return parts.every((part) => part <= 255) &&
-        parts.first >= 1 &&
-        parts.first <= 223;
-  }
+  bool get valid =>
+      servicePort >= 1024 &&
+      servicePort <= 65535 &&
+      NvmeTcpBindAddress.parse(address)?.creatable == true;
+  String get bindingLabel => address.contains(':')
+      ? '[$address]:$servicePort'
+      : '$address:$servicePort';
 }
 
 enum NvmePortCreateOutcome { completed, rejected, unknown }
@@ -62,8 +58,7 @@ final class NvmePortCreateReview {
   final String endpoint, proof;
   final NvmePortCreateChoice choice;
   final DateTime issuedAt;
-  String get confirmation =>
-      'CREATE DISABLED NVME TCP ${choice.address}:${choice.servicePort}';
+  String get confirmation => 'CREATE DISABLED NVME TCP ${choice.bindingLabel}';
 }
 
 final class _Binding {
@@ -81,7 +76,7 @@ final class _Binding {
   List<Object?> get proof => [id, transport, address, service, enabled];
   bool matches(NvmePortCreateChoice choice) =>
       transport == 'TCP' &&
-      address == choice.address &&
+      NvmeTcpBindAddress.equivalent(address, choice.address) &&
       service == choice.servicePort &&
       !enabled;
 }
@@ -97,7 +92,7 @@ final class _Snapshot {
   ]);
 }
 
-/// Creates only a disabled TCP/IPv4 port, never mappings or existing objects.
+/// Creates only a disabled TCP/IP port, never mappings or existing objects.
 /// Bounded sequential reads cannot exclude a concurrent administrator's race.
 final class NvmePortCreateCoordinator {
   NvmePortCreateCoordinator({
@@ -228,12 +223,18 @@ final class NvmePortCreateCoordinator {
     }
     if (snapshot.bindings.any(
       (b) =>
+          b.transport == 'TCP' && NvmeTcpBindAddress.parse(b.address) == null,
+    )) {
+      throw StateError(
+        'An existing TCP bind address cannot be compared safely. Nothing was sent.',
+      );
+    }
+    if (snapshot.bindings.any(
+      (b) =>
           b.transport == 'TCP' &&
           b.service.toString() == choice.servicePort.toString() &&
-          (b.address == choice.address ||
-              b.address == '' ||
-              b.address == '0.0.0.0' ||
-              b.address == '::'),
+          (NvmeTcpBindAddress.equivalent(b.address, choice.address) ||
+              NvmeTcpBindAddress.parse(b.address)?.wildcard == true),
     )) {
       throw StateError(
         'An existing TCP port conflicts with this binding. Nothing was sent.',
@@ -245,7 +246,7 @@ final class NvmePortCreateCoordinator {
     _guard();
     if (!available || _busy || !choice.valid) {
       throw StateError(
-        'Enter an explicit unicast IPv4 address and a port from 1024 to 65535. Nothing was sent.',
+        'Enter an explicit IPv4 or global/ULA IPv6 address and a port from 1024 to 65535. Nothing was sent.',
       );
     }
     final owner = lock.acquire();
@@ -349,7 +350,11 @@ final class NvmePortCreateCoordinator {
           id <= 0 ||
           before.bindings.any((b) => b.id == id) ||
           row['addr_trtype'] != 'TCP' ||
-          row['addr_traddr'] != review.choice.address ||
+          row['addr_traddr'] is! String ||
+          !NvmeTcpBindAddress.equivalent(
+            row['addr_traddr'] as String,
+            review.choice.address,
+          ) ||
           row['addr_trsvcid'] != review.choice.servicePort ||
           row['enabled'] != false) {
         return _unknown();

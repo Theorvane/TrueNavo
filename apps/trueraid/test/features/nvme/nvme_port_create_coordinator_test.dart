@@ -73,6 +73,7 @@ class _Fake
   bool missingBinding = false;
   bool bindingMismatch = false;
   bool wrongAddressAfterCreate = false;
+  bool normalizeIpv6 = false;
   bool ambiguous = false;
   bool driftAfterWrite = false;
   bool queueDriftAfterWrite = false;
@@ -114,6 +115,7 @@ class _Fake
           'pi_enable': null,
         };
         created.add(row);
+        if (normalizeIpv6) row['addr_traddr'] = '2001:0db8:0:0:0:0:0:0002';
         final returned = Map.of(row);
         if (corruptResponse) returned['id'] = 3;
         if (driftAfterWrite) port['pi_enable'] = true;
@@ -235,6 +237,86 @@ void main() {
       await expectLater(h.coordinator.prepare(_choice), throwsStateError);
       expect(h.writes, 0);
     }
+  });
+
+  test('IPv6 create accepts equivalent server address normalization', () async {
+    final h = _Harness();
+    h.api.normalizeIpv6 = true;
+    const choice = NvmePortCreateChoice('2001:DB8::2', 4420);
+    final review = await h.coordinator.prepare(choice);
+    expect(review.confirmation, 'CREATE DISABLED NVME TCP [2001:DB8::2]:4420');
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmePortCreateOutcome.completed,
+    );
+    expect(h.writes, 1);
+    final payload =
+        h.api.calls
+                .where((c) => c.method.name == 'nvmet.port.create')
+                .single
+                .arguments
+                .single
+            as Map;
+    expect(payload, {
+      'addr_trtype': 'TCP',
+      'addr_traddr': choice.address,
+      'addr_trsvcid': 4420,
+      'enabled': false,
+    });
+  });
+
+  test(
+    'equivalent IPv6 and wildcard spellings conflict before writes',
+    () async {
+      for (final address in [
+        '2001:0DB8:0:0:0:0:0:0002',
+        '::',
+        '0:0:0:0:0:0:0:0',
+      ]) {
+        final h = _Harness();
+        h.api.port['addr_traddr'] = address;
+        await expectLater(
+          h.coordinator.prepare(
+            const NvmePortCreateChoice('2001:db8::2', 4420),
+          ),
+          throwsStateError,
+        );
+        expect(h.writes, 0);
+      }
+    },
+  );
+
+  test('existing IPv4-mapped alias conflicts with IPv4 creation', () async {
+    final h = _Harness();
+    h.api.port['addr_traddr'] = '::ffff:10.0.0.2';
+    await expectLater(h.coordinator.prepare(_choice), throwsStateError);
+    expect(h.writes, 0);
+  });
+
+  test('unsupported existing TCP bind address fails closed', () async {
+    final h = _Harness();
+    h.api.port['addr_traddr'] = 'fe80::1%eth0';
+    await expectLater(h.coordinator.prepare(_choice), throwsStateError);
+    expect(h.writes, 0);
+  });
+
+  test('unsupported IPv6 choices reject before reads', () async {
+    final h = _Harness();
+    for (final address in [
+      '::',
+      'fe80::2',
+      'ff02::2',
+      '::ffff:10.0.0.2',
+      'fe80::2%eth0',
+      '[2001:db8::2]',
+      '2001::db8::2',
+    ]) {
+      await expectLater(
+        h.coordinator.prepare(NvmePortCreateChoice(address, 4420)),
+        throwsStateError,
+      );
+    }
+    expect(h.api.calls, isEmpty);
   });
 
   test('different TCP service port is allowed', () async {
@@ -417,8 +499,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('different IPv6 readback address fences further edits', () async {
+    final h = _Harness();
+    h.api.wrongAddressAfterCreate = true;
+    final review = await h.coordinator.prepare(
+      const NvmePortCreateChoice('fd00::2', 4420),
+    );
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmePortCreateOutcome.unknown,
+    );
+    expect(h.writes, 1);
+    expect(h.coordinator.locked, true);
+  });
+
   for (final width in [320.0, 430.0]) {
-    testWidgets('creation review fits at $width and 200 percent text', (
+    testWidgets('IPv6 creation review fits at $width and 200 percent text', (
       tester,
     ) async {
       tester.view.physicalSize = Size(width, 900);
@@ -449,7 +545,7 @@ void main() {
       );
       await tester.enterText(
         find.byKey(const Key('nvme-port-create-address')),
-        '10.0.0.2',
+        '2001:0db8:0000:0000:0000:0000:0000:0002',
       );
       await tester.ensureVisible(
         find.byKey(const Key('nvme-port-create-review')),
@@ -461,7 +557,7 @@ void main() {
       );
       await tester.enterText(
         find.byKey(const Key('nvme-port-create-confirmation')),
-        'CREATE DISABLED NVME TCP 10.0.0.2:4420',
+        'CREATE DISABLED NVME TCP [2001:0db8:0000:0000:0000:0000:0000:0002]:4420',
       );
       await tester.pumpAndSettle();
       expect(h.writes, 0);
