@@ -46,6 +46,7 @@ import 'nvme_subsystem_populated_ana_editor.dart';
 import 'nvme_subsystem_populated_pi_editor.dart';
 import 'nvme_subsystem_populated_qid_editor.dart';
 import 'nvme_subsystem_populated_oui_editor.dart';
+import 'nvme_populated_port_mapping_editor.dart';
 
 class NvmePage extends ConsumerStatefulWidget {
   const NvmePage({super.key});
@@ -200,6 +201,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmePortAccessRevokeEditor(),
                   const SizedBox(height: 20),
                   const NvmePortAccessGrantEditor(),
+                  const SizedBox(height: 20),
+                  const NvmePopulatedPortMappingEditor(),
                   const SizedBox(height: 20),
                   const NvmePortDeleteEditor(),
                   const SizedBox(height: 20),
