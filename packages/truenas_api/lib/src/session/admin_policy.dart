@@ -909,8 +909,8 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'nvmet.namespace.update',
-    'Edit isolated ZVOL namespace enabled setting',
-    'Native reviewed enabled-only setting change; no backing identifiers are submitted.',
+    'Edit isolated ZVOL namespace settings',
+    'Native reviewed enabled-only or disabled NSID-only changes; no backing fields are submitted.',
     warning: 'NVMe configuration reloads. Backing identity and health and runtime access are not verified.',
   ),
   AdminOperationDefinition.change(
