@@ -162,6 +162,137 @@ abstract interface class AuthenticatedNvmeHostCreateSession {
   Future<NvmeHostCreated> createUnassociatedNvmeHost({required String hostNqn});
 }
 
+/// Backend-only imported-key registration. A future native review must supply
+/// endpoint-bound consent and full topology checks before exposing this path.
+abstract interface class AuthenticatedNvmeHostKeyCreateSession {
+  Future<NvmeHostAuthentication> createNvmeHostWithImportedKeys({
+    required String hostNqn,
+    required String hash,
+    required String? group,
+    required NvmeHostKeyDraft keys,
+  });
+}
+
+/// Opaque, single-use, caller-disposable key material. No public key getter,
+/// JSON serializer or key-bearing toString. Buffer wiping is best effort:
+/// Dart strings and transport serialization copies cannot be zeroized here.
+final class NvmeHostKeyDraft {
+  NvmeHostKeyDraft._(this._host, this._controller)
+    : hasControllerKey = _controller != null;
+  Uint8List? _host, _controller;
+  bool _claimed = false;
+  final bool hasControllerKey;
+  bool get isDisposed => _host == null;
+
+  /// Conservative DHHC-1:01/02/03 canonical base64 and decoded-size checks.
+  /// This does NOT verify CRC, key derivation, entropy or initiator compatibility.
+  /// Raw format 00 is intentionally unsupported; server validation is authoritative.
+  factory NvmeHostKeyDraft.import({
+    required String hostKey,
+    String? controllerKey,
+  }) {
+    Uint8List parse(String value) {
+      try {
+        if (value.length > 120) throw const FormatException();
+        final match = RegExp(r'^DHHC-1:(01|02|03):([A-Za-z0-9+/]+={0,2}):$')
+            .firstMatch(value);
+        if (match == null || match.end != value.length) {
+          throw const FormatException();
+        }
+        final encoded = match.group(2)!;
+        final decoded = base64Decode(encoded);
+        try {
+          final length = switch (match.group(1)) {
+            '01' => 36,
+            '02' => 52,
+            _ => 68,
+          };
+          if (decoded.length != length || base64Encode(decoded) != encoded) {
+            throw const FormatException();
+          }
+        } finally {
+          decoded.fillRange(0, decoded.length, 0);
+        }
+        final bytes = ascii.encode(value);
+        try {
+          return Uint8List.fromList(bytes);
+        } finally {
+          bytes.fillRange(0, bytes.length, 0);
+        }
+      } on Object {
+        throw const FormatException('Unsupported imported NVMe key structure');
+      }
+    }
+
+    final host = parse(hostKey);
+    try {
+      return NvmeHostKeyDraft._(
+        host,
+        controllerKey == null ? null : parse(controllerKey),
+      );
+    } on Object {
+      host.fillRange(0, host.length, 0);
+      rethrow;
+    }
+  }
+  void _claim() {
+    if (_claimed || isDisposed) throw const NvmeHostException();
+    _claimed = true;
+  }
+
+  String get _hostText {
+    if (isDisposed) throw const NvmeHostException();
+    return ascii.decode(_host!);
+  }
+
+  String? get _controllerText {
+    if (isDisposed) throw const NvmeHostException();
+    return _controller == null ? null : ascii.decode(_controller!);
+  }
+
+  void dispose() {
+    _host?.fillRange(0, _host!.length, 0);
+    _controller?.fillRange(0, _controller!.length, 0);
+    _host = null;
+    _controller = null;
+  }
+
+  @override
+  String toString() => 'NvmeHostKeyDraft(redacted)';
+}
+
+String _nvmeHostReferenceProof(NvmeHostPublicRows value, {int? omitHost}) {
+  final hostIds = <int>{};
+  final mappingIds = <int>{};
+  for (final row in value.hosts) {
+    if (!hostIds.add(row['id'] as int)) throw const NvmeHostException();
+  }
+  for (final row in value.mappings) {
+    if (!mappingIds.add(row['id'] as int) ||
+        !hostIds.contains((row['host'] as Map)['id'])) {
+      throw const NvmeHostException();
+    }
+  }
+  final hosts =
+      value.hosts
+          .where((h) => h['id'] != omitHost)
+          .map((h) => [h['id'], h['hostnqn']])
+          .toList()
+        ..sort((a, b) => (a.first as int).compareTo(b.first as int));
+  final mappings =
+      value.mappings
+          .map(
+            (m) => [
+              m['id'],
+              (m['host'] as Map)['id'],
+              (m['subsys'] as Map)['id'],
+            ],
+          )
+          .toList()
+        ..sort((a, b) => (a.first as int).compareTo(b.first as int));
+  return jsonEncode([hosts, mappings]);
+}
+
 /// Narrow NQN editing for uncredentialed hosts. Key-bearing reads/results
 /// stay inside the SDK; no credential field is ever sent in the update.
 abstract interface class AuthenticatedNvmeHostRenameSession {

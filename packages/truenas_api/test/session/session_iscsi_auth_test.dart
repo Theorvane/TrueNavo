@@ -6,6 +6,13 @@ import 'package:truenas_api/truenas_api.dart';
 
 const _secret = 'fixture-chap-secret-never-exposed';
 
+String _importedKey(String format, {int seed = 17}) =>
+    'DHHC-1:$format:${base64Encode(List.generate(switch (format) {
+      '01' => 36,
+      '02' => 52,
+      _ => 68,
+    }, (i) => (i + seed) % 256))}:';
+
 NvmeHostAuthentication _clearTarget() =>
     NvmeHostAuthenticationInventory.project([
       {
@@ -19,6 +26,303 @@ NvmeHostAuthentication _clearTarget() =>
     ]).hosts.single;
 
 void main() {
+  for (final format in ['01', '02', '03']) {
+    test(
+      'opaque imported-key draft supports format $format and idempotent disposal',
+      () {
+        final input = _importedKey(format);
+        final draft = NvmeHostKeyDraft.import(
+          hostKey: input,
+          controllerKey: input,
+        );
+        expect(draft.hasControllerKey, true);
+        expect(draft.isDisposed, false);
+        expect(draft.toString(), isNot(contains(input)));
+        expect(() => jsonEncode(draft), throwsA(isA<Object>()));
+        draft.dispose();
+        draft.dispose();
+        expect(draft.isDisposed, true);
+        expect(draft.toString(), 'NvmeHostKeyDraft(redacted)');
+      },
+    );
+  }
+  for (final input in [
+    '',
+    _secret,
+    'DHHC-1:00:AAAA:',
+    'DHHC-1:04:AAAA:',
+    'DHHC-1:01:AAAA:',
+    ' ${_importedKey('01')}',
+    '${_importedKey('01')}\n',
+    '${_importedKey('01')}:',
+    _importedKey('01').replaceAll(':', '%3A'),
+    'DHHC-1:01:${base64Encode(List.filled(36, 0)).replaceAll('A', '_')}:',
+  ]) {
+    test(
+      'invalid imported-key structure length ${input.length} is safely rejected',
+      () {
+        expect(
+          () => NvmeHostKeyDraft.import(hostKey: input),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.toString(),
+              'safe',
+              isNot(contains(input.isEmpty ? _secret : input)),
+            ),
+          ),
+        );
+        expect(
+          () => NvmeHostKeyDraft.import(
+            hostKey: _importedKey('01'),
+            controllerKey: input,
+          ),
+          throwsFormatException,
+        );
+      },
+    );
+  }
+  for (final controller in [false, true]) {
+    test(
+      'imported-key registration privately verifies exact saved keys controller=$controller',
+      () async {
+        final wire = _Wire(
+          advertiseNvme: true,
+          advertiseNvmeHostCreate: true,
+          advertiseNvmeHashes: true,
+          advertiseNvmeGroups: true,
+        )..keyCreate = true;
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        final hostKey = _importedKey('01');
+        final controllerKey = controller ? _importedKey('02') : null;
+        final draft = NvmeHostKeyDraft.import(
+          hostKey: hostKey,
+          controllerKey: controllerKey,
+        );
+        final result = await repo.createNvmeHostWithImportedKeys(
+          hostNqn: 'nqn.2026-09.example:new',
+          hash: 'SHA-384',
+          group: controller ? '4096-BIT' : null,
+          keys: draft,
+        );
+        expect(
+          [
+            result.id,
+            result.nqn,
+            result.hash,
+            result.group,
+            result.hostKeyReturned,
+            result.controllerKeyReturned,
+          ],
+          [
+            11,
+            'nqn.2026-09.example:new',
+            'SHA-384',
+            controller ? '4096-BIT' : null,
+            true,
+            controller,
+          ],
+        );
+        expect(result.toString(), isNot(contains(hostKey)));
+        expect(draft.isDisposed, true);
+        final create = wire.requests.singleWhere(
+          (r) => r['method'] == 'nvmet.host.create',
+        );
+        expect(create['params'], [
+          {
+            'hostnqn': 'nqn.2026-09.example:new',
+            'dhchap_key': hostKey,
+            'dhchap_ctrl_key': controllerKey,
+            'dhchap_hash': 'SHA-384',
+            'dhchap_dhgroup': controller ? '4096-BIT' : null,
+          },
+        ]);
+        expect(
+          wire.requests.where(
+            (r) =>
+                (r['method'] as String).startsWith('nvmet.') &&
+                r['method'] != 'nvmet.host.create' &&
+                !(r['method'] as String).endsWith('.query') &&
+                !(r['method'] as String).endsWith('_choices'),
+          ),
+          isEmpty,
+        );
+        final readsBeforeRetry = wire.requests.length;
+        await expectLater(
+          repo.createNvmeHostWithImportedKeys(
+            hostNqn: 'nqn.2026-09.example:retry',
+            hash: 'SHA-384',
+            group: null,
+            keys: draft,
+          ),
+          throwsA(isA<NvmeHostException>()),
+        );
+        expect(wire.requests.length, readsBeforeRetry);
+      },
+    );
+  }
+  for (final failure in [
+    'existing ID',
+    'wrong NQN',
+    'wrong hash',
+    'wrong group',
+    'wrong host key',
+    'wrong controller key',
+    'redacted result',
+    'missing result field',
+    'missing readback',
+    'duplicate readback',
+    'rotated readback',
+    'readback ID',
+    'redacted readback',
+    'identity drift',
+    'missing public host',
+    'new mapping',
+  ]) {
+    test(
+      'imported-key registration $failure rejects after one create and disposes secrets',
+      () async {
+        final wire =
+            _Wire(
+                advertiseNvme: true,
+                advertiseNvmeHostCreate: true,
+                advertiseNvmeHashes: true,
+                advertiseNvmeGroups: true,
+              )
+              ..keyCreate = true
+              ..keyCreateFailure = failure;
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        final draft = NvmeHostKeyDraft.import(
+          hostKey: _importedKey('01'),
+          controllerKey: _importedKey('02'),
+        );
+        await expectLater(
+          repo.createNvmeHostWithImportedKeys(
+            hostNqn: 'nqn.2026-09.example:new',
+            hash: 'SHA-384',
+            group: '4096-BIT',
+            keys: draft,
+          ),
+          throwsA(isA<NvmeHostException>()),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.create'),
+          hasLength(1),
+        );
+        expect(draft.isDisposed, true);
+      },
+    );
+  }
+  for (final failure in [
+    'duplicate inventory',
+    'duplicate NQN',
+    'missing create',
+    'missing choices',
+    'missing mapping',
+    'hash choice',
+    'group choice',
+    'bad NQN',
+  ]) {
+    test(
+      'imported-key registration $failure rejects without writes and disposes draft',
+      () async {
+        final wire =
+            _Wire(
+                advertiseNvme: true,
+                advertiseNvmeHostCreate: failure != 'missing create',
+                advertiseNvmeHashes: failure != 'missing choices',
+                advertiseNvmeGroups: true,
+                advertiseNvmeMapping: failure != 'missing mapping',
+              )
+              ..keyCreate = true
+              ..keyCreateFailure = failure;
+        if (failure == 'duplicate NQN') {
+          wire.hostRow['hostnqn'] = 'NQN.2026-09.EXAMPLE:NEW';
+        }
+        if (failure == 'hash choice') wire.hashes = ['SHA-256'];
+        if (failure == 'group choice') wire.groups = ['2048-BIT'];
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        final draft = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+        await expectLater(
+          repo.createNvmeHostWithImportedKeys(
+            hostNqn: failure == 'bad NQN' ? _secret : 'nqn.2026-09.example:new',
+            hash: 'SHA-384',
+            group: '4096-BIT',
+            keys: draft,
+          ),
+          throwsA(isA<NvmeHostException>()),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.create'),
+          isEmpty,
+        );
+        expect(draft.isDisposed, true);
+      },
+    );
+  }
+  test(
+    'concurrent draft reuse cannot dispose the first in-flight import',
+    () async {
+      final wire =
+          _Wire(
+              advertiseNvme: true,
+              advertiseNvmeHostCreate: true,
+              advertiseNvmeHashes: true,
+              advertiseNvmeGroups: true,
+            )
+            ..keyCreate = true
+            ..pauseHashes = Completer<void>();
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final draft = NvmeHostKeyDraft.import(hostKey: _importedKey('01'));
+      final first = repo.createNvmeHostWithImportedKeys(
+        hostNqn: 'nqn.2026-09.example:new',
+        hash: 'SHA-384',
+        group: null,
+        keys: draft,
+      );
+      await wire.hashesStarted.future;
+      await expectLater(
+        repo.createNvmeHostWithImportedKeys(
+          hostNqn: 'nqn.2026-09.example:second',
+          hash: 'SHA-384',
+          group: null,
+          keys: draft,
+        ),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(draft.isDisposed, false);
+      wire.pauseHashes!.complete();
+      expect((await first).id, 11);
+      expect(draft.isDisposed, true);
+      expect(
+        wire.requests.where((r) => r['method'] == 'nvmet.host.create'),
+        hasLength(1),
+      );
+    },
+  );
   for (final raw in <Object?>[
     null,
     _secret,
@@ -1293,6 +1597,11 @@ final class _Wire implements RpcTransport {
   Object? groups = ['2048-BIT', '3072-BIT', '4096-BIT', '6144-BIT', '8192-BIT'];
   String? renameFailure;
   bool overrideHostQuery = false;
+  bool keyCreate = false;
+  String? keyCreateFailure;
+  Map<String, Object?>? createdHost;
+  Completer<void>? pauseHashes;
+  final hashesStarted = Completer<void>();
   Object? hostQueryResult;
   final hostRow = <String, Object?>{
     'id': 3,
@@ -1314,6 +1623,11 @@ final class _Wire implements RpcTransport {
   Future<void> send(String frame) async {
     final request = jsonDecode(frame) as Map<String, dynamic>;
     requests.add(request);
+    if (request['method'] == 'nvmet.host.dhchap_hash_choices' &&
+        pauseHashes != null) {
+      if (!hashesStarted.isCompleted) hashesStarted.complete();
+      await pauseHashes!.future;
+    }
     final result = switch (request['method']) {
       'auth.login_ex' => {'response_type': 'SUCCESS'},
       'auth.me' => {'pw_name': 'fixture-user'},
@@ -1362,6 +1676,7 @@ final class _Wire implements RpcTransport {
                 },
               ],
       'nvmet.host.query' when overrideHostQuery => hostQueryResult,
+      'nvmet.host.query' when keyCreate => _keyQuery(request),
       'nvmet.host.query' when advertiseNvmeHostUpdate => [Map.of(hostRow)],
       'nvmet.host.dhchap_hash_choices' => hashes,
       'nvmet.host.dhchap_dhgroup_choices' => groups,
@@ -1369,6 +1684,7 @@ final class _Wire implements RpcTransport {
       'nvmet.host.query' => [
         {'id': 3, 'hostnqn': 'nqn.fixture:client', 'dhchap_key': _secret},
       ],
+      'nvmet.host.create' when keyCreate => _keyCreate(request),
       'nvmet.host.create' => {
         'id': 11,
         'hostnqn': 'nqn.2026-09.example:new',
@@ -1377,6 +1693,22 @@ final class _Wire implements RpcTransport {
         'dhchap_dhgroup': null,
         'unexpected_private_data': _secret,
       },
+      'nvmet.host_subsys.query'
+          when keyCreate &&
+              createdHost != null &&
+              keyCreateFailure == 'new mapping' =>
+        [
+          {
+            'id': 4,
+            'host': {'id': 3},
+            'subsys': {'id': 2},
+          },
+          {
+            'id': 5,
+            'host': {'id': 11},
+            'subsys': {'id': 2},
+          },
+        ],
       'nvmet.host_subsys.query' => [
         {
           'id': 4,
@@ -1430,6 +1762,63 @@ final class _Wire implements RpcTransport {
         hostRow['hostnqn'] = 'nqn.2026-09.example:wrong';
     }
     return Map.of(hostRow);
+  }
+
+  Object? _keyQuery(Map<String, dynamic> request) {
+    final filter = (request['params'] as List).first as List;
+    if (filter.isNotEmpty) {
+      if (keyCreateFailure == 'missing readback') return [];
+      if (keyCreateFailure == 'duplicate readback') {
+        return [createdHost, createdHost];
+      }
+      final row = Map<String, Object?>.of(createdHost!);
+      switch (keyCreateFailure) {
+        case 'rotated readback':
+          row['dhchap_key'] = _importedKey('01', seed: 99);
+        case 'readback ID':
+          row['id'] = 98;
+        case 'redacted readback':
+          row['dhchap_key'] = '********';
+      }
+      return [row];
+    }
+    final old = Map.of(hostRow);
+    if (createdHost != null && keyCreateFailure == 'identity drift') {
+      old['hostnqn'] = 'nqn.2026-09.example:changed';
+    }
+    return [
+      old,
+      if (keyCreateFailure == 'duplicate inventory') old,
+      if (createdHost != null && keyCreateFailure != 'missing public host')
+        Map.of(createdHost!),
+    ];
+  }
+
+  Object _keyCreate(Map<String, dynamic> request) {
+    createdHost = {
+      'id': 11,
+      ...Map<String, Object?>.from((request['params'] as List).single as Map),
+      'unexpected_private_data': _secret,
+    };
+    switch (keyCreateFailure) {
+      case 'existing ID':
+        createdHost!['id'] = 3;
+      case 'wrong NQN':
+        createdHost!['hostnqn'] = 'nqn.2026-09.example:wrong';
+      case 'wrong hash':
+        createdHost!['dhchap_hash'] = 'SHA-512';
+      case 'wrong group':
+        createdHost!['dhchap_dhgroup'] = '8192-BIT';
+      case 'wrong host key':
+        createdHost!['dhchap_key'] = _importedKey('01', seed: 99);
+      case 'wrong controller key':
+        createdHost!['dhchap_ctrl_key'] = _importedKey('01', seed: 99);
+      case 'redacted result':
+        createdHost!['dhchap_key'] = '********';
+      case 'missing result field':
+        createdHost!.remove('dhchap_ctrl_key');
+    }
+    return Map.of(createdHost!);
   }
 }
 

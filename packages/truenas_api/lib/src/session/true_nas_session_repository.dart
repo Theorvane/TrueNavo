@@ -150,6 +150,7 @@ final class TrueNasSessionRepository
         AuthenticatedNvmeHostAuthenticationClearSession,
         AuthenticatedNvmeHostChoicesSession,
         AuthenticatedNvmeHostCreateSession,
+        AuthenticatedNvmeHostKeyCreateSession,
         AuthenticatedNvmeHostRenameSession,
         AuthenticatedNvmeHostHashSession,
         AuthenticatedNvmeHostAccessSession,
@@ -1828,6 +1829,136 @@ final class TrueNasSessionRepository
       return NvmeHostAuthenticationInventory.project(raw);
     } on Object {
       throw const NvmeHostException();
+    }
+  }
+
+  @override
+  Future<NvmeHostAuthentication> createNvmeHostWithImportedKeys({
+    required String hostNqn,
+    required String hash,
+    required String? group,
+    required NvmeHostKeyDraft keys,
+  }) async {
+    var ownsDraft = false;
+    try {
+      keys._claim();
+      ownsDraft = true;
+      final management = _management;
+      final client = _client;
+      if (!isSupportedNvmeHostNqn(hostNqn) ||
+          !const {'SHA-256', 'SHA-384', 'SHA-512'}.contains(hash) ||
+          (group != null &&
+              !const {
+                '2048-BIT',
+                '3072-BIT',
+                '4096-BIT',
+                '6144-BIT',
+                '8192-BIT',
+              }.contains(group)) ||
+          management == null ||
+          management.version != _ManagementVersion.v2510 ||
+          !management.isCurrent() ||
+          !management.methods.contains('nvmet.host.create') ||
+          client == null ||
+          !client.isOpen) {
+        throw const NvmeHostException();
+      }
+      final choices = await loadNvmeHostAuthenticationChoices();
+      if (!management.isCurrent() ||
+          !choices.hashes.contains(hash) ||
+          (group != null && !choices.groups.contains(group))) {
+        throw const NvmeHostException();
+      }
+      final before = await loadNvmeHostReferences();
+      if (!management.isCurrent() ||
+          before.hosts.length >= 99 ||
+          before.hosts.any(
+            (h) =>
+                (h['hostnqn'] as String).toLowerCase() == hostNqn.toLowerCase(),
+          )) {
+        throw const NvmeHostException();
+      }
+      final proof = _nvmeHostReferenceProof(before);
+      final raw = await client
+          .call(
+            'nvmet.host.create',
+            id: _id(),
+            params: [
+              {
+                'hostnqn': hostNqn,
+                'dhchap_key': keys._hostText,
+                'dhchap_ctrl_key': keys._controllerText,
+                'dhchap_hash': hash,
+                'dhchap_dhgroup': group,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      NvmeHostAuthentication verify(Object? row) {
+        final projected = NvmeHostAuthenticationInventory.project([row])
+            .hosts
+            .single;
+        if (row is! Map ||
+            projected.nqn != hostNqn ||
+            projected.hash != hash ||
+            projected.group != group ||
+            row['dhchap_key'] != keys._hostText ||
+            row['dhchap_ctrl_key'] != keys._controllerText) {
+          throw const NvmeHostException();
+        }
+        return projected;
+      }
+
+      final created = verify(raw);
+      if (before.hosts.any((h) => h['id'] == created.id)) {
+        throw const NvmeHostException();
+      }
+      final reread = await client
+          .call(
+            'nvmet.host.query',
+            id: _id(),
+            params: [
+              [
+                ['id', '=', created.id],
+              ],
+              {
+                'select': [
+                  'id',
+                  'hostnqn',
+                  'dhchap_key',
+                  'dhchap_ctrl_key',
+                  'dhchap_hash',
+                  'dhchap_dhgroup',
+                ],
+                'limit': 2,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent() || reread is! List || reread.length != 1) {
+        throw const NvmeHostException();
+      }
+      final confirmed = verify(reread.single);
+      if (confirmed.id != created.id) throw const NvmeHostException();
+      final after = await loadNvmeHostReferences();
+      if (!management.isCurrent() ||
+          after.hosts.length != before.hosts.length + 1 ||
+          after.hosts
+                  .where(
+                    (h) => h['id'] == created.id && h['hostnqn'] == hostNqn,
+                  )
+                  .length !=
+              1 ||
+          after.mappings.any((m) => (m['host'] as Map)['id'] == created.id) ||
+          _nvmeHostReferenceProof(after, omitHost: created.id) != proof) {
+        throw const NvmeHostException();
+      }
+      return confirmed;
+    } on Object {
+      throw const NvmeHostException();
+    } finally {
+      if (ownsDraft) keys.dispose();
     }
   }
 
