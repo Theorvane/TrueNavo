@@ -80,7 +80,7 @@ class _NqnState extends ConsumerState<NvmeSubsystemNqnEditor> {
           epoch == _epoch &&
           identical(session, ref.read(dashboardActiveSessionProvider))) {
         setState(
-          () => _message = 'Review failed. Select an empty restricted isolated subsystem and a different unused supported NQN. Nothing was sent.',
+          () => _message = 'Review failed. Select an isolated restricted subsystem with only disabled unlocked ZVOL namespaces and a different unused supported NQN. Nothing was sent.',
         );
       }
     } finally {
@@ -137,8 +137,8 @@ class _NqnState extends ConsumerState<NvmeSubsystemNqnEditor> {
         coordinator?.locked == false;
     final review = _review;
     return TdPanel(
-      title: 'Change NQN on an empty isolated NVMe subsystem',
-      description: 'Only an empty restricted subsystem with no namespace, host or port mappings is supported. Names and other settings remain unchanged. NQN identity changes can require initiator reconfiguration; runtime access and concurrent changes are not proven.',
+      title: 'Change NQN on an isolated NVMe subsystem',
+      description: 'The subsystem must be empty or contain only disabled unlocked ZVOL namespaces with known unique NSIDs, and have restricted access with no host or port mappings. Names and namespace settings remain unchanged. NQN identity changes can require initiator reconfiguration; backing identity, runtime access and concurrent changes are not proven.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -185,6 +185,11 @@ class _NqnState extends ConsumerState<NvmeSubsystemNqnEditor> {
             Text(
               'Subsystem #${review.target.id}: ${review.target.name}; NQN ${review.target.subnqn} → ${review.nqn}',
             ),
+            Text('Preserved namespaces: ${review.namespaces.length}'),
+            for (final namespace in review.namespaces)
+              Text(
+                'Namespace #${namespace.id}, NSID ${namespace.nsid}: disabled unlocked ZVOL; unchanged',
+              ),
             const Text(
               'Only subnqn is submitted; name, access policy, ANA, PI, queue ID and IEEE OUI settings must remain unchanged. Public topology is rechecked; sequential reads cannot exclude concurrent changes. Review is single-use and expires in five minutes.',
             ),

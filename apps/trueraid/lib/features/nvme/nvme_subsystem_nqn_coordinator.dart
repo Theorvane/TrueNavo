@@ -52,19 +52,21 @@ final class NvmeSubsystemNqnReview {
     this.endpoint,
     this.target,
     this.nqn,
+    this.namespaces,
     this._proof,
     this.issuedAt,
   );
   final String endpoint;
   final NvmeSubsystem target;
   final String nqn;
+  final List<NvmeNamespace> namespaces;
   final String _proof;
   final DateTime issuedAt;
   String get confirmation =>
       'CHANGE NVME SUBSYSTEM ${target.id} NQN ${target.subnqn} TO $nqn';
 }
 
-/// NQN only on an empty restricted isolated subsystem; no mappings are submitted.
+/// NQN only on an isolated restricted subsystem; residents must be disabled unlocked ZVOLs.
 /// Public sequential snapshots do not prove backing identity/health or runtime IO.
 final class NvmeSubsystemNqnCoordinator {
   NvmeSubsystemNqnCoordinator({
@@ -129,16 +131,24 @@ final class NvmeSubsystemNqnCoordinator {
         .where((s) => s.id == id)
         .singleOrNull;
     final nqns = snapshot.topology.subsystems.map((s) => s.subnqn).toList();
+    final namespaces = snapshot.topology.namespaces
+        .where((n) => n.subsystemId == id)
+        .toList();
+    final nsids = namespaces.map((n) => n.nsid).toList();
     if (target == null ||
         target.allowAnyHost ||
         target.subnqn == null ||
         nqns.any((n) => n == null) ||
         nqns.toSet().length != nqns.length ||
-        snapshot.topology.namespaces.any((n) => n.subsystemId == id) ||
+        namespaces.any(
+          (n) => n.deviceType != 'ZVOL' || n.enabled || n.locked != false,
+        ) ||
+        nsids.any((n) => n == null || n <= 0 || n >= 4294967295) ||
+        nsids.toSet().length != nsids.length ||
         snapshot.topology.portMappings.any((m) => m.subsystemId == id) ||
         snapshot.hosts.mappings.any((m) => m.subsystemId == id)) {
       throw StateError(
-        'Select an empty restricted isolated subsystem with complete unique public NQNs.',
+        'Select a restricted isolated subsystem with complete unique public NQNs and only disabled unlocked ZVOL namespaces with known unique NSIDs.',
       );
     }
     return target;
@@ -180,6 +190,12 @@ final class NvmeSubsystemNqnCoordinator {
         session.endpoint!,
         target,
         nqn,
+        List.unmodifiable(
+          snapshot.topology.namespaces
+              .where((n) => n.subsystemId == id)
+              .toList()
+            ..sort((a, b) => a.id.compareTo(b.id)),
+        ),
         snapshot.proof(),
         _now().toUtc(),
       );

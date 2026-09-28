@@ -120,6 +120,10 @@ class _Fake
     if (failure == 'unknown') return AdminOutcomeUnknown(request);
     subsystem['subnqn'] = (request.arguments[1] as Map)['subnqn'];
     final returned = Map.of(subsystem);
+    if (failure == 'namespace NSID') namespace['nsid'] = 5;
+    if (failure == 'namespace enabled') namespace['enabled'] = true;
+    if (failure == 'namespace lock') namespace['locked'] = true;
+    if (failure == 'namespace detached') namespace['subsys'] = {'id': 4};
     if (failure == 'response ID') returned['id'] = 999;
     if (failure == 'response NQN') {
       returned['subnqn'] = 'nqn.2026-09.example:wrong';
@@ -212,6 +216,94 @@ final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
 const _newNqn = 'nqn.2026-09.com.example:new';
 void main() {
+  test('populated NQN-only patch preserves all resident metadata and reviews immutable IDs', () async {
+    final h = _Harness();
+    h.api.namespace['subsys'] = {'id': 2};
+    h.api.other['subsys'] = {'id': 2};
+    h.api.other['device_type'] = 'ZVOL';
+    final before = [Map.of(h.api.namespace), Map.of(h.api.other)];
+    final review = await h.coordinator.prepare(2, nqn: _newNqn);
+    expect(review.namespaces.map((n) => n.id), [7, 8]);
+    expect(review.namespaces.map((n) => n.nsid), [1, 2]);
+    expect(() => review.namespaces.clear(), throwsUnsupportedError);
+    expect(
+      (await h.execute(review)).outcome,
+      NvmeSubsystemNqnOutcome.completed,
+    );
+    expect([h.api.namespace, h.api.other], before);
+    expect(
+      h.api.calls
+          .singleWhere((r) => r.method.name == 'nvmet.subsys.update')
+          .arguments,
+      [
+        2,
+        {'subnqn': _newNqn},
+      ],
+    );
+    expect(h.writes, 1);
+  });
+  final invalidResidents = <String, void Function(_Fake)>{
+    'FILE': (a) => a.namespace['device_type'] = 'FILE',
+    'enabled': (a) => a.namespace['enabled'] = true,
+    'locked': (a) => a.namespace['locked'] = true,
+    'unknown lock': (a) => a.namespace.remove('locked'),
+    'unknown NSID': (a) => a.namespace.remove('nsid'),
+    'zero NSID': (a) => a.namespace['nsid'] = 0,
+    'reserved NSID': (a) => a.namespace['nsid'] = 4294967295,
+    'duplicate NSID': (a) {
+      a.other['subsys'] = {'id': 2};
+      a.other['device_type'] = 'ZVOL';
+      a.other['nsid'] = 1;
+    },
+  };
+  for (final entry in invalidResidents.entries) {
+    test('resident $entry rejects initial and fresh NQN review', () async {
+      final a = _Harness();
+      a.api.namespace['subsys'] = {'id': 2};
+      entry.value(a.api);
+      await expectLater(
+        a.coordinator.prepare(2, nqn: _newNqn),
+        throwsStateError,
+      );
+      final b = _Harness();
+      b.api.namespace['subsys'] = {'id': 2};
+      final review = await b.coordinator.prepare(2, nqn: _newNqn);
+      entry.value(b.api);
+      expect(
+        (await b.execute(review)).outcome,
+        NvmeSubsystemNqnOutcome.rejected,
+      );
+      expect(a.writes, 0);
+      expect(b.writes, 0);
+    });
+  }
+  for (final failure in [
+    'namespace NSID',
+    'namespace enabled',
+    'namespace lock',
+    'namespace detached',
+  ]) {
+    test(
+      '$failure after populated NQN dispatch fences original session',
+      () async {
+        final h = _Harness();
+        h.api.namespace['subsys'] = {'id': 2};
+        final review = await h.coordinator.prepare(2, nqn: _newNqn);
+        h.api.failure = failure;
+        expect(
+          (await h.execute(review)).outcome,
+          NvmeSubsystemNqnOutcome.unknown,
+        );
+        expect(h.coordinator.locked, true);
+        expect(h.writes, 1);
+        expect(
+          (await h.execute(review)).outcome,
+          NvmeSubsystemNqnOutcome.rejected,
+        );
+        expect(h.writes, 1);
+      },
+    );
+  }
   for (final invalid in [
     '',
     ' nqn.2026-09.com.example:new',
@@ -294,7 +386,10 @@ void main() {
     'duplicate existing NQN': (a) =>
         a.subsystem['subnqn'] = 'nqn.2026-09.example:other',
     'requested NQN occupied': (a) => a.subsystem['subnqn'] = _newNqn,
-    'namespace': (a) => a.namespace['subsys'] = {'id': 2},
+    'FILE namespace': (a) {
+      a.namespace['subsys'] = {'id': 2};
+      a.namespace['device_type'] = 'FILE';
+    },
     'port association': (a) => a.mappings.add({
       'id': 10,
       'port': {'id': 3},
@@ -437,83 +532,95 @@ void main() {
   }
   for (final dark in [true, false]) {
     for (final width in [320.0, 430.0]) {
-      testWidgets('NQN editor $width dark=$dark 200% with keyboard', (
-        tester,
-      ) async {
-        final h = _Harness();
-        tester.view.physicalSize = Size(width, 960);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-        final container = ProviderContainer(
-          overrides: [
-            dashboardActiveSessionProvider.overrideWith(
-              (ref) => ref.watch(_active),
-            ),
-          ],
-        );
-        addTearDown(container.dispose);
-        container.read(_active.notifier).select(h.session);
-        await tester.pumpWidget(
-          UncontrolledProviderScope(
-            container: container,
-            child: MaterialApp(
-              theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
-              home: MediaQuery(
-                data: MediaQueryData(
-                  size: Size(width, 960),
-                  textScaler: const TextScaler.linear(2),
-                  viewInsets: const EdgeInsets.only(bottom: 200),
+      for (final populated in [false, true]) {
+        testWidgets(
+          'NQN editor $width dark=$dark populated=$populated 200% with keyboard',
+          (tester) async {
+            final h = _Harness();
+            if (populated) h.api.namespace['subsys'] = {'id': 2};
+            tester.view.physicalSize = Size(width, 960);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.resetPhysicalSize);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            final container = ProviderContainer(
+              overrides: [
+                dashboardActiveSessionProvider.overrideWith(
+                  (ref) => ref.watch(_active),
                 ),
-                child: const Scaffold(
-                  body: SingleChildScrollView(child: NvmeSubsystemNqnEditor()),
+              ],
+            );
+            addTearDown(container.dispose);
+            container.read(_active.notifier).select(h.session);
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: MaterialApp(
+                  theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+                  home: MediaQuery(
+                    data: MediaQueryData(
+                      size: Size(width, 960),
+                      textScaler: const TextScaler.linear(2),
+                      viewInsets: const EdgeInsets.only(bottom: 200),
+                    ),
+                    child: const Scaffold(
+                      body: SingleChildScrollView(
+                        child: NvmeSubsystemNqnEditor(),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        );
-        Future<void> tap(String key) async {
-          final f = find.byKey(Key(key));
-          await tester.ensureVisible(f);
-          await tester.tap(f);
-          await tester.pumpAndSettle();
-        }
+            );
+            Future<void> tap(String key) async {
+              final f = find.byKey(Key(key));
+              await tester.ensureVisible(f);
+              await tester.tap(f);
+              await tester.pumpAndSettle();
+            }
 
-        expect(h.api.calls, isEmpty);
-        await tester.enterText(
-          find.byKey(const Key('nvme-subsystem-nqn-id')),
-          '2',
+            expect(h.api.calls, isEmpty);
+            await tester.enterText(
+              find.byKey(const Key('nvme-subsystem-nqn-id')),
+              '2',
+            );
+            await tester.enterText(
+              find.byKey(const Key('nvme-subsystem-nqn-new')),
+              _newNqn,
+            );
+            await tester.pumpAndSettle();
+            await tap('nvme-subsystem-nqn-review');
+            expect(h.writes, 0);
+            expect(
+              find.text(
+                'Namespace #7, NSID 1: disabled unlocked ZVOL; unchanged',
+              ),
+              populated ? findsOneWidget : findsNothing,
+            );
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.byKey(const Key('nvme-subsystem-nqn-submit')),
+                  )
+                  .onPressed,
+              isNull,
+            );
+            await tap('nvme-subsystem-nqn-reload');
+            await tap('nvme-subsystem-nqn-limitations');
+            final phrase = find.byKey(const Key('nvme-subsystem-nqn-phrase'));
+            await tester.ensureVisible(phrase);
+            await tester.enterText(
+              phrase,
+              'CHANGE NVME SUBSYSTEM 2 NQN nqn.2026-09.example:unused TO $_newNqn',
+            );
+            await tester.pumpAndSettle();
+            await tap('nvme-subsystem-nqn-submit');
+            expect(h.writes, 1);
+            expect(h.api.subsystem['subnqn'], _newNqn);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
         );
-        await tester.enterText(
-          find.byKey(const Key('nvme-subsystem-nqn-new')),
-          _newNqn,
-        );
-        await tester.pumpAndSettle();
-        await tap('nvme-subsystem-nqn-review');
-        expect(h.writes, 0);
-        expect(
-          tester
-              .widget<FilledButton>(
-                find.byKey(const Key('nvme-subsystem-nqn-submit')),
-              )
-              .onPressed,
-          isNull,
-        );
-        await tap('nvme-subsystem-nqn-reload');
-        await tap('nvme-subsystem-nqn-limitations');
-        final phrase = find.byKey(const Key('nvme-subsystem-nqn-phrase'));
-        await tester.ensureVisible(phrase);
-        await tester.enterText(
-          phrase,
-          'CHANGE NVME SUBSYSTEM 2 NQN nqn.2026-09.example:unused TO $_newNqn',
-        );
-        await tester.pumpAndSettle();
-        await tap('nvme-subsystem-nqn-submit');
-        expect(h.writes, 1);
-        expect(h.api.subsystem['subnqn'], _newNqn);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox());
-      });
+      }
     }
   }
 }

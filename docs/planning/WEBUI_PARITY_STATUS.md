@@ -1,6 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: rename an isolated populated ZVOL subsystem
+## Current continuation: NQN-only editing of an isolated populated ZVOL subsystem
+
+The existing NQN-only editor now accepts an empty subsystem or one containing only disabled unlocked ZVOL namespaces with known valid unique NSIDs. Restricted access and no host/port mappings remain mandatory; FILE, enabled/locked or unknown-state residents and incomplete/duplicate/reserved IDs fail closed. Complete public subsystem NQNs must still be known and unique, and new input remains an explicit conservative dated ASCII subset with no automatic assignment. An immutable ID-sorted namespace/NSID list is included in the review; residents are never renumbered, enabled, moved or reconfigured.
+
+Only the target subsystem's `subnqn` is submitted. The independent reload/identity and limitations consents, exact old/new NQN phrase, endpoint-bound single-use five-minute review, shared operation lock and expiry recheck after asynchronous preflight are unchanged. Complete fresh public topology plus protected host/mapping projections must match the review before dispatch. Strict response and separate fresh readback must preserve name, access policy, ANA, PI, queue IDs, IEEE OUI and every other projected row, including resident IDs/NSIDs and disabled/unlocked state. Resident NSID/flag changes or detachment after possible dispatch fence the original session without retry or rollback. Sequential projections cannot prove hidden backing identity, ownership, health, runtime discovery/client IO or atomicity. Fake API tests cover multi-resident preservation, immutable review lists, unsafe residents, preflight drift and post-dispatch uncertainty; empty/populated 320/430px dark/light 200% keyboard layouts are covered. No live NAS read or write occurred. Contract checked against the official [subsystem update API](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.update.html). Host/port-connected or FILE/enabled/locked subsystem changes, namespace creation and associated-host credential management remain pending; TD-037 stays partial.
+
+## Previous continuation: rename an isolated populated ZVOL subsystem
 
 A separate native display-name editor now supports a restricted subsystem containing one or more disabled unlocked ZVOL namespaces with known valid unique NSIDs and no host or port mappings. The empty-subsystem rename workflow remains separate. FILE, enabled/locked or unknown-state residents, incomplete NSIDs, missing NQN, namespace-free targets and connected systems fail closed. The new name is trimmed-exact, nonempty, control-free and limited to 120 characters; occupied names and no-ops are rejected case-insensitively.
 
