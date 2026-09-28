@@ -24,6 +24,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
   Object? _reviewSession;
   String? _message;
   bool _busy = false;
+  String _transport = 'TCP';
 
   @override
   void dispose() {
@@ -45,7 +46,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
         throw StateError('Enter a port from 1024 to 65535. Nothing was sent.');
       }
       final review = await coordinator.prepare(
-        NvmePortCreateChoice(_address.text, port),
+        NvmePortCreateChoice(_address.text, port, transport: _transport),
       );
       if (!mounted) {
         coordinator.cancel(review);
@@ -107,6 +108,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
     final review =
         identical(session, _reviewSession) &&
             identical(coordinator, _reviewCoordinator) &&
+            _transport == _review?.choice.transport &&
             _address.text == _review?.choice.address &&
             _service.text == _review?.choice.servicePort.toString()
         ? _review
@@ -117,11 +119,34 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
         coordinator.available &&
         !coordinator.locked;
     return TdPanel(
-      title: 'Create a disabled NVMe-oF TCP port',
-      description: 'Creates only a disabled TCP port at an explicit IPv4 or global/ULA IPv6 address. Wildcard, scoped/link-local and IPv4-mapped IPv6 inputs are unavailable. No subsystem association or service start is requested. Enabling later may open a listener; interface ownership and client access are not tested.',
+      title: 'Create a disabled NVMe-oF TCP/RDMA port',
+      description: 'Creates only a disabled TCP or RDMA port at an explicit IPv4 or global/ULA IPv6 address. Wildcard, scoped/link-local and IPv4-mapped IPv6 inputs are unavailable. No subsystem association or service start is requested. Enabling later may open a listener; RDMA hardware support, interface ownership and client access are not tested.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          DropdownButtonFormField<String>(
+            key: const Key('nvme-port-create-transport'),
+            initialValue: _transport,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Transport',
+              border: OutlineInputBorder(),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'TCP', child: Text('TCP')),
+              DropdownMenuItem(value: 'RDMA', child: Text('RDMA')),
+            ],
+            onChanged: enabled
+                ? (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _discardReview();
+                      _transport = value;
+                    });
+                  }
+                : null,
+          ),
+          const SizedBox(height: 16),
           TextField(
             key: const Key('nvme-port-create-address'),
             controller: _address,
@@ -140,7 +165,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
             keyboardType: TextInputType.number,
             maxLength: 5,
             decoration: const InputDecoration(
-              labelText: 'TCP port (1024–65535)',
+              labelText: 'Service port (1024–65535)',
               border: OutlineInputBorder(),
             ),
             onChanged: (_) => setState(_discardReview),
@@ -148,7 +173,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
           OutlinedButton(
             key: const Key('nvme-port-create-review'),
             onPressed: enabled ? () => _prepare(coordinator) : null,
-            child: const Text('Review disabled TCP port creation'),
+            child: Text('Review disabled $_transport port creation'),
           ),
           if (coordinator == null || !coordinator.available)
             const Text(
@@ -161,9 +186,11 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
           if (review != null && coordinator != null) ...[
             const Divider(),
             Text('Server: ${review.endpoint}'),
-            Text('TCP ${review.choice.bindingLabel}, disabled'),
-            const Text(
-              'Payload: TCP transport, explicit address, service port and enabled=false only. No association or service operation is submitted.',
+            Text(
+              '${review.choice.transport} ${review.choice.bindingLabel}, disabled',
+            ),
+            Text(
+              'Payload: ${review.choice.transport} transport, explicit address, service port and enabled=false only. No association or service operation is submitted.',
             ),
             const Text(
               'The inventory is checked again before creation. Other administrators can still change the server concurrently.',
@@ -180,7 +207,7 @@ class _NvmePortCreateEditorState extends ConsumerState<NvmePortCreateEditor> {
             FilledButton(
               key: const Key('nvme-port-create-submit'),
               onPressed: _busy ? null : () => _submit(coordinator, review),
-              child: const Text('Create disabled TCP port'),
+              child: Text('Create disabled ${review.choice.transport} port'),
             ),
             TextButton(
               onPressed: _busy ? null : () => setState(_discardReview),

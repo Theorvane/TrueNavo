@@ -74,6 +74,8 @@ class _Fake
   bool bindingMismatch = false;
   bool wrongAddressAfterCreate = false;
   bool normalizeIpv6 = false;
+  bool wrongTransportResponse = false;
+  bool wrongTransportReadback = false;
   bool ambiguous = false;
   bool driftAfterWrite = false;
   bool queueDriftAfterWrite = false;
@@ -117,6 +119,8 @@ class _Fake
         created.add(row);
         if (normalizeIpv6) row['addr_traddr'] = '2001:0db8:0:0:0:0:0:0002';
         final returned = Map.of(row);
+        if (wrongTransportResponse) returned['addr_trtype'] = 'TCP';
+        if (wrongTransportReadback) row['addr_trtype'] = 'TCP';
         if (corruptResponse) returned['id'] = 3;
         if (driftAfterWrite) port['pi_enable'] = true;
         if (queueDriftAfterWrite) row['max_queue_size'] = 128;
@@ -167,8 +171,151 @@ class _Harness {
 }
 
 const _choice = NvmePortCreateChoice('10.0.0.2', 4420);
+const _rdma = NvmePortCreateChoice('10.0.0.2', 4420, transport: 'RDMA');
 
 void main() {
+  test('unsupported transports reject before reads', () async {
+    final h = _Harness();
+    for (final transport in ['FC', 'UDP', 'rdma', '', 'RDMA ']) {
+      await expectLater(
+        h.coordinator.prepare(
+          NvmePortCreateChoice('10.0.0.2', 4420, transport: transport),
+        ),
+        throwsStateError,
+      );
+    }
+    expect(h.api.calls, isEmpty);
+  });
+
+  for (final address in ['10.0.0.2', '2001:db8::2']) {
+    test('RDMA $address sends only disabled binding configuration', () async {
+      final h = _Harness();
+      h.api.normalizeIpv6 = address.contains(':');
+      final choice = NvmePortCreateChoice(address, 4420, transport: 'RDMA');
+      final review = await h.coordinator.prepare(choice);
+      expect(
+        review.confirmation,
+        'CREATE DISABLED NVME RDMA ${choice.bindingLabel}',
+      );
+      expect(
+        (await h.coordinator.execute(review, review.confirmation)).outcome,
+        NvmePortCreateOutcome.completed,
+      );
+      expect(h.writes, 1);
+      expect(
+        h.api.calls
+            .where((c) => c.method.name == 'nvmet.port.create')
+            .single
+            .arguments,
+        [
+          {
+            'addr_trtype': 'RDMA',
+            'addr_traddr': address,
+            'addr_trsvcid': 4420,
+            'enabled': false,
+          },
+        ],
+      );
+      expect(h.api.port['addr_trtype'], 'TCP');
+    });
+  }
+
+  test('same binding conservatively conflicts across TCP and RDMA', () async {
+    for (final existing in ['TCP', 'RDMA']) {
+      for (final selected in ['TCP', 'RDMA']) {
+        final h = _Harness();
+        h.api.port['addr_trtype'] = existing;
+        h.api.port['addr_traddr'] = _choice.address;
+        await expectLater(
+          h.coordinator.prepare(
+            NvmePortCreateChoice(_choice.address, 4420, transport: selected),
+          ),
+          throwsStateError,
+        );
+        expect(h.writes, 0);
+      }
+    }
+  });
+
+  test('RDMA wildcard and equivalent IPv6 binds block creation', () async {
+    for (final address in ['', '0:0:0:0:0:0:0:0', '2001:0DB8:0:0:0:0:0:0002']) {
+      final h = _Harness();
+      h.api.port['addr_trtype'] = 'RDMA';
+      h.api.port['addr_traddr'] = address;
+      await expectLater(
+        h.coordinator.prepare(
+          const NvmePortCreateChoice('2001:db8::2', 4420, transport: 'RDMA'),
+        ),
+        throwsStateError,
+      );
+      expect(h.writes, 0);
+    }
+  });
+
+  test('RDMA review rejects existing transport drift before write', () async {
+    final h = _Harness();
+    final review = await h.coordinator.prepare(_rdma);
+    h.api.port['addr_trtype'] = 'RDMA';
+    expect(
+      (await h.coordinator.execute(review, review.confirmation)).outcome,
+      NvmePortCreateOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+
+  test(
+    'RDMA ambiguous or unexpected post-create state fences retries',
+    () async {
+      for (final mode in ['ambiguous', 'attached', 'queue', 'enabled']) {
+        final h = _Harness();
+        h.api.ambiguous = mode == 'ambiguous';
+        h.api.attachAfterCreate = mode == 'attached';
+        h.api.queueDriftAfterWrite = mode == 'queue';
+        h.api.enableAfterCreate = mode == 'enabled';
+        final review = await h.coordinator.prepare(_rdma);
+        expect(
+          (await h.coordinator.execute(review, review.confirmation)).outcome,
+          NvmePortCreateOutcome.unknown,
+          reason: mode,
+        );
+        expect(h.writes, 1);
+        await expectLater(h.coordinator.prepare(_rdma), throwsStateError);
+        expect(h.writes, 1);
+      }
+    },
+  );
+
+  test('TCP confirmation cannot authorize an RDMA review', () async {
+    final h = _Harness();
+    final review = await h.coordinator.prepare(_rdma);
+    expect(
+      (await h.coordinator.execute(
+        review,
+        'CREATE DISABLED NVME TCP 10.0.0.2:4420',
+      )).outcome,
+      NvmePortCreateOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+
+  for (final responseMismatch in [true, false]) {
+    test(
+      'RDMA transport mismatch in response=$responseMismatch fences writes',
+      () async {
+        final h = _Harness();
+        h.api.wrongTransportResponse = responseMismatch;
+        h.api.wrongTransportReadback = !responseMismatch;
+        final review = await h.coordinator.prepare(_rdma);
+        expect(
+          (await h.coordinator.execute(review, review.confirmation)).outcome,
+          NvmePortCreateOutcome.unknown,
+        );
+        expect(h.writes, 1);
+        expect(h.coordinator.locked, true);
+      },
+    );
+  }
+
   test('invalid IPv4 and service ports reject before reads', () async {
     final h = _Harness();
     for (final address in [
@@ -513,55 +660,127 @@ void main() {
     expect(h.coordinator.locked, true);
   });
 
-  for (final width in [320.0, 430.0]) {
-    testWidgets('IPv6 creation review fits at $width and 200 percent text', (
-      tester,
-    ) async {
-      tester.view.physicalSize = Size(width, 900);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final h = _Harness();
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            dashboardActiveSessionProvider.overrideWith((ref) => h.session),
-            nvmePortCreateCoordinatorProvider.overrideWith(
-              (ref) => h.coordinator,
-            ),
-          ],
-          child: MaterialApp(
-            theme: TrueRAIDTheme.dark(),
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: const TextScaler.linear(2)),
-              child: child!,
-            ),
-            home: const Scaffold(
-              body: SingleChildScrollView(child: NvmePortCreateEditor()),
-            ),
+  testWidgets('transport change discards TCP review and requires RDMA phrase', (
+    tester,
+  ) async {
+    final h = _Harness();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          nvmePortCreateCoordinatorProvider.overrideWith(
+            (ref) => h.coordinator,
+          ),
+        ],
+        child: MaterialApp(
+          theme: TrueRAIDTheme.dark(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: NvmePortCreateEditor()),
           ),
         ),
-      );
-      await tester.enterText(
-        find.byKey(const Key('nvme-port-create-address')),
-        '2001:0db8:0000:0000:0000:0000:0000:0002',
-      );
-      await tester.ensureVisible(
-        find.byKey(const Key('nvme-port-create-review')),
-      );
-      await tester.tap(find.byKey(const Key('nvme-port-create-review')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const Key('nvme-port-create-confirmation')),
-      );
-      await tester.enterText(
-        find.byKey(const Key('nvme-port-create-confirmation')),
-        'CREATE DISABLED NVME TCP [2001:0db8:0000:0000:0000:0000:0000:0002]:4420',
-      );
-      await tester.pumpAndSettle();
-      expect(h.writes, 0);
-      expect(tester.takeException(), isNull);
-    });
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-create-address')),
+      '10.0.0.2',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-review')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-create-review')));
+    await tester.pumpAndSettle();
+    expect(find.text('TCP 10.0.0.2:4420, disabled'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-transport')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-create-transport')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('RDMA').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('nvme-port-create-confirmation')),
+      findsNothing,
+    );
+    expect(h.writes, 0);
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-review')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-create-review')));
+    await tester.pumpAndSettle();
+    expect(find.text('RDMA 10.0.0.2:4420, disabled'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-confirmation')),
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-port-create-confirmation')),
+      'CREATE DISABLED NVME RDMA 10.0.0.2:4420',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('nvme-port-create-submit')),
+    );
+    await tester.tap(find.byKey(const Key('nvme-port-create-submit')));
+    await tester.pumpAndSettle();
+    expect(h.writes, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [320.0, 430.0]) {
+    testWidgets(
+      'RDMA IPv6 creation review fits at $width and 200 percent text',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final h = _Harness();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+              nvmePortCreateCoordinatorProvider.overrideWith(
+                (ref) => h.coordinator,
+              ),
+            ],
+            child: MaterialApp(
+              theme: TrueRAIDTheme.dark(),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: const TextScaler.linear(2)),
+                child: child!,
+              ),
+              home: const Scaffold(
+                body: SingleChildScrollView(child: NvmePortCreateEditor()),
+              ),
+            ),
+          ),
+        );
+        await tester.ensureVisible(
+          find.byKey(const Key('nvme-port-create-transport')),
+        );
+        await tester.tap(find.byKey(const Key('nvme-port-create-transport')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('RDMA').last);
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const Key('nvme-port-create-address')),
+          '2001:0db8:0000:0000:0000:0000:0000:0002',
+        );
+        await tester.ensureVisible(
+          find.byKey(const Key('nvme-port-create-review')),
+        );
+        await tester.tap(find.byKey(const Key('nvme-port-create-review')));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(
+          find.byKey(const Key('nvme-port-create-confirmation')),
+        );
+        await tester.enterText(
+          find.byKey(const Key('nvme-port-create-confirmation')),
+          'CREATE DISABLED NVME RDMA [2001:0db8:0000:0000:0000:0000:0000:0002]:4420',
+        );
+        await tester.pumpAndSettle();
+        expect(h.writes, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
   }
 }

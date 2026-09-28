@@ -31,12 +31,18 @@ final nvmePortCreateCoordinatorProvider = Provider<NvmePortCreateCoordinator?>((
   );
 });
 
-/// Deliberately excludes wildcard, scoped/link-local IPv6, RDMA and FC.
+/// Deliberately excludes wildcard, scoped/link-local IPv6 and FC.
 final class NvmePortCreateChoice {
-  const NvmePortCreateChoice(this.address, this.servicePort);
+  const NvmePortCreateChoice(
+    this.address,
+    this.servicePort, {
+    this.transport = 'TCP',
+  });
   final String address;
   final int servicePort;
+  final String transport;
   bool get valid =>
+      const {'TCP', 'RDMA'}.contains(transport) &&
       servicePort >= 1024 &&
       servicePort <= 65535 &&
       NvmeTcpBindAddress.parse(address)?.creatable == true;
@@ -58,7 +64,8 @@ final class NvmePortCreateReview {
   final String endpoint, proof;
   final NvmePortCreateChoice choice;
   final DateTime issuedAt;
-  String get confirmation => 'CREATE DISABLED NVME TCP ${choice.bindingLabel}';
+  String get confirmation =>
+      'CREATE DISABLED NVME ${choice.transport} ${choice.bindingLabel}';
 }
 
 final class _Binding {
@@ -75,7 +82,7 @@ final class _Binding {
   final bool enabled;
   List<Object?> get proof => [id, transport, address, service, enabled];
   bool matches(NvmePortCreateChoice choice) =>
-      transport == 'TCP' &&
+      transport == choice.transport &&
       NvmeTcpBindAddress.equivalent(address, choice.address) &&
       service == choice.servicePort &&
       !enabled;
@@ -92,7 +99,7 @@ final class _Snapshot {
   ]);
 }
 
-/// Creates only a disabled TCP/IP port, never mappings or existing objects.
+/// Creates only a disabled TCP/RDMA IP port, never mappings or existing objects.
 /// Bounded sequential reads cannot exclude a concurrent administrator's race.
 final class NvmePortCreateCoordinator {
   NvmePortCreateCoordinator({
@@ -223,21 +230,22 @@ final class NvmePortCreateCoordinator {
     }
     if (snapshot.bindings.any(
       (b) =>
-          b.transport == 'TCP' && NvmeTcpBindAddress.parse(b.address) == null,
+          const {'TCP', 'RDMA'}.contains(b.transport) &&
+          NvmeTcpBindAddress.parse(b.address) == null,
     )) {
       throw StateError(
-        'An existing TCP bind address cannot be compared safely. Nothing was sent.',
+        'An existing IP transport bind address cannot be compared safely. Nothing was sent.',
       );
     }
     if (snapshot.bindings.any(
       (b) =>
-          b.transport == 'TCP' &&
+          const {'TCP', 'RDMA'}.contains(b.transport) &&
           b.service.toString() == choice.servicePort.toString() &&
           (NvmeTcpBindAddress.equivalent(b.address, choice.address) ||
               NvmeTcpBindAddress.parse(b.address)?.wildcard == true),
     )) {
       throw StateError(
-        'An existing TCP port conflicts with this binding. Nothing was sent.',
+        'An existing TCP or RDMA port conflicts with this binding. Nothing was sent.',
       );
     }
   }
@@ -246,7 +254,7 @@ final class NvmePortCreateCoordinator {
     _guard();
     if (!available || _busy || !choice.valid) {
       throw StateError(
-        'Enter an explicit IPv4 or global/ULA IPv6 address and a port from 1024 to 65535. Nothing was sent.',
+        'Select TCP or RDMA, an explicit IPv4 or global/ULA IPv6 address and a port from 1024 to 65535. Nothing was sent.',
       );
     }
     final owner = lock.acquire();
@@ -325,7 +333,7 @@ final class NvmePortCreateCoordinator {
           method: method,
           arguments: [
             {
-              'addr_trtype': 'TCP',
+              'addr_trtype': review.choice.transport,
               'addr_traddr': review.choice.address,
               'addr_trsvcid': review.choice.servicePort,
               'enabled': false,
@@ -349,7 +357,7 @@ final class NvmePortCreateCoordinator {
           id is! int ||
           id <= 0 ||
           before.bindings.any((b) => b.id == id) ||
-          row['addr_trtype'] != 'TCP' ||
+          row['addr_trtype'] != review.choice.transport ||
           row['addr_traddr'] is! String ||
           !NvmeTcpBindAddress.equivalent(
             row['addr_traddr'] as String,
@@ -378,7 +386,7 @@ final class NvmePortCreateCoordinator {
       }
       return NvmePortCreateResult(
         NvmePortCreateOutcome.completed,
-        'Disabled unassociated TCP port #$id was confirmed in fresh reads. Listener reachability was not tested.',
+        'Disabled unassociated ${review.choice.transport} port #$id was confirmed in fresh reads. Hardware support and listener reachability were not tested.',
       );
     } on Object {
       return sent
