@@ -146,6 +146,7 @@ final class TrueNasSessionRepository
         AuthenticatedAuditExportSession,
         AuthenticatedIscsiAuthSession,
         AuthenticatedNvmeHostSession,
+        AuthenticatedNvmeHostAuthenticationSession,
         AuthenticatedNvmeHostCreateSession,
         AuthenticatedNvmeHostRenameSession,
         AuthenticatedNvmeHostAccessSession,
@@ -1648,6 +1649,46 @@ final class TrueNasSessionRepository
           .timeout(managementRequestTimeout);
       if (!management.isCurrent()) throw const NvmeHostException();
       return NvmeHostPublicRows.project(hosts, mappings);
+    } on Object {
+      throw const NvmeHostException();
+    }
+  }
+
+  @override
+  Future<NvmeHostAuthenticationInventory> loadNvmeHostAuthentication() async {
+    final management = _management;
+    final client = _client;
+    if (management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !management.isCurrent() ||
+        !management.methods.contains('nvmet.host.query') ||
+        client == null ||
+        !client.isOpen) {
+      throw const NvmeHostException();
+    }
+    try {
+      final raw = await client
+          .call(
+            'nvmet.host.query',
+            id: _id(),
+            params: const [
+              [],
+              {
+                'select': [
+                  'id',
+                  'hostnqn',
+                  'dhchap_key',
+                  'dhchap_ctrl_key',
+                  'dhchap_dhgroup',
+                  'dhchap_hash',
+                ],
+                'limit': 101,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      return NvmeHostAuthenticationInventory.project(raw);
     } on Object {
       throw const NvmeHostException();
     }

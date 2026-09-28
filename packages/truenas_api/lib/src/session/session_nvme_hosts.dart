@@ -6,6 +6,87 @@ abstract interface class AuthenticatedNvmeHostSession {
   Future<NvmeHostPublicRows> loadNvmeHostReferences();
 }
 
+/// On-demand read: key values are reduced to returned presence flags inside
+/// the SDK. Flags do not attest usable credentials or runtime authentication.
+abstract interface class AuthenticatedNvmeHostAuthenticationSession {
+  Future<NvmeHostAuthenticationInventory> loadNvmeHostAuthentication();
+}
+
+final class NvmeHostAuthentication {
+  const NvmeHostAuthentication({
+    required this.id,
+    required this.nqn,
+    required this.hostKeyReturned,
+    required this.controllerKeyReturned,
+    required this.group,
+    required this.hash,
+  });
+  final int id;
+  final String nqn, hash;
+  final String? group;
+  final bool hostKeyReturned, controllerKeyReturned;
+  bool get inconsistent =>
+      !hostKeyReturned && (controllerKeyReturned || group != null);
+}
+
+final class NvmeHostAuthenticationInventory {
+  NvmeHostAuthenticationInventory._(List<NvmeHostAuthentication> hosts)
+    : hosts = List.unmodifiable(hosts);
+  final List<NvmeHostAuthentication> hosts;
+
+  factory NvmeHostAuthenticationInventory.project(Object? raw) {
+    final public = NvmeHostPublicRows.project(raw, const <Object?>[]);
+    final ids = <int>{};
+    final rows = <NvmeHostAuthentication>[];
+    for (var i = 0; i < public.hosts.length; i++) {
+      final row = (raw as List)[i] as Map;
+      final identity = public.hosts[i];
+      final id = identity['id'] as int;
+      final hash = row['dhchap_hash'];
+      final group = row['dhchap_dhgroup'];
+      if (!ids.add(id) ||
+          !row.containsKey('dhchap_dhgroup') ||
+          !const {'SHA-256', 'SHA-384', 'SHA-512'}.contains(hash) ||
+          (group != null &&
+              !const {
+                '2048-BIT',
+                '3072-BIT',
+                '4096-BIT',
+                '6144-BIT',
+                '8192-BIT',
+              }.contains(group))) {
+        throw const FormatException('Invalid NVMe authentication metadata');
+      }
+      bool presence(String key) {
+        if (!row.containsKey(key)) {
+          throw const FormatException('Unknown NVMe authentication metadata');
+        }
+        final value = row[key];
+        if (value == null) return false;
+        if (value is! String ||
+            value.isEmpty ||
+            value.length > 512 ||
+            value.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+          throw const FormatException('Invalid NVMe authentication metadata');
+        }
+        return true;
+      }
+
+      rows.add(
+        NvmeHostAuthentication(
+          id: id,
+          nqn: identity['hostnqn'] as String,
+          hostKeyReturned: presence('dhchap_key'),
+          controllerKeyReturned: presence('dhchap_ctrl_key'),
+          group: group as String?,
+          hash: hash as String,
+        ),
+      );
+    }
+    return NvmeHostAuthenticationInventory._(rows);
+  }
+}
+
 /// Explicitly unauthenticated, unassociated identity creation. Secret-bearing
 /// middleware responses are validated and reduced before leaving the SDK.
 abstract interface class AuthenticatedNvmeHostCreateSession {

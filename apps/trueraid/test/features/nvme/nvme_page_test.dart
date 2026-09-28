@@ -853,6 +853,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(fake.calls.map((call) => call.method.name), _names);
     expect(fake.hostCalls, isEmpty);
-    expect(find.textContaining('counts are unknown, not zero'), findsOneWidget);
+    expect(
+      find.text(
+        'Host access inventory unavailable; counts are unknown, not zero.',
+      ),
+      findsOneWidget,
+    );
   });
 }

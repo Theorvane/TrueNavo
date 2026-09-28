@@ -20,6 +20,7 @@ import 'nvme_port_create_editor.dart';
 import 'nvme_namespace_delete_editor.dart';
 import 'nvme_host_create_editor.dart';
 import 'nvme_host_rename_editor.dart';
+import 'nvme_host_authentication_panel.dart';
 import 'nvme_overview.dart';
 import 'nvme_setting_charts.dart';
 import 'nvme_subsystem_create_editor.dart';
@@ -85,6 +86,7 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                     setState(() => _showHosts = false);
                     ref.invalidate(nvmeOverviewProvider);
                     ref.invalidate(nvmeGlobalProvider);
+                    ref.invalidate(nvmeHostAuthenticationProvider);
                   },
             icon: const Icon(Icons.refresh),
           ),
@@ -110,10 +112,12 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Saved configuration from four sequential reads. No host keys, device paths, serials or client sessions are loaded. Mappings do not prove reachability or current access.',
+                    'Saved topology from four sequential reads. No device paths, serials or client sessions are loaded. Host identities and authentication metadata are loaded separately on request; protected SDK reads keep key values out of the app. Mappings do not prove reachability or current access.',
                   ),
                   const SizedBox(height: 20),
                   const NvmeGlobalPanel(),
+                  const SizedBox(height: 20),
+                  const NvmeHostAuthenticationPanel(),
                   const SizedBox(height: 20),
                   switch (state) {
                     AsyncData(:final value) => _Content(
@@ -214,7 +218,7 @@ class _HostAccessPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => TdPanel(
     title: 'Host access configuration',
-    description: 'Load host identities only when needed. DH-CHAP keys are never requested. Saved associations do not prove a current session or client reachability.',
+    description: 'Load host identities only when needed. This identity read does not request DH-CHAP keys. Saved associations do not prove a current session or client reachability.',
     child: hostState == null
         ? OutlinedButton(
             key: const Key('nvme-host-load'),

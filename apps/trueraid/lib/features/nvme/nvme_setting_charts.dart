@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:truenas_api/truenas_api.dart';
 
 import 'nvme_overview.dart';
 
@@ -117,6 +118,73 @@ class NvmeSettingCharts extends StatelessWidget {
         const SizedBox(height: 8),
         const Text(
           'Rings summarize returned saved configuration, including disabled ports and namespaces. They do not verify listener health, client access or data protection.',
+        ),
+      ],
+    );
+  }
+}
+
+/// Counts only returned metadata, never authentication success or key validity.
+class NvmeHostAuthenticationCharts extends StatelessWidget {
+  const NvmeHostAuthenticationCharts({required this.value, super.key});
+  final NvmeHostAuthenticationInventory value;
+
+  @override
+  Widget build(BuildContext context) {
+    final hosts = value.hosts;
+    final inconsistent = hosts.where((h) => h.inconsistent).length;
+    final both = hosts
+        .where(
+          (h) =>
+              !h.inconsistent && h.hostKeyReturned && h.controllerKeyReturned,
+        )
+        .length;
+    final hostOnly = hosts
+        .where(
+          (h) =>
+              !h.inconsistent && h.hostKeyReturned && !h.controllerKeyReturned,
+        )
+        .length;
+    return Wrap(
+      spacing: 16,
+      runSpacing: 16,
+      children: [
+        _SettingDonut(
+          chartKey: const Key('nvme-host-auth-presence-donut'),
+          title: 'Returned key metadata',
+          unit: 'hosts',
+          labels: const [
+            'keys returned unset',
+            'host key returned',
+            'both keys returned',
+            'inconsistent fields',
+          ],
+          counts: [
+            hosts.length - inconsistent - both - hostOnly,
+            hostOnly,
+            both,
+            inconsistent,
+          ],
+        ),
+        _SettingDonut(
+          chartKey: const Key('nvme-host-auth-hash-donut'),
+          title: 'Saved hash setting',
+          unit: 'hosts',
+          labels: const ['SHA-256', 'SHA-384', 'SHA-512'],
+          counts: [
+            for (final hash in ['SHA-256', 'SHA-384', 'SHA-512'])
+              hosts.where((h) => h.hash == hash).length,
+          ],
+        ),
+        _SettingDonut(
+          chartKey: const Key('nvme-host-auth-group-donut'),
+          title: 'Saved DH group setting',
+          unit: 'hosts',
+          labels: const ['group returned', 'group returned unset'],
+          counts: [
+            hosts.where((h) => h.group != null).length,
+            hosts.where((h) => h.group == null).length,
+          ],
         ),
       ],
     );

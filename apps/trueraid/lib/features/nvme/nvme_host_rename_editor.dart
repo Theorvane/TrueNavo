@@ -4,6 +4,7 @@ import 'package:trueraid_design_system/trueraid_design_system.dart';
 
 import '../dashboard/dashboard_controller.dart';
 import 'nvme_host_overview.dart';
+import 'nvme_host_authentication_panel.dart';
 import 'nvme_overview.dart';
 import 'nvme_host_rename_coordinator.dart';
 
@@ -105,6 +106,7 @@ class _NvmeHostRenameEditorState extends ConsumerState<NvmeHostRenameEditor> {
       _confirmation.clear();
       ref.invalidate(nvmeOverviewProvider);
       ref.invalidate(nvmeHostOverviewProvider);
+      ref.invalidate(nvmeHostAuthenticationProvider);
     }
   }
 

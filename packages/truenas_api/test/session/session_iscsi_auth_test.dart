@@ -7,6 +7,151 @@ import 'package:truenas_api/truenas_api.dart';
 const _secret = 'fixture-chap-secret-never-exposed';
 
 void main() {
+  test('authentication inventory wire selects bounded fields and strips key values', () async {
+    final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
+    wire.hostRow['dhchap_key'] = _secret;
+    wire.hostRow['dhchap_ctrl_key'] = _secret;
+    wire.hostRow['dhchap_dhgroup'] = '4096-BIT';
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    final inventory = await repo.loadNvmeHostAuthentication();
+    final host = inventory.hosts.single;
+    expect(
+      [
+        host.id,
+        host.nqn,
+        host.hostKeyReturned,
+        host.controllerKeyReturned,
+        host.group,
+        host.hash,
+      ],
+      [3, 'nqn.2026-09.example:old', true, true, '4096-BIT', 'SHA-256'],
+    );
+    expect(host.inconsistent, false);
+    expect(host.toString(), isNot(contains(_secret)));
+    expect(() => inventory.hosts.clear(), throwsUnsupportedError);
+    final read = wire.requests.singleWhere(
+      (r) => r['method'] == 'nvmet.host.query',
+    );
+    expect(read['params'], [
+      [],
+      {
+        'select': [
+          'id',
+          'hostnqn',
+          'dhchap_key',
+          'dhchap_ctrl_key',
+          'dhchap_dhgroup',
+          'dhchap_hash',
+        ],
+        'limit': 101,
+      },
+    ]);
+    expect(
+      wire.requests.where(
+        (r) =>
+            (r['method'] as String).startsWith('nvmet.host') &&
+            r['method'] != 'nvmet.host.query',
+      ),
+      isEmpty,
+    );
+  });
+  test('unadvertised authentication inventory sends no host query', () async {
+    final wire = _Wire();
+    final repo = TrueNasSessionRepository(connector: _Connector(wire));
+    addTearDown(repo.close);
+    await repo.connect(
+      serverInput: 'https://fixture.example',
+      username: 'fixture-user',
+      apiKey: 'fixture-key',
+    );
+    await expectLater(
+      repo.loadNvmeHostAuthentication(),
+      throwsA(isA<NvmeHostException>()),
+    );
+    expect(
+      wire.requests.where((r) => r['method'] == 'nvmet.host.query'),
+      isEmpty,
+    );
+  });
+  test('authentication projection distinguishes returned null nonempty and inconsistent fields', () {
+    Map<String, Object?> row(int id) => {
+      'id': id,
+      'hostnqn': 'nqn.fixture:host$id',
+      'dhchap_key': null,
+      'dhchap_ctrl_key': null,
+      'dhchap_dhgroup': null,
+      'dhchap_hash': 'SHA-256',
+    };
+    final rows = NvmeHostAuthenticationInventory.project([
+      row(1),
+      {...row(2), 'dhchap_key': _secret},
+      {...row(3), 'dhchap_key': _secret, 'dhchap_ctrl_key': _secret},
+      {...row(4), 'dhchap_ctrl_key': _secret},
+      {...row(5), 'dhchap_dhgroup': '2048-BIT'},
+    ]).hosts;
+    expect(rows.map((h) => h.inconsistent), [false, false, false, true, true]);
+    expect(rows.map((h) => h.hostKeyReturned), [
+      false,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(rows.toString(), isNot(contains(_secret)));
+  });
+  test('authentication projection rejects truncated missing malformed and duplicate metadata', () {
+    final row = <String, Object?>{
+      'id': 1,
+      'hostnqn': 'nqn.fixture:host',
+      'dhchap_key': null,
+      'dhchap_ctrl_key': null,
+      'dhchap_dhgroup': null,
+      'dhchap_hash': 'SHA-256',
+    };
+    for (final key in row.keys) {
+      expect(
+        () =>
+            NvmeHostAuthenticationInventory.project([Map.of(row)..remove(key)]),
+        throwsFormatException,
+      );
+    }
+    for (final key in ['dhchap_key', 'dhchap_ctrl_key']) {
+      for (final value in ['', 1, false, 'bad\n', 'x' * 513]) {
+        expect(
+          () => NvmeHostAuthenticationInventory.project([
+            {...row, key: value},
+          ]),
+          throwsFormatException,
+        );
+      }
+    }
+    for (final key in ['dhchap_hash', 'dhchap_dhgroup']) {
+      expect(
+        () => NvmeHostAuthenticationInventory.project([
+          {...row, key: _secret},
+        ]),
+        throwsFormatException,
+      );
+    }
+    for (final raw in [
+      null,
+      {},
+      [row, row],
+      List.filled(101, row),
+    ]) {
+      expect(
+        () => NvmeHostAuthenticationInventory.project(raw),
+        throwsFormatException,
+      );
+    }
+    expect(NvmeHostAuthenticationInventory.project([]).hosts, isEmpty);
+  });
   test(
     'protected host NQN edit selects one ID and sends only hostnqn',
     () async {
