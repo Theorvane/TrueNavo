@@ -162,8 +162,8 @@ abstract interface class AuthenticatedNvmeHostCreateSession {
   Future<NvmeHostCreated> createUnassociatedNvmeHost({required String hostNqn});
 }
 
-/// Backend-only imported-key registration. A future native review must supply
-/// endpoint-bound consent and full topology checks before exposing this path.
+/// Protected imported-key registration. Native callers supply endpoint-bound
+/// consent, complete public topology checks and conservative uncertainty fencing.
 abstract interface class AuthenticatedNvmeHostKeyCreateSession {
   Future<NvmeHostAuthentication> createNvmeHostWithImportedKeys({
     required String hostNqn,
@@ -173,8 +173,8 @@ abstract interface class AuthenticatedNvmeHostKeyCreateSession {
   });
 }
 
-/// SDK-only credential replacement foundation. Native review/consent and full
-/// public topology fencing are required before exposing this to app users.
+/// Protected credential replacement. Native callers supply credential-loss
+/// consent, complete public topology checks and conservative uncertainty fencing.
 abstract interface class AuthenticatedNvmeHostKeyReplaceSession {
   Future<NvmeHostKeyReplacementReview> reviewNvmeHostKeyReplacement(int id);
   Future<NvmeHostAuthentication> replaceNvmeHostImportedKeys({
