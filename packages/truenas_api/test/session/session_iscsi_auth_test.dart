@@ -67,6 +67,256 @@ class _ReplaceHarness {
 }
 
 void main() {
+  group('protected NVMe key generation', () {
+    test('secret-bearing RPC error is suppressed without retry', () async {
+      final wire = _Wire(advertiseNvmeGenerate: true, advertiseNvmeHashes: true)
+        ..generationFailure = true;
+      final h = _ReplaceHarness(wire: wire);
+      await h.connect();
+      await expectLater(
+        h.repo.generateNvmeHostKey(hash: 'SHA-256'),
+        throwsA(
+          isA<NvmeHostKeyGenerationException>().having(
+            (e) => e.toString(),
+            'safe error',
+            isNot(contains(_secret)),
+          ),
+        ),
+      );
+      expect(
+        wire.requests.where((r) => r['method'] == 'nvmet.host.generate_key'),
+        hasLength(1),
+      );
+    });
+    test('reconnection invalidates an old envelope', () async {
+      final wires = List.generate(
+        2,
+        (_) => _Wire(advertiseNvmeGenerate: true, advertiseNvmeHashes: true),
+      );
+      final repo = TrueNasSessionRepository(
+        connector: _RotatingConnector(wires),
+      );
+      addTearDown(repo.close);
+      Future<void> connect() async {
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+      }
+
+      await connect();
+      final old = await repo.generateNvmeHostKey(hash: 'SHA-256');
+      addTearDown(old.dispose);
+      await connect();
+      expect(
+        () => old.takeForTransfer(acknowledgeSecretExposure: true),
+        throwsA(isA<NvmeHostKeyGenerationException>()),
+      );
+      expect(old.isDisposed, true);
+      final fresh = await repo.generateNvmeHostKey(hash: 'SHA-256');
+      addTearDown(fresh.dispose);
+      expect(
+        fresh.takeForTransfer(acknowledgeSecretExposure: true),
+        _importedKey('01'),
+      );
+    });
+    for (final stage in ['hashes', 'generation']) {
+      test(
+        'disconnect during $stage discards late results without retry',
+        () async {
+          final gate = Completer<void>();
+          final wire = _Wire(
+            advertiseNvmeGenerate: true,
+            advertiseNvmeHashes: true,
+          );
+          if (stage == 'hashes') {
+            wire.pauseHashes = gate;
+          } else {
+            wire.pauseGeneration = gate;
+          }
+          final h = _ReplaceHarness(wire: wire);
+          await h.connect();
+          final future = h.repo.generateNvmeHostKey(hash: 'SHA-256');
+          final rejected = expectLater(
+            future,
+            throwsA(isA<NvmeHostKeyGenerationException>()),
+          );
+          await (stage == 'hashes'
+              ? wire.hashesStarted.future
+              : wire.generationStarted.future);
+          await h.repo.close();
+          gate.complete();
+          await rejected;
+          expect(
+            wire.requests.where(
+              (r) => r['method'] == 'nvmet.host.generate_key',
+            ),
+            hasLength(stage == 'hashes' ? 0 : 1),
+          );
+        },
+      );
+    }
+    for (final entry in {
+      'SHA-256': '01',
+      'SHA-384': '02',
+      'SHA-512': '03',
+    }.entries) {
+      for (final nqn in [null, 'nqn.2026-09.example:initiator']) {
+        test(
+          '${entry.key} exact positional payload with optional NQN',
+          () async {
+            final wire = _Wire(
+              advertiseNvmeGenerate: true,
+              advertiseNvmeHashes: true,
+            )..generatedKey = _importedKey(entry.value);
+            final h = _ReplaceHarness(wire: wire);
+            await h.connect();
+            final key = await h.repo.generateNvmeHostKey(
+              hash: entry.key,
+              nqn: nqn,
+            );
+            addTearDown(key.dispose);
+            expect(key.hash, entry.key);
+            expect(key.nqn, nqn);
+            expect(key.toString(), 'NvmeGeneratedHostKey(redacted)');
+            expect(() => jsonEncode(key), throwsA(anything));
+            expect(
+              wire.requests
+                  .where((r) => (r['method'] as String).startsWith('nvmet.'))
+                  .map((r) => r['method']),
+              ['nvmet.host.dhchap_hash_choices', 'nvmet.host.generate_key'],
+            );
+            expect(wire.requests.last['params'], [entry.key, nqn]);
+            expect(
+              () => key.takeForTransfer(acknowledgeSecretExposure: false),
+              throwsA(isA<NvmeHostKeyGenerationException>()),
+            );
+            expect(key.isDisposed, false);
+            expect(
+              key.takeForTransfer(acknowledgeSecretExposure: true),
+              wire.generatedKey,
+            );
+            expect(key.isDisposed, true);
+            expect(
+              () => key.takeForTransfer(acknowledgeSecretExposure: true),
+              throwsA(isA<NvmeHostKeyGenerationException>()),
+            );
+            expect(
+              h.repo.adminCatalog.method('nvmet.host.generate_key')?.supported,
+              false,
+            );
+          },
+        );
+      }
+    }
+    for (final issue in [
+      'method',
+      'choices method',
+      'version',
+      'invalid hash',
+      'invalid nqn',
+      'subset',
+      'malformed choices',
+    ]) {
+      test('$issue fails without generating', () async {
+        final wire = _Wire(
+          advertiseNvmeGenerate: issue != 'method',
+          advertiseNvmeHashes: issue != 'choices method',
+        );
+        if (issue == 'version') wire.serverVersion = '25.04.2';
+        if (issue == 'subset') wire.hashes = ['SHA-512'];
+        if (issue == 'malformed choices') wire.hashes = [_secret];
+        final h = _ReplaceHarness(wire: wire);
+        await h.connect();
+        await expectLater(
+          h.repo.generateNvmeHostKey(
+            hash: issue == 'invalid hash' ? _secret : 'SHA-256',
+            nqn: issue == 'invalid nqn' ? _secret : null,
+          ),
+          throwsA(isA<NvmeHostKeyGenerationException>()),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.generate_key'),
+          isEmpty,
+        );
+      });
+    }
+    for (final raw in [
+      null,
+      4,
+      {'key': _secret},
+      _secret,
+      _importedKey('02'),
+      'DHHC-1:00:AAAA:',
+      'DHHC-1:01:AAAA:',
+      '${_importedKey('01')}\n',
+      '${_importedKey('01')}$_secret',
+    ]) {
+      test(
+        'malformed or mismatched key ${raw.runtimeType} is suppressed',
+        () async {
+          final wire = _Wire(
+            advertiseNvmeGenerate: true,
+            advertiseNvmeHashes: true,
+          )..generatedKey = raw;
+          final h = _ReplaceHarness(wire: wire);
+          await h.connect();
+          try {
+            await h.repo.generateNvmeHostKey(hash: 'SHA-256');
+            fail('Expected safe rejection');
+          } on NvmeHostKeyGenerationException catch (error) {
+            expect(error.toString(), isNot(contains(_secret)));
+            expect(error.toString(), isNot(contains('DHHC-1:')));
+          }
+          expect(
+            wire.requests.where(
+              (r) => r['method'] == 'nvmet.host.generate_key',
+            ),
+            hasLength(1),
+          );
+        },
+      );
+    }
+    for (final action in ['dispose', 'close', 'expire', 'backwards']) {
+      test('$action blocks secret transfer', () async {
+        final h = _ReplaceHarness(
+          wire: _Wire(advertiseNvmeGenerate: true, advertiseNvmeHashes: true),
+        );
+        await h.connect();
+        final key = await h.repo.generateNvmeHostKey(hash: 'SHA-256');
+        addTearDown(key.dispose);
+        switch (action) {
+          case 'dispose':
+            key.dispose();
+          case 'close':
+            await h.repo.close();
+          case 'expire':
+            h.clock = h.clock.add(const Duration(minutes: 5));
+          case 'backwards':
+            h.clock = h.clock.subtract(const Duration(seconds: 1));
+        }
+        expect(
+          () => key.takeForTransfer(acknowledgeSecretExposure: true),
+          throwsA(isA<NvmeHostKeyGenerationException>()),
+        );
+        expect(key.isDisposed, true);
+      });
+    }
+    test('disconnected repository cannot generate', () async {
+      final wire = _Wire(
+        advertiseNvmeGenerate: true,
+        advertiseNvmeHashes: true,
+      );
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await expectLater(
+        repo.generateNvmeHostKey(hash: 'SHA-256'),
+        throwsA(isA<NvmeHostKeyGenerationException>()),
+      );
+      expect(wire.requests, isEmpty);
+    });
+  });
   for (final oldAuthentication in [false, true]) {
     for (final controller in [false, true]) {
       test(
@@ -2065,6 +2315,7 @@ final class _Wire implements RpcTransport {
     this.advertiseNvmeHostUpdate = false,
     this.advertiseNvmeHashes = false,
     this.advertiseNvmeGroups = false,
+    this.advertiseNvmeGenerate = false,
   });
   final bool advertiseAuth;
   final bool advertiseNvme, advertiseNvmeMapping;
@@ -2073,6 +2324,11 @@ final class _Wire implements RpcTransport {
   final bool advertiseNvmeHostCreate;
   final bool advertiseNvmeHostUpdate;
   final bool advertiseNvmeHashes, advertiseNvmeGroups;
+  final bool advertiseNvmeGenerate;
+  Object? generatedKey = _importedKey('01');
+  bool generationFailure = false;
+  Completer<void>? pauseGeneration;
+  final generationStarted = Completer<void>();
   Object? hashes = ['SHA-256', 'SHA-384', 'SHA-512'];
   Object? groups = ['2048-BIT', '3072-BIT', '4096-BIT', '6144-BIT', '8192-BIT'];
   String? renameFailure;
@@ -2112,10 +2368,27 @@ final class _Wire implements RpcTransport {
   Future<void> send(String frame) async {
     final request = jsonDecode(frame) as Map<String, dynamic>;
     requests.add(request);
+    if (request['method'] == 'nvmet.host.generate_key' && generationFailure) {
+      _incoming.add(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': request['id'],
+          'error': {'code': -32603, 'message': _secret, 'data': _secret},
+        }),
+      );
+      return;
+    }
     if (request['method'] == 'nvmet.host.dhchap_hash_choices' &&
         pauseHashes != null) {
       if (!hashesStarted.isCompleted) hashesStarted.complete();
       await pauseHashes!.future;
+      if (_incoming.isClosed) return;
+    }
+    if (request['method'] == 'nvmet.host.generate_key' &&
+        pauseGeneration != null) {
+      if (!generationStarted.isCompleted) generationStarted.complete();
+      await pauseGeneration!.future;
+      if (_incoming.isClosed) return;
     }
     final result = switch (request['method']) {
       'auth.login_ex' => {'response_type': 'SUCCESS'},
@@ -2144,6 +2417,7 @@ final class _Wire implements RpcTransport {
         if (advertiseNvmeHostUpdate) 'nvmet.host.update': _nvmeMetadata,
         if (advertiseNvmeHashes)
           'nvmet.host.dhchap_hash_choices': _nvmeMetadata,
+        if (advertiseNvmeGenerate) 'nvmet.host.generate_key': _nvmeMetadata,
         if (advertiseNvmeGroups)
           'nvmet.host.dhchap_dhgroup_choices': _nvmeMetadata,
       },
@@ -2169,6 +2443,7 @@ final class _Wire implements RpcTransport {
       'nvmet.host.query' when keyReplace => _replacementQuery(request),
       'nvmet.host.query' when advertiseNvmeHostUpdate => [Map.of(hostRow)],
       'nvmet.host.dhchap_hash_choices' => hashes,
+      'nvmet.host.generate_key' => generatedKey,
       'nvmet.host.dhchap_dhgroup_choices' => groups,
       'nvmet.host.update' when keyReplace => _replaceKeys(request),
       'nvmet.host.update' => _rename(request),

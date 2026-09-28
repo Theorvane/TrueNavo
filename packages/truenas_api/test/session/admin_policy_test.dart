@@ -7,6 +7,13 @@ void main() {
   AdminOperationDefinition operation(String method) =>
       adminOperationDefinitions.singleWhere((item) => item.method == method);
 
+  test('NVMe generated secrets never enter generic administration', () {
+    final generator = operation('nvmet.host.generate_key');
+    expect(generator.risk, AdminRisk.change);
+    expect(generator.blockedReason, isNotNull);
+    expect(generator.requiresConfirmation, true);
+  });
+
   test('NVMe transport address choices are a reviewed read operation', () {
     final choiceRead = operation('nvmet.port.transport_address_choices');
     expect(choiceRead.risk, AdminRisk.read);

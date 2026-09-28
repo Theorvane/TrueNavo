@@ -152,6 +152,7 @@ final class TrueNasSessionRepository
         AuthenticatedNvmeHostCreateSession,
         AuthenticatedNvmeHostKeyCreateSession,
         AuthenticatedNvmeHostKeyReplaceSession,
+        AuthenticatedNvmeHostKeyGenerationSession,
         AuthenticatedNvmeHostRenameSession,
         AuthenticatedNvmeHostHashSession,
         AuthenticatedNvmeHostAccessSession,
@@ -1691,6 +1692,72 @@ final class TrueNasSessionRepository
       return NvmeHostAuthenticationChoices.project(hashes, groups);
     } on Object {
       throw const NvmeHostChoicesException();
+    }
+  }
+
+  @override
+  Future<NvmeGeneratedHostKey> generateNvmeHostKey({
+    required String hash,
+    String? nqn,
+  }) async {
+    final management = _management;
+    final client = _client;
+    final format = const {
+      'SHA-256': '01',
+      'SHA-384': '02',
+      'SHA-512': '03',
+    }[hash];
+    bool current() =>
+        management != null &&
+        management.isCurrent() &&
+        identical(client, _client) &&
+        client != null &&
+        client.isOpen;
+    if (management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !current() ||
+        format == null ||
+        (nqn != null && !isSupportedNvmeHostNqn(nqn)) ||
+        !management.methods.contains('nvmet.host.generate_key') ||
+        !management.methods.contains('nvmet.host.dhchap_hash_choices')) {
+      throw const NvmeHostKeyGenerationException();
+    }
+    try {
+      final rawHashes = await client!
+          .call('nvmet.host.dhchap_hash_choices', id: _id(), params: const [])
+          .timeout(managementRequestTimeout);
+      if (!current() ||
+          !NvmeHostAuthenticationChoices.project(
+            rawHashes,
+            const [],
+          ).hashes.contains(hash)) {
+        throw const NvmeHostKeyGenerationException();
+      }
+      // Two positional arguments, including an explicit null NQN. No retry,
+      // host query, persistence, registration, association or configuration edit.
+      final raw = await client
+          .call('nvmet.host.generate_key', id: _id(), params: [hash, nqn])
+          .timeout(managementRequestTimeout);
+      if (!current() || raw is! String || !raw.startsWith('DHHC-1:$format:')) {
+        throw const NvmeHostKeyGenerationException();
+      }
+      final validation = NvmeHostKeyDraft.import(hostKey: raw);
+      validation.dispose();
+      final now = nvmeHostKeyNow ?? DateTime.now;
+      final issuedAt = now();
+      return NvmeGeneratedHostKey._(
+        hash,
+        nqn,
+        Uint8List.fromList(ascii.encode(raw)),
+        () {
+          final age = now().difference(issuedAt);
+          return current() &&
+              !age.isNegative &&
+              age < const Duration(minutes: 5);
+        },
+      );
+    } on Object {
+      throw const NvmeHostKeyGenerationException();
     }
   }
 

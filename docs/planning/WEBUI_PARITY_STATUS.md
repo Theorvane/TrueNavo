@@ -1,6 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: native protected existing-host key replacement
+## Current continuation: protected NVMe key-generation SDK foundation
+
+The dedicated 25.10 SDK now calls the official [host key generator](https://api.truenas.com/v25.10/api_methods_nvmet.host.generate_key.html) using two positional arguments: the selected hash and optional transformation NQN (explicit null when omitted). Fresh advertised hash choices, supported NQN syntax, method availability and the current connection are required. It submits no host query, create, update or association request and never retries generation. The generic administration catalog explicitly blocks the secret-bearing generator.
+
+Only a caller-owned opaque envelope leaves the SDK, with public hash/NQN metadata, no key getter or JSON serializer and a redacted string representation. Explicit exposure consent allows one protected initiator transfer; transfer consumes and best-effort wipes the owned buffer. Expired five-minute, backwards-clock, disposed and disconnected/reconnected envelopes cannot transfer. Callers must dispose abandoned envelopes; expiration does not schedule automatic buffer cleanup. Returned canonical DHHC-1:01/02/03 structure, length and selected-hash format are checked; CRC, entropy, transformation correctness, compatibility and runtime authentication are not attested. Managed strings and transport copies cannot be guaranteed zeroized. Unsupported or malformed responses and connection failures become fixed safe errors with no raw result. Fake JSON-RPC tests only; no live NAS reads or writes. Native generation/transfer UI and associated-host credential management remain pending; TD-037 remains partial.
+
+## Previous continuation: native protected existing-host key replacement
 
 The native NVMe-oF page now connects the existing-host replacement SDK through masked imported host/controller inputs. It accepts one exact existing host ID, preserves NQN, displays the original returned hash/group/key-presence settings alongside the proposed settings, and requires three independent consents for key-storage/validation limitations, unassociated configuration reload without runtime access proof, and irreversible replacement of both old key settings. Leaving the controller input empty explicitly removes that key. An exact host-ID confirmation and a single-use endpoint-bound review are required; both the application and protected SDK proof must remain within their five-minute lifetimes. A slow preparation cannot reset the SDK proof's age.
 

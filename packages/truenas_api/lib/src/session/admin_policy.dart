@@ -935,6 +935,14 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
   ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
+    'nvmet.host.generate_key',
+    'Generate protected NVMe authentication key',
+    'Dedicated secret generation and protected initiator transfer only.',
+    warning: 'Generated key material must not be logged or exposed in generic results.',
+    blockedReason: _secretFlow,
+  ),
+  AdminOperationDefinition.change(
+    AdminDomain.shares,
     'nvmet.host.create',
     'Register unassociated NVMe host',
     'Register an initiator NQN without authentication or subsystem mappings.',

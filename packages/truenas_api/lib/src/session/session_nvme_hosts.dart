@@ -1,5 +1,57 @@
 part of 'true_nas_session_repository.dart';
 
+/// Explicit protected secret generation, never a generic read or host update.
+abstract interface class AuthenticatedNvmeHostKeyGenerationSession {
+  Future<NvmeGeneratedHostKey> generateNvmeHostKey({
+    required String hash,
+    String? nqn,
+  });
+}
+
+final class NvmeHostKeyGenerationException implements Exception {
+  const NvmeHostKeyGenerationException();
+  @override
+  String toString() =>
+      'Protected NVMe key generation or transfer is unavailable.';
+}
+
+/// Caller-owned, connection-bound single-use transfer envelope. No serializer
+/// or raw getter. Managed strings and transport copies cannot be zeroized.
+final class NvmeGeneratedHostKey {
+  NvmeGeneratedHostKey._(this.hash, this.nqn, this._bytes, this._isValid);
+  final String hash;
+  final String? nqn;
+  Uint8List? _bytes;
+  final bool Function() _isValid;
+  bool get isDisposed => _bytes == null;
+
+  /// Intentionally exposes a secret only for a protected initiator transfer.
+  /// The caller must not log, persist or display it in an unprotected viewer.
+  String takeForTransfer({required bool acknowledgeSecretExposure}) {
+    if (_bytes == null) throw const NvmeHostKeyGenerationException();
+    if (!_isValid()) {
+      dispose();
+      throw const NvmeHostKeyGenerationException();
+    }
+    if (!acknowledgeSecretExposure) {
+      throw const NvmeHostKeyGenerationException();
+    }
+    try {
+      return ascii.decode(_bytes!);
+    } finally {
+      dispose();
+    }
+  }
+
+  void dispose() {
+    _bytes?.fillRange(0, _bytes!.length, 0);
+    _bytes = null;
+  }
+
+  @override
+  String toString() => 'NvmeGeneratedHostKey(redacted)';
+}
+
 /// Dedicated public-field NVMe host read. Generic host.query remains blocked
 /// because its unrestricted result can include DH-CHAP secrets.
 abstract interface class AuthenticatedNvmeHostSession {
