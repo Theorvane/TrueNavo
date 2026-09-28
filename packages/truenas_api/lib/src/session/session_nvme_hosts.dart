@@ -12,6 +12,54 @@ abstract interface class AuthenticatedNvmeHostAuthenticationSession {
   Future<NvmeHostAuthenticationInventory> loadNvmeHostAuthentication();
 }
 
+/// Public algorithm discovery only; never reads hosts or generates keys.
+abstract interface class AuthenticatedNvmeHostChoicesSession {
+  Future<NvmeHostAuthenticationChoices> loadNvmeHostAuthenticationChoices();
+}
+
+final class NvmeHostAuthenticationChoices {
+  NvmeHostAuthenticationChoices._(this.hashes, this.groups);
+  final List<String> hashes, groups;
+
+  factory NvmeHostAuthenticationChoices.project(
+    Object? hashes,
+    Object? groups,
+  ) {
+    List<String> choices(Object? raw, Set<String> allowed) {
+      if (raw is! List || raw.length > allowed.length) {
+        throw const FormatException('Invalid NVMe authentication choices');
+      }
+      final seen = <String>{};
+      for (final item in raw) {
+        if (item is! String || !allowed.contains(item) || !seen.add(item)) {
+          throw const FormatException('Invalid NVMe authentication choices');
+        }
+      }
+      // Preserve the advertised subset and order; never invent defaults.
+      return List<String>.unmodifiable(seen);
+    }
+
+    return NvmeHostAuthenticationChoices._(
+      choices(hashes, const {'SHA-256', 'SHA-384', 'SHA-512'}),
+      choices(groups, const {
+        '2048-BIT',
+        '3072-BIT',
+        '4096-BIT',
+        '6144-BIT',
+        '8192-BIT',
+      }),
+    );
+  }
+}
+
+final class NvmeHostChoicesException implements Exception {
+  const NvmeHostChoicesException();
+  String get userMessage =>
+      'NVMe authentication algorithm choices are unavailable for this connection.';
+  @override
+  String toString() => userMessage;
+}
+
 final class NvmeHostAuthentication {
   const NvmeHostAuthentication({
     required this.id,

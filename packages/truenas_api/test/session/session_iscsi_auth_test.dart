@@ -7,6 +7,129 @@ import 'package:truenas_api/truenas_api.dart';
 const _secret = 'fixture-chap-secret-never-exposed';
 
 void main() {
+  test(
+    'algorithm discovery calls only two public parameterless reads',
+    () async {
+      final wire = _Wire(advertiseNvmeHashes: true, advertiseNvmeGroups: true)
+        ..hashes = ['SHA-512', 'SHA-256']
+        ..groups = ['8192-BIT'];
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final value = await repo.loadNvmeHostAuthenticationChoices();
+      expect(value.hashes, ['SHA-512', 'SHA-256']);
+      expect(value.groups, ['8192-BIT']);
+      expect(() => value.hashes.clear(), throwsUnsupportedError);
+      expect(() => value.groups.clear(), throwsUnsupportedError);
+      final calls = wire.requests
+          .where((r) => (r['method'] as String).startsWith('nvmet.'))
+          .toList();
+      expect(calls.map((r) => r['method']), [
+        'nvmet.host.dhchap_hash_choices',
+        'nvmet.host.dhchap_dhgroup_choices',
+      ]);
+      for (final call in calls) {
+        expect(call['params'], isEmpty);
+      }
+      for (final method in [
+        'nvmet.host.dhchap_hash_choices',
+        'nvmet.host.dhchap_dhgroup_choices',
+      ]) {
+        expect(repo.adminCatalog.method(method)?.supported, true);
+      }
+    },
+  );
+  for (final support in [(false, false), (true, false), (false, true)]) {
+    test(
+      'incomplete advertised algorithm support $support sends no reads',
+      () async {
+        final wire = _Wire(
+          advertiseNvmeHashes: support.$1,
+          advertiseNvmeGroups: support.$2,
+        );
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        await expectLater(
+          repo.loadNvmeHostAuthenticationChoices(),
+          throwsA(isA<NvmeHostChoicesException>()),
+        );
+        expect(
+          wire.requests.where(
+            (r) => (r['method'] as String).startsWith('nvmet.'),
+          ),
+          isEmpty,
+        );
+      },
+    );
+  }
+  test('algorithm projection rejects duplicates unknown values and malformed shapes', () {
+    for (final malformed in <Object?>[
+      null,
+      {},
+      'SHA-256',
+      [null],
+      [256],
+      [_secret],
+      ['SHA-256', 'SHA-256'],
+      ['SHA-256', 'SHA-384', 'SHA-512', 'SHA-256'],
+    ]) {
+      expect(
+        () => NvmeHostAuthenticationChoices.project(malformed, []),
+        throwsFormatException,
+      );
+    }
+    for (final malformed in <Object?>[
+      null,
+      {},
+      '2048-BIT',
+      [null],
+      [2048],
+      [_secret],
+      ['2048-BIT', '2048-BIT'],
+      List.filled(6, '8192-BIT'),
+    ]) {
+      expect(
+        () => NvmeHostAuthenticationChoices.project([], malformed),
+        throwsFormatException,
+      );
+    }
+    final empty = NvmeHostAuthenticationChoices.project([], []);
+    expect(empty.hashes, isEmpty);
+    expect(empty.groups, isEmpty);
+  });
+  test(
+    'malformed algorithm wire result returns a fixed sanitized error',
+    () async {
+      final wire = _Wire(advertiseNvmeHashes: true, advertiseNvmeGroups: true)
+        ..groups = [_secret];
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.loadNvmeHostAuthenticationChoices(),
+        throwsA(
+          isA<NvmeHostChoicesException>().having(
+            (e) => e.toString(),
+            'safe error',
+            isNot(contains(_secret)),
+          ),
+        ),
+      );
+    },
+  );
   test('authentication inventory wire selects bounded fields and strips key values', () async {
     final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
     wire.hostRow['dhchap_key'] = _secret;
@@ -700,6 +823,8 @@ final class _Wire implements RpcTransport {
     this.advertiseNvmePortCreate = false,
     this.advertiseNvmeHostCreate = false,
     this.advertiseNvmeHostUpdate = false,
+    this.advertiseNvmeHashes = false,
+    this.advertiseNvmeGroups = false,
   });
   final bool advertiseAuth;
   final bool advertiseNvme, advertiseNvmeMapping;
@@ -707,6 +832,9 @@ final class _Wire implements RpcTransport {
   final bool advertiseNvmePortCreate;
   final bool advertiseNvmeHostCreate;
   final bool advertiseNvmeHostUpdate;
+  final bool advertiseNvmeHashes, advertiseNvmeGroups;
+  Object? hashes = ['SHA-256', 'SHA-384', 'SHA-512'];
+  Object? groups = ['2048-BIT', '3072-BIT', '4096-BIT', '6144-BIT', '8192-BIT'];
   String? renameFailure;
   final hostRow = <String, Object?>{
     'id': 3,
@@ -753,6 +881,10 @@ final class _Wire implements RpcTransport {
         if (advertiseNvmePortCreate) 'nvmet.port_subsys.create': _nvmeMetadata,
         if (advertiseNvmeHostCreate) 'nvmet.host.create': _nvmeMetadata,
         if (advertiseNvmeHostUpdate) 'nvmet.host.update': _nvmeMetadata,
+        if (advertiseNvmeHashes)
+          'nvmet.host.dhchap_hash_choices': _nvmeMetadata,
+        if (advertiseNvmeGroups)
+          'nvmet.host.dhchap_dhgroup_choices': _nvmeMetadata,
       },
       'iscsi.auth.query' =>
         malformed
@@ -772,6 +904,8 @@ final class _Wire implements RpcTransport {
                 },
               ],
       'nvmet.host.query' when advertiseNvmeHostUpdate => [Map.of(hostRow)],
+      'nvmet.host.dhchap_hash_choices' => hashes,
+      'nvmet.host.dhchap_dhgroup_choices' => groups,
       'nvmet.host.update' => _rename(request),
       'nvmet.host.query' => [
         {'id': 3, 'hostnqn': 'nqn.fixture:client', 'dhchap_key': _secret},

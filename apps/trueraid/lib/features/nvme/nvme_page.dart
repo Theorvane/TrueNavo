@@ -21,6 +21,7 @@ import 'nvme_namespace_delete_editor.dart';
 import 'nvme_host_create_editor.dart';
 import 'nvme_host_rename_editor.dart';
 import 'nvme_host_authentication_panel.dart';
+import 'nvme_host_authentication_choices_panel.dart';
 import 'nvme_overview.dart';
 import 'nvme_setting_charts.dart';
 import 'nvme_subsystem_create_editor.dart';
@@ -87,6 +88,7 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                     ref.invalidate(nvmeOverviewProvider);
                     ref.invalidate(nvmeGlobalProvider);
                     ref.invalidate(nvmeHostAuthenticationProvider);
+                    ref.invalidate(nvmeHostAuthenticationChoicesProvider);
                   },
             icon: const Icon(Icons.refresh),
           ),
@@ -118,6 +120,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeGlobalPanel(),
                   const SizedBox(height: 20),
                   const NvmeHostAuthenticationPanel(),
+                  const SizedBox(height: 20),
+                  const NvmeHostAuthenticationChoicesPanel(),
                   const SizedBox(height: 20),
                   switch (state) {
                     AsyncData(:final value) => _Content(

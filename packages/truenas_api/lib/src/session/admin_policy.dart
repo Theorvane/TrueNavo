@@ -921,6 +921,18 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'Permitted NVMe initiators; credentials require a protected viewer.',
     blockedReason: _secretFlow,
   ),
+  AdminOperationDefinition.read(
+    AdminDomain.shares,
+    'nvmet.host.dhchap_hash_choices',
+    'NVMe authentication hash choices',
+    'Public server-advertised DH-CHAP hash algorithms; no key generation.',
+  ),
+  AdminOperationDefinition.read(
+    AdminDomain.shares,
+    'nvmet.host.dhchap_dhgroup_choices',
+    'NVMe authentication DH group choices',
+    'Public server-advertised DH-CHAP key exchange groups; no host query.',
+  ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
     'nvmet.host.create',
