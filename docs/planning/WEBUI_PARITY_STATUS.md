@@ -1,6 +1,20 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: NSID-only editing of a singly attached disabled ZVOL namespace
+## Current continuation: saved enabled flag on a singly attached ZVOL namespace behind a disabled port
+
+A separate native editor now enables or disables the saved flag of an existing unlocked ZVOL namespace in a restricted subsystem with exactly one disabled TCP/RDMA port association. The port must have no other subsystem association and there must be no host grant. All neighboring namespaces must be disabled unlocked ZVOLs; every resident must have a known valid unique NSID. The selected namespace may be enabled when the requested action is disabling it. FILE, locked/unknown-state targets, enabled/unsafe neighbors, shared or FC ports, missing NQN, incomplete inventory and no-ops fail closed. The existing isolated enabled editor and attached NSID editor remain unchanged.
+
+Only `nvmet.namespace.update(databaseId, {enabled: requestedBoolean})` is submitted, matching the official [namespace update API](https://api.truenas.com/v25.10.0/api_methods_nvmet.namespace.update.html). No port enabling, host grant, backing fields or NSID change is requested. The endpoint-bound single-use five-minute review shows the exact namespace ID and preserved NSID, old/new boolean, association, disabled port, subsystem/NQN and immutable ID-sorted neighboring namespace list. Three independent consents cover reload, backing/runtime/concurrency limits and possible future exposure or client disruption. An exact action/namespace/NSID/old-new/association/port/subsystem/NQN phrase is mandatory.
+
+Fresh complete bounded public topology plus protected host references must match immediately before dispatch, with expiry rechecked after asynchronous preflight. Strict response and independent fresh readback must show only the requested saved flag change, preserving selected namespace ID/NSID/subsystem/type/unlocked state and all other projected rows, including disabled port, association, subsystem settings and disabled neighbors. Any uncertainty after possible dispatch fences the original session without retry or rollback. Cancellation, disposal, stale/foreign/superseded/replayed reviews, shared-lock contention, input or connection changes and public drift reject stale work; late review completion cannot restore a disposed page. Every new native review resets all three consents.
+
+Ninety-eight fake API and widget tests cover TCP/RDMA enable and disable transitions, exact one-field payloads with preserved NSID and public neighbors, unsafe topology, inventory overflow, independently missing capabilities, three independent consents, strict response and readback failure fencing, expiry and session/disposal guards before and after dispatch, review supersession and replay, native ID/setting/session invalidation, late review disposal and 320/430px dark/light layouts at 200% text with keyboard. The focused and existing NVMe page suites pass together (113 tests).
+
+Sequential public projections do not attest hidden backing paths, storage ownership or health, actual listener/client access, initiator compatibility, runtime quiescence or atomicity. Disabled saved port flags and absent host grants do not prove runtime isolation. No live NAS read or write occurred. Enabled/shared/host-granted/FC-port or FILE namespace management, dependency-aware namespace creation and associated-host credential management remain pending; TD-037 stays partial. SDK sources are unchanged and its suite is not rerun in this continuation.
+
+Verification: final app static analysis clean; full app suite 5,914 passing and one existing skip. No live NAS requests were made.
+
+## Previous continuation: NSID-only editing of a singly attached disabled ZVOL namespace
 
 A separate native editor now changes the explicit saved NSID of an existing disabled unlocked ZVOL namespace in a restricted subsystem with exactly one disabled TCP/RDMA port association. The port must have no other subsystem association and there must be no host grant. Every resident must be a disabled unlocked ZVOL with a known valid unique NSID. FILE, enabled/locked/unknown-state residents, shared or FC ports, missing NQN, incomplete inventory, collisions and no-ops fail closed. The existing isolated NSID editor remains unchanged.
 
