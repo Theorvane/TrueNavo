@@ -374,6 +374,7 @@ void main() {
         'iscsi.targetextent.delete',
         'nvmet.subsys.create',
         'nvmet.port.update',
+        'nvmet.namespace.update',
         'nvmet.host_subsys.create',
         'group.create',
         'kerberos.realm.create',

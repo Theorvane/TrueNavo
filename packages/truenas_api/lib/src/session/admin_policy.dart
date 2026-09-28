@@ -908,6 +908,13 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
   ),
   AdminOperationDefinition.change(
     AdminDomain.shares,
+    'nvmet.namespace.update',
+    'Edit isolated ZVOL namespace enabled setting',
+    'Native reviewed enabled-only setting change; no backing identifiers are submitted.',
+    warning: 'NVMe configuration reloads. Backing identity and health and runtime access are not verified.',
+  ),
+  AdminOperationDefinition.change(
+    AdminDomain.shares,
     'nvmet.namespace.create',
     'Create NVMe namespace',
     'Associate a backing device with a subsystem.',

@@ -366,6 +366,7 @@ void main() {
     ('nvmet.port_subsys.create', NvmePage),
     ('nvmet.port.delete', NvmePage),
     ('nvmet.namespace.delete', NvmePage),
+    ('nvmet.namespace.update', NvmePage),
   ]) {
     testWidgets(
       '$method catalog tile routes to native workspace, never a generic setter',
@@ -834,6 +835,16 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
+  testWidgets('namespace generic update cannot bypass isolated ZVOL review', (
+    tester,
+  ) async {
+    final (_, api) = await _pump(tester, _page('nvmet.namespace.update'));
+    expect(api.adminCatalog.method('nvmet.namespace.update'), isNotNull);
+    expect(find.text('This action is unavailable'), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
+    expect(api.requests, isEmpty);
+  });
+
   testWidgets('key generation cannot expose secrets through the generic form', (
     tester,
   ) async {
@@ -1106,6 +1117,10 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
       'nvmet.namespace.delete': _metadata([
         {'_name_': 'id', '_required_': true, 'type': 'integer'},
         {'_name_': 'options', '_required_': false, 'type': 'object'},
+      ]),
+      'nvmet.namespace.update': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
+        {'_name_': 'data', '_required_': true, 'type': 'object'},
       ]),
       // Synthetic generic-form fixture retained on a different NVMe method;
       // subsystem creation now has a dedicated reviewed workflow.

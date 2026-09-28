@@ -57,6 +57,8 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'nvmet.port_subsys.create' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.port.delete' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.namespace.delete' => 'Use the dedicated NVMe-oF workflow.',
+      'nvmet.namespace.update' =>
+        'Use the dedicated isolated ZVOL namespace workflow.',
       'iscsi.global.update' ||
       'iscsi.portal.listen_ip_choices' ||
       'iscsi.portal.update' ||
@@ -392,6 +394,7 @@ String adminConfirmationTarget(
     'nvmet.port.update',
     'nvmet.port.delete',
     'nvmet.namespace.delete',
+    'nvmet.namespace.update',
     'nvmet.host_subsys.delete',
     'nvmet.port_subsys.delete',
     'pool.scrub.update',
