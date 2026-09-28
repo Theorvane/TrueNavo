@@ -49,6 +49,8 @@ class _AdminOperationPageState extends ConsumerState<AdminOperationPage> {
       'nvmet.host_subsys.delete' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.host_subsys.create' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.host.delete' => 'Use the dedicated NVMe-oF workflow.',
+      'nvmet.host.create' =>
+        'Use the dedicated secret-stripping NVMe-oF workflow.',
       'nvmet.port_subsys.delete' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.port_subsys.create' => 'Use the dedicated NVMe-oF workflow.',
       'nvmet.port.delete' => 'Use the dedicated NVMe-oF workflow.',

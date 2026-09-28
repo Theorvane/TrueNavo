@@ -921,6 +921,14 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     'Permitted NVMe initiators; credentials require a protected viewer.',
     blockedReason: _secretFlow,
   ),
+  AdminOperationDefinition.change(
+    AdminDomain.shares,
+    'nvmet.host.create',
+    'Register unassociated NVMe host',
+    'Register an initiator NQN without authentication or subsystem mappings.',
+    warning: 'DH-CHAP authentication is not configured. This is not proof of initiator identity or access.',
+    blockedReason: _secretFlow,
+  ),
   AdminOperationDefinition.destructive(
     AdminDomain.shares,
     'nvmet.host.delete',

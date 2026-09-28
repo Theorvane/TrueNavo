@@ -961,6 +961,7 @@ class AdminOperationTile extends StatelessWidget {
     'nvmet.host_subsys.delete' ||
     'nvmet.host_subsys.create' => const NvmePage(),
     'nvmet.host.delete' ||
+    'nvmet.host.create' ||
     'nvmet.port_subsys.delete' ||
     'nvmet.port_subsys.create' ||
     'nvmet.port.delete' ||

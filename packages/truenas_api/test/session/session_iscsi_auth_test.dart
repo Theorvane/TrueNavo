@@ -7,6 +7,115 @@ import 'package:truenas_api/truenas_api.dart';
 const _secret = 'fixture-chap-secret-never-exposed';
 
 void main() {
+  test(
+    'NVMe host registration projects only identity and rejects unexpected auth',
+    () async {
+      final wire = _Wire(advertiseNvmeHostCreate: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final created = await repo.createUnassociatedNvmeHost(
+        hostNqn: 'nqn.2026-09.example:new',
+      );
+      expect([created.id, created.nqn], [11, 'nqn.2026-09.example:new']);
+      expect(created.toString(), isNot(contains(_secret)));
+      final call = wire.requests.singleWhere(
+        (r) => r['method'] == 'nvmet.host.create',
+      );
+      expect(call['params'], [
+        {
+          'hostnqn': 'nqn.2026-09.example:new',
+          'dhchap_key': null,
+          'dhchap_ctrl_key': null,
+          'dhchap_dhgroup': null,
+        },
+      ]);
+      wire.malformed = true;
+      await expectLater(
+        repo.createUnassociatedNvmeHost(hostNqn: 'nqn.2026-09.example:new'),
+        throwsA(
+          isA<NvmeHostException>().having(
+            (e) => e.userMessage,
+            'safe error',
+            isNot(contains(_secret)),
+          ),
+        ),
+      );
+      expect(repo.adminCatalog.method('nvmet.host.create')?.supported, false);
+    },
+  );
+  test(
+    'unadvertised host registration and invalid NQNs send no writes',
+    () async {
+      for (final advertised in [true, false]) {
+        final wire = _Wire(advertiseNvmeHostCreate: advertised);
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        for (final value
+            in advertised
+                ? [
+                    'nqn.short',
+                    ' nqn.2026-09.example:new',
+                    'nqn.2026-09.example:new\n',
+                    'nqn.2026-09.example:비밀',
+                    'nqn.${'a' * 220}',
+                  ]
+                : ['nqn.2026-09.example:new']) {
+          await expectLater(
+            repo.createUnassociatedNvmeHost(hostNqn: value),
+            throwsA(isA<NvmeHostException>()),
+          );
+        }
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.create'),
+          isEmpty,
+        );
+      }
+    },
+  );
+  test(
+    'host create projection fails closed on unknown credentials and IDs',
+    () {
+      final base = <String, Object?>{
+        'id': 11,
+        'hostnqn': 'nqn.2026-09.example:new',
+        'dhchap_key': null,
+        'dhchap_ctrl_key': null,
+        'dhchap_dhgroup': null,
+      };
+      for (final key in [
+        'id',
+        'hostnqn',
+        'dhchap_key',
+        'dhchap_ctrl_key',
+        'dhchap_dhgroup',
+      ]) {
+        expect(
+          () => NvmeHostCreated.project(Map.of(base)..remove(key)),
+          throwsFormatException,
+        );
+      }
+      expect(
+        () => NvmeHostCreated.project({...base, 'id': 0}),
+        throwsFormatException,
+      );
+      for (final key in ['dhchap_key', 'dhchap_ctrl_key', 'dhchap_dhgroup']) {
+        expect(
+          () => NvmeHostCreated.project({...base, key: _secret}),
+          throwsFormatException,
+        );
+      }
+    },
+  );
   test('parser retains only references and rejects incomplete responses', () {
     final inventory = IscsiAuthInventory.parse([
       {
@@ -275,11 +384,13 @@ final class _Wire implements RpcTransport {
     this.advertiseNvmeMapping = true,
     this.advertiseNvmeCreate = false,
     this.advertiseNvmePortCreate = false,
+    this.advertiseNvmeHostCreate = false,
   });
   final bool advertiseAuth;
   final bool advertiseNvme, advertiseNvmeMapping;
   final bool advertiseNvmeCreate;
   final bool advertiseNvmePortCreate;
+  final bool advertiseNvmeHostCreate;
   bool malformed = false;
   final _incoming = StreamController<String>();
   final requests = <Map<String, dynamic>>[];
@@ -314,6 +425,7 @@ final class _Wire implements RpcTransport {
           'nvmet.host_subsys.query': _nvmeMetadata,
         if (advertiseNvmeCreate) 'nvmet.host_subsys.create': _nvmeMetadata,
         if (advertiseNvmePortCreate) 'nvmet.port_subsys.create': _nvmeMetadata,
+        if (advertiseNvmeHostCreate) 'nvmet.host.create': _nvmeMetadata,
       },
       'iscsi.auth.query' =>
         malformed
@@ -335,6 +447,14 @@ final class _Wire implements RpcTransport {
       'nvmet.host.query' => [
         {'id': 3, 'hostnqn': 'nqn.fixture:client', 'dhchap_key': _secret},
       ],
+      'nvmet.host.create' => {
+        'id': 11,
+        'hostnqn': 'nqn.2026-09.example:new',
+        'dhchap_key': malformed ? _secret : null,
+        'dhchap_ctrl_key': null,
+        'dhchap_dhgroup': null,
+        'unexpected_private_data': _secret,
+      },
       'nvmet.host_subsys.query' => [
         {
           'id': 4,

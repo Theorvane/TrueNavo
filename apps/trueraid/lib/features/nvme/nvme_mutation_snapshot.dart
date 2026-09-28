@@ -44,6 +44,7 @@ final class NvmeMutationSnapshot {
     int? omitPortId,
     int? omitSubsystemId,
     int? omitNamespaceId,
+    int? omitHostId,
   }) {
     final subsystems =
         topology.subsystems
@@ -105,8 +106,12 @@ final class NvmeMutationSnapshot {
             .map((m) => [m.id, m.portId, m.subsystemId])
             .toList()
           ..sort((a, b) => a[0].compareTo(b[0]));
-    final hostRows = hosts.hosts.map((h) => [h.id, h.nqn]).toList()
-      ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
+    final hostRows =
+        hosts.hosts
+            .where((h) => h.id != omitHostId)
+            .map((h) => [h.id, h.nqn])
+            .toList()
+          ..sort((a, b) => (a[0] as int).compareTo(b[0] as int));
     final hostMappings =
         hosts.mappings.map((m) => [m.id, m.hostId, m.subsystemId]).toList()
           ..sort((a, b) => a[0].compareTo(b[0]));

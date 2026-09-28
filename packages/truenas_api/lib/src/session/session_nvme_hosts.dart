@@ -6,6 +6,42 @@ abstract interface class AuthenticatedNvmeHostSession {
   Future<NvmeHostPublicRows> loadNvmeHostReferences();
 }
 
+/// Explicitly unauthenticated, unassociated identity creation. Secret-bearing
+/// middleware responses are validated and reduced before leaving the SDK.
+abstract interface class AuthenticatedNvmeHostCreateSession {
+  Future<NvmeHostCreated> createUnassociatedNvmeHost({required String hostNqn});
+}
+
+/// Conservative printable ASCII input, preserving the exact initiator NQN.
+/// This is not complete NQN validation; the server remains authoritative.
+bool isSupportedNvmeHostNqn(String value) =>
+    value.length >= 11 &&
+    value.length <= 223 &&
+    value.startsWith('nqn.') &&
+    RegExp(r'^[\x21-\x7e]+$').hasMatch(value);
+
+final class NvmeHostCreated {
+  const NvmeHostCreated(this.id, this.nqn);
+  final int id;
+  final String nqn;
+
+  factory NvmeHostCreated.project(Object? raw) {
+    if (raw is! Map ||
+        raw['id'] is! int ||
+        (raw['id'] as int) <= 0 ||
+        raw['hostnqn'] is! String ||
+        !isSupportedNvmeHostNqn(raw['hostnqn'] as String) ||
+        ![
+          'dhchap_key',
+          'dhchap_ctrl_key',
+          'dhchap_dhgroup',
+        ].every((key) => raw.containsKey(key) && raw[key] == null)) {
+      throw const FormatException('Invalid unassociated NVMe host result');
+    }
+    return NvmeHostCreated(raw['id'] as int, raw['hostnqn'] as String);
+  }
+}
+
 /// Dedicated write path: only IDs leave the SDK even when middleware embeds
 /// DH-CHAP key fields in the created association response.
 abstract interface class AuthenticatedNvmeHostAccessSession {
