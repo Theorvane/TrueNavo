@@ -83,7 +83,7 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
           epoch == _epoch &&
           identical(session, ref.read(dashboardActiveSessionProvider))) {
         setState(
-          () => _message = 'Review failed. Select an isolated unlocked ZVOL namespace and a different subsystem assignment. Nothing was sent.',
+          () => _message = 'Review failed. Select an isolated disabled unlocked ZVOL namespace and a different isolated destination with only disabled unlocked ZVOLs and no NSID collision. Nothing was sent.',
         );
       }
     } finally {
@@ -141,7 +141,7 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
     final review = _review;
     return TdPanel(
       title: 'Move isolated disabled ZVOL namespace configuration',
-      description: 'Saved configuration only, moving a disabled unlocked ZVOL namespace to a different empty restricted subsystem. Both subsystems must have distinct known NQNs and no host or port mappings. Backing paths, sizes and identifiers are not read or edited. Runtime client IO, backing identity and health are not proven.',
+      description: 'Saved configuration only, moving a disabled unlocked ZVOL namespace to a different restricted subsystem. The destination can be empty or contain only disabled unlocked ZVOLs with known unique NSIDs that do not collide with the moved NSID. Both subsystems must have distinct known NQNs and no host or port mappings. Backing paths, sizes and identifiers are not read or edited. Runtime client IO, backing identity and health are not proven.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -163,7 +163,7 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
             keyboardType: TextInputType.number,
             maxLength: 10,
             decoration: const InputDecoration(
-              labelText: 'Exact empty destination subsystem database ID',
+              labelText: 'Exact isolated destination subsystem database ID',
             ),
             onChanged: (_) => setState(_discard),
           ),
@@ -191,6 +191,13 @@ class _MoveState extends ConsumerState<NvmeNamespaceMoveEditor> {
             Text(
               'Destination: ${review.destination.name} — ${review.destination.subnqn}',
             ),
+            Text(
+              'Existing destination namespaces: ${review.destinationNamespaces.length}. All must remain unchanged; no NSID is reassigned.',
+            ),
+            for (final namespace in review.destinationNamespaces)
+              Text(
+                'Existing namespace #${namespace.id}, NSID ${namespace.nsid}: disabled unlocked ZVOL',
+              ),
             const Text(
               'Only subsys_id is submitted; NSID and disabled state must remain unchanged. Public topology is rechecked; sequential reads cannot exclude concurrent changes or hidden backing drift. Review is single-use and expires in five minutes.',
             ),

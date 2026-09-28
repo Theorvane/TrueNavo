@@ -66,6 +66,7 @@ class _Fake
     'enabled': false,
     'locked': false,
   };
+  final residents = <Map<String, Object?>>[];
   final ports = <Map<String, Object?>>[
     {'id': 3, 'addr_trtype': 'TCP', 'enabled': false},
   ];
@@ -101,6 +102,7 @@ class _Fake
       'nvmet.namespace.query' => [
         malformed ? {'id': 7} : Map.of(namespace),
         Map.of(other),
+        for (final resident in residents) Map.of(resident),
       ],
       'nvmet.port_subsys.query' => [for (final m in mappings) Map.of(m)],
       _ => null,
@@ -116,6 +118,11 @@ class _Fake
     if (failure == 'unknown') return AdminOutcomeUnknown(request);
     namespace['subsys'] = {'id': (request.arguments[1] as Map)['subsys_id']};
     final returned = Map.of(namespace);
+    if (failure == 'resident NSID') residents.first['nsid'] = 5;
+    if (failure == 'resident enabled') residents.first['enabled'] = true;
+    if (failure == 'resident removed') residents.clear();
+    if (failure == 'resident added') residents.add(_resident(14, 9));
+    if (failure == 'resident collision') residents.first['nsid'] = 1;
     if (failure == 'response type') returned['device_type'] = 'FILE';
     if (failure == 'response missing') returned.remove('enabled');
     if (failure == 'destination drift') destination['name'] = 'changed';
@@ -201,7 +208,88 @@ class _Active extends Notifier<AuthenticatedSession?> {
 
 final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
+Map<String, Object?> _resident(int id, int nsid) => {
+  'id': id,
+  'nsid': nsid,
+  'subsys': {'id': 4},
+  'device_type': 'ZVOL',
+  'enabled': false,
+  'locked': false,
+};
+
 void main() {
+  test('populated destination preserves every resident and submits assignment only', () async {
+    final h = _Harness();
+    h.api.residents.addAll([_resident(13, 4294967294), _resident(12, 3)]);
+    final before = h.api.residents.map(Map<String, Object?>.of).toList();
+    final r = await h.coordinator.prepare(7, destinationId: 4);
+    expect(r.destinationNamespaces.map((n) => n.id), [12, 13]);
+    expect(r.destinationNamespaces.map((n) => n.nsid), [3, 4294967294]);
+    expect(() => r.destinationNamespaces.clear(), throwsUnsupportedError);
+    expect((await h.execute(r)).outcome, NvmeNamespaceMoveOutcome.completed);
+    expect(h.api.residents, before);
+    expect(h.api.namespace['nsid'], 1);
+    expect(
+      h.api.calls
+          .singleWhere((r) => r.method.name == 'nvmet.namespace.update')
+          .arguments,
+      [
+        7,
+        {'subsys_id': 4},
+      ],
+    );
+    expect(h.writes, 1);
+  });
+  final invalidResidents = <String, void Function(_Fake)>{
+    'NSID collision': (a) => a.residents.first['nsid'] = 1,
+    'unknown NSID': (a) => a.residents.first.remove('nsid'),
+    'reserved NSID': (a) => a.residents.first['nsid'] = 4294967295,
+    'zero NSID': (a) => a.residents.first['nsid'] = 0,
+    'duplicate NSIDs': (a) => a.residents.add(_resident(13, 3)),
+    'enabled': (a) => a.residents.first['enabled'] = true,
+    'locked': (a) => a.residents.first['locked'] = true,
+    'unknown lock': (a) => a.residents.first.remove('locked'),
+    'FILE': (a) => a.residents.first['device_type'] = 'FILE',
+    'added resident': (a) => a.residents.add(_resident(14, 9)),
+  };
+  for (final entry in invalidResidents.entries) {
+    test(
+      'destination ${entry.key} fails fresh preflight without dispatch',
+      () async {
+        final h = _Harness();
+        h.api.residents.add(_resident(12, 3));
+        final r = await h.coordinator.prepare(7, destinationId: 4);
+        entry.value(h.api);
+        expect((await h.execute(r)).outcome, NvmeNamespaceMoveOutcome.rejected);
+        expect(h.writes, 0);
+        if (entry.key != 'added resident') {
+          await expectLater(
+            h.coordinator.prepare(7, destinationId: 4),
+            throwsStateError,
+          );
+        }
+      },
+    );
+  }
+  for (final failure in [
+    'resident NSID',
+    'resident enabled',
+    'resident removed',
+    'resident added',
+    'resident collision',
+  ]) {
+    test('$failure after dispatch fences without retry or rollback', () async {
+      final h = _Harness();
+      h.api.residents.add(_resident(12, 3));
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      h.api.failure = failure;
+      expect((await h.execute(r)).outcome, NvmeNamespaceMoveOutcome.unknown);
+      expect(h.coordinator.locked, true);
+      expect(h.writes, 1);
+      expect((await h.execute(r)).outcome, NvmeNamespaceMoveOutcome.rejected);
+      expect(h.writes, 1);
+    });
+  }
   for (final id in [-1, 0, 999]) {
     test('invalid namespace ID $id cannot write', () async {
       final h = _Harness();
@@ -269,7 +357,7 @@ void main() {
     }),
     'malformed': (a) => a.malformed = true,
     'enabled': (a) => a.namespace['enabled'] = true,
-    'nonempty destination': (a) => a.other['subsys'] = {'id': 4},
+    'FILE destination': (a) => a.other['subsys'] = {'id': 4},
     'destination any host': (a) => a.destination['allow_any_host'] = true,
     'unknown source NQN': (a) => a.subsystem.remove('subnqn'),
     'unknown destination NQN': (a) => a.destination.remove('subnqn'),
@@ -408,85 +496,105 @@ void main() {
   }
   for (final dark in [true, false]) {
     for (final width in [320.0, 430.0]) {
-      testWidgets(
-        'isolated ZVOL review $width dark=$dark at 200% with keyboard',
-        (tester) async {
-          final h = _Harness();
-          tester.view.physicalSize = Size(width, 960);
-          tester.view.devicePixelRatio = 1;
-          addTearDown(tester.view.resetPhysicalSize);
-          addTearDown(tester.view.resetDevicePixelRatio);
-          final container = ProviderContainer(
-            overrides: [
-              dashboardActiveSessionProvider.overrideWith(
-                (ref) => ref.watch(_active),
-              ),
-            ],
-          );
-          addTearDown(container.dispose);
-          container.read(_active.notifier).select(h.session);
-          await tester.pumpWidget(
-            UncontrolledProviderScope(
-              container: container,
-              child: MaterialApp(
-                theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
-                home: MediaQuery(
-                  data: MediaQueryData(
-                    size: Size(width, 960),
-                    textScaler: const TextScaler.linear(2),
-                    viewInsets: const EdgeInsets.only(bottom: 200),
-                  ),
-                  child: const Scaffold(
-                    body: SingleChildScrollView(
-                      child: NvmeNamespaceMoveEditor(),
+      for (final populated in [false, true]) {
+        testWidgets(
+          'isolated ZVOL review $width dark=$dark populated=$populated at 200% with keyboard',
+          (tester) async {
+            final h = _Harness();
+            if (populated) {
+              h.api.residents.addAll([
+                _resident(12, 3),
+                _resident(13, 4294967294),
+              ]);
+            }
+            tester.view.physicalSize = Size(width, 960);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.resetPhysicalSize);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            final container = ProviderContainer(
+              overrides: [
+                dashboardActiveSessionProvider.overrideWith(
+                  (ref) => ref.watch(_active),
+                ),
+              ],
+            );
+            addTearDown(container.dispose);
+            container.read(_active.notifier).select(h.session);
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: MaterialApp(
+                  theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+                  home: MediaQuery(
+                    data: MediaQueryData(
+                      size: Size(width, 960),
+                      textScaler: const TextScaler.linear(2),
+                      viewInsets: const EdgeInsets.only(bottom: 200),
+                    ),
+                    child: const Scaffold(
+                      body: SingleChildScrollView(
+                        child: NvmeNamespaceMoveEditor(),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-          Future<void> tap(String key) async {
-            final f = find.byKey(Key(key));
-            await tester.ensureVisible(f);
-            await tester.tap(f);
-            await tester.pumpAndSettle();
-          }
+            );
+            Future<void> tap(String key) async {
+              final f = find.byKey(Key(key));
+              await tester.ensureVisible(f);
+              await tester.tap(f);
+              await tester.pumpAndSettle();
+            }
 
-          final id = find.byKey(const Key('nvme-namespace-move-id'));
-          await tester.enterText(id, '7');
-          await tester.enterText(
-            find.byKey(const Key('nvme-namespace-move-new')),
-            '4',
-          );
-          await tester.pumpAndSettle();
-          await tap('nvme-namespace-move-review');
-          expect(h.writes, 0);
-          expect(
-            tester
-                .widget<FilledButton>(
-                  find.byKey(const Key('nvme-namespace-move-submit')),
-                )
-                .onPressed,
-            isNull,
-          );
-          await tap('nvme-namespace-move-reload');
-          await tap('nvme-namespace-move-limitations');
-          final phrase = find.byKey(const Key('nvme-namespace-move-phrase'));
-          await tester.ensureVisible(phrase);
-          await tester.enterText(
-            phrase,
-            'MOVE NVME NAMESPACE 7 FROM SUBSYSTEM 2 TO 4 KEEP NSID 1',
-          );
-          await tester.pumpAndSettle();
-          await tap('nvme-namespace-move-submit');
-          expect(h.writes, 1);
-          expect(h.api.namespace['nsid'], 1);
-          expect(h.api.namespace['subsys'], {'id': 4});
-          expect(h.api.namespace['enabled'], false);
-          expect(tester.takeException(), isNull);
-          await tester.pumpWidget(const SizedBox());
-        },
-      );
+            final id = find.byKey(const Key('nvme-namespace-move-id'));
+            await tester.enterText(id, '7');
+            await tester.enterText(
+              find.byKey(const Key('nvme-namespace-move-new')),
+              '4',
+            );
+            await tester.pumpAndSettle();
+            await tap('nvme-namespace-move-review');
+            expect(h.writes, 0);
+            expect(
+              find.text(
+                'Existing namespace #12, NSID 3: disabled unlocked ZVOL',
+              ),
+              populated ? findsOneWidget : findsNothing,
+            );
+            expect(
+              find.text(
+                'Existing namespace #13, NSID 4294967294: disabled unlocked ZVOL',
+              ),
+              populated ? findsOneWidget : findsNothing,
+            );
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.byKey(const Key('nvme-namespace-move-submit')),
+                  )
+                  .onPressed,
+              isNull,
+            );
+            await tap('nvme-namespace-move-reload');
+            await tap('nvme-namespace-move-limitations');
+            final phrase = find.byKey(const Key('nvme-namespace-move-phrase'));
+            await tester.ensureVisible(phrase);
+            await tester.enterText(
+              phrase,
+              'MOVE NVME NAMESPACE 7 FROM SUBSYSTEM 2 TO 4 KEEP NSID 1',
+            );
+            await tester.pumpAndSettle();
+            await tap('nvme-namespace-move-submit');
+            expect(h.writes, 1);
+            expect(h.api.namespace['nsid'], 1);
+            expect(h.api.namespace['subsys'], {'id': 4});
+            expect(h.api.namespace['enabled'], false);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
     }
   }
 }

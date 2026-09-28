@@ -1,6 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: isolated disabled ZVOL namespace subsystem relocation
+## Current continuation: relocation into a populated isolated ZVOL subsystem
+
+The native namespace relocation workflow now accepts a destination that is empty or already contains only disabled unlocked ZVOL namespaces. Every destination NSID must be known, valid and unique, and none may collide with the moved namespace's preserved NSID. FILE residents, enabled or locked residents, unknown locks or IDs, duplicate/reserved IDs and collisions fail closed. Both subsystems still require distinct known NQNs, restricted host access and no host/port mappings. The review exposes an immutable ID-sorted resident list with database IDs and NSIDs; no resident is renumbered or reconfigured.
+
+Only the moved namespace's `subsys_id` is submitted. Complete fresh public topology must match the issued review before dispatch; response plus independent readback must preserve the moved ID/NSID/disabled unlocked ZVOL metadata and every other projected row. Resident addition, removal or field drift after possible dispatch fences the original session without retry or rollback. Existing endpoint/session/lifetime guards, shared operation lock and two reload/limitations consents remain. Sequential public projections cannot prove hidden backing identity, health, ownership or runtime IO, nor exclude concurrent administration. Fake API coverage includes occupied destinations, collisions, unsafe residents and post-dispatch drift; both empty/populated 320/430px dark/light 200% keyboard layouts are covered. No live NAS read or write occurred. Contract checked against the official [namespace update API](https://api.truenas.com/v25.10/api_methods_nvmet.namespace.update.html). FILE, enabled/locked or attached destinations, namespace creation and associated-host credential management remain pending; TD-037 stays partial.
+
+## Previous continuation: isolated disabled ZVOL namespace subsystem relocation
 
 The native NVMe-oF workspace now offers a separate subsystem-assignment review for an existing disabled unlocked ZVOL namespace. Source and destination must be different restricted subsystems with distinct known NQNs and no host or port mappings; the destination must be empty. The source namespace inventory must have known valid unique NSIDs. FILE or enabled namespaces, unknown locks or NSIDs, missing targets, attached systems, nonempty destinations, incomplete topology and no-ops fail closed.
 

@@ -44,12 +44,14 @@ final class NvmeNamespaceMoveReview {
     this.target,
     this.source,
     this.destination,
+    this.destinationNamespaces,
     this._proof,
     this.issuedAt,
   );
   final String endpoint;
   final NvmeNamespace target;
   final NvmeSubsystem source, destination;
+  final List<NvmeNamespace> destinationNamespaces;
   final String _proof;
   final DateTime issuedAt;
   String get confirmation =>
@@ -159,6 +161,7 @@ final class NvmeNamespaceMoveCoordinator {
     NvmeMutationSnapshot snapshot,
     int sourceId,
     int destinationId, {
+    required int preservedNsid,
     int? movedId,
   }) {
     final source = snapshot.topology.subsystems
@@ -180,12 +183,25 @@ final class NvmeNamespaceMoveCoordinator {
         ) ||
         snapshot.hosts.mappings.any(
           (m) => m.subsystemId == sourceId || m.subsystemId == destinationId,
-        ) ||
-        snapshot.topology.namespaces.any(
-          (n) => n.subsystemId == destinationId && n.id != movedId,
         )) {
       throw StateError(
-        'Select a different empty restricted isolated destination with a known NQN.',
+        'Select a different restricted isolated destination with a known NQN.',
+      );
+    }
+    final namespaces = snapshot.topology.namespaces
+        .where((n) => n.subsystemId == destinationId && n.id != movedId)
+        .toList();
+    final nsids = namespaces.map((n) => n.nsid).toList();
+    if (namespaces.any(
+          (n) => n.deviceType != 'ZVOL' || n.enabled || n.locked != false,
+        ) ||
+        nsids.any(
+          (id) =>
+              id == null || id <= 0 || id >= 4294967295 || id == preservedNsid,
+        ) ||
+        nsids.toSet().length != nsids.length) {
+      throw StateError(
+        'Destination namespaces must be disabled unlocked ZVOLs with known unique noncolliding NSIDs.',
       );
     }
     return destination;
@@ -210,6 +226,7 @@ final class NvmeNamespaceMoveCoordinator {
         snapshot,
         target.subsystemId,
         destinationId,
+        preservedNsid: target.nsid!,
       );
       final source = snapshot.topology.subsystems.singleWhere(
         (s) => s.id == target.subsystemId,
@@ -219,6 +236,12 @@ final class NvmeNamespaceMoveCoordinator {
         target,
         source,
         destination,
+        List.unmodifiable(
+          snapshot.topology.namespaces
+              .where((n) => n.subsystemId == destinationId)
+              .toList()
+            ..sort((a, b) => a.id.compareTo(b.id)),
+        ),
         snapshot.proof(),
         _now().toUtc(),
       );
@@ -262,7 +285,12 @@ final class NvmeNamespaceMoveCoordinator {
           !_fresh(review)) {
         return _rejected();
       }
-      _destination(before, target.subsystemId, review.destination.id);
+      _destination(
+        before,
+        target.subsystemId,
+        review.destination.id,
+        preservedNsid: target.nsid!,
+      );
       _guard();
       final method = api.adminCatalog.method('nvmet.namespace.update');
       if (method == null || !method.supported) return _rejected();
@@ -301,6 +329,7 @@ final class NvmeNamespaceMoveCoordinator {
         after,
         target.subsystemId,
         review.destination.id,
+        preservedNsid: target.nsid!,
         movedId: target.id,
       );
       return NvmeNamespaceMoveResult(
