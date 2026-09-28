@@ -8,6 +8,175 @@ const _secret = 'fixture-chap-secret-never-exposed';
 
 void main() {
   test(
+    'protected host NQN edit selects one ID and sends only hostnqn',
+    () async {
+      final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      final before = await repo.loadUncredentialedNvmeHost(3);
+      expect(
+        [before.id, before.nqn, before.hash],
+        [3, 'nqn.2026-09.example:old', 'SHA-256'],
+      );
+      final after = await repo.renameUncredentialedNvmeHost(
+        id: 3,
+        expectedNqn: before.nqn,
+        expectedHash: before.hash,
+        newNqn: 'nqn.2026-09.example:new',
+      );
+      expect(
+        [after.id, after.nqn, after.hash],
+        [3, 'nqn.2026-09.example:new', 'SHA-256'],
+      );
+      expect(after.toString(), isNot(contains(_secret)));
+      final read = wire.requests.firstWhere(
+        (r) => r['method'] == 'nvmet.host.query',
+      );
+      expect(read['params'], [
+        [
+          ['id', '=', 3],
+        ],
+        {
+          'select': [
+            'id',
+            'hostnqn',
+            'dhchap_key',
+            'dhchap_ctrl_key',
+            'dhchap_dhgroup',
+            'dhchap_hash',
+          ],
+          'limit': 2,
+        },
+      ]);
+      final write = wire.requests.singleWhere(
+        (r) => r['method'] == 'nvmet.host.update',
+      );
+      expect(write['params'], [
+        3,
+        {'hostnqn': 'nqn.2026-09.example:new'},
+      ]);
+      expect(repo.adminCatalog.method('nvmet.host.update')?.supported, false);
+    },
+  );
+  for (final changed in [
+    'dhchap_key',
+    'dhchap_ctrl_key',
+    'dhchap_dhgroup',
+    'dhchap_hash',
+    'hostnqn',
+    'id',
+    'missing key',
+  ]) {
+    test(
+      'protected rename rejects $changed before update without secret error',
+      () async {
+        final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true);
+        if (changed == 'missing key') {
+          wire.hostRow.remove('dhchap_key');
+        } else {
+          wire.hostRow[changed] = changed == 'id' ? 999 : _secret;
+        }
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        await expectLater(
+          repo.renameUncredentialedNvmeHost(
+            id: 3,
+            expectedNqn: 'nqn.2026-09.example:old',
+            expectedHash: 'SHA-256',
+            newNqn: 'nqn.2026-09.example:new',
+          ),
+          throwsA(
+            isA<NvmeHostException>().having(
+              (e) => e.userMessage,
+              'safe error',
+              isNot(contains(_secret)),
+            ),
+          ),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.update'),
+          isEmpty,
+        );
+      },
+    );
+  }
+  for (final failure in [
+    'auth after update',
+    'hash after update',
+    'ID after update',
+    'NQN after update',
+  ]) {
+    test(
+      '$failure rejects protected response after exactly one write',
+      () async {
+        final wire = _Wire(advertiseNvme: true, advertiseNvmeHostUpdate: true)
+          ..renameFailure = failure;
+        final repo = TrueNasSessionRepository(connector: _Connector(wire));
+        addTearDown(repo.close);
+        await repo.connect(
+          serverInput: 'https://fixture.example',
+          username: 'fixture-user',
+          apiKey: 'fixture-key',
+        );
+        await expectLater(
+          repo.renameUncredentialedNvmeHost(
+            id: 3,
+            expectedNqn: 'nqn.2026-09.example:old',
+            expectedHash: 'SHA-256',
+            newNqn: 'nqn.2026-09.example:new',
+          ),
+          throwsA(isA<NvmeHostException>()),
+        );
+        expect(
+          wire.requests.where((r) => r['method'] == 'nvmet.host.update').length,
+          1,
+        );
+      },
+    );
+  }
+  test(
+    'unadvertised rename and invalid arguments send no host update',
+    () async {
+      final wire = _Wire(advertiseNvme: true);
+      final repo = TrueNasSessionRepository(connector: _Connector(wire));
+      addTearDown(repo.close);
+      await repo.connect(
+        serverInput: 'https://fixture.example',
+        username: 'fixture-user',
+        apiKey: 'fixture-key',
+      );
+      await expectLater(
+        repo.renameUncredentialedNvmeHost(
+          id: 3,
+          expectedNqn: 'nqn.2026-09.example:old',
+          expectedHash: 'SHA-256',
+          newNqn: 'nqn.2026-09.example:new',
+        ),
+        throwsA(isA<NvmeHostException>()),
+      );
+      await expectLater(
+        repo.loadUncredentialedNvmeHost(0),
+        throwsA(isA<NvmeHostException>()),
+      );
+      expect(
+        wire.requests.where(
+          (r) => (r['method'] as String).startsWith('nvmet.host'),
+        ),
+        isEmpty,
+      );
+    },
+  );
+  test(
     'NVMe host registration projects only identity and rejects unexpected auth',
     () async {
       final wire = _Wire(advertiseNvmeHostCreate: true);
@@ -385,12 +554,24 @@ final class _Wire implements RpcTransport {
     this.advertiseNvmeCreate = false,
     this.advertiseNvmePortCreate = false,
     this.advertiseNvmeHostCreate = false,
+    this.advertiseNvmeHostUpdate = false,
   });
   final bool advertiseAuth;
   final bool advertiseNvme, advertiseNvmeMapping;
   final bool advertiseNvmeCreate;
   final bool advertiseNvmePortCreate;
   final bool advertiseNvmeHostCreate;
+  final bool advertiseNvmeHostUpdate;
+  String? renameFailure;
+  final hostRow = <String, Object?>{
+    'id': 3,
+    'hostnqn': 'nqn.2026-09.example:old',
+    'dhchap_key': null,
+    'dhchap_ctrl_key': null,
+    'dhchap_dhgroup': null,
+    'dhchap_hash': 'SHA-256',
+    'unexpected_private_data': _secret,
+  };
   bool malformed = false;
   final _incoming = StreamController<String>();
   final requests = <Map<String, dynamic>>[];
@@ -426,6 +607,7 @@ final class _Wire implements RpcTransport {
         if (advertiseNvmeCreate) 'nvmet.host_subsys.create': _nvmeMetadata,
         if (advertiseNvmePortCreate) 'nvmet.port_subsys.create': _nvmeMetadata,
         if (advertiseNvmeHostCreate) 'nvmet.host.create': _nvmeMetadata,
+        if (advertiseNvmeHostUpdate) 'nvmet.host.update': _nvmeMetadata,
       },
       'iscsi.auth.query' =>
         malformed
@@ -444,6 +626,8 @@ final class _Wire implements RpcTransport {
                   'peersecret': _secret,
                 },
               ],
+      'nvmet.host.query' when advertiseNvmeHostUpdate => [Map.of(hostRow)],
+      'nvmet.host.update' => _rename(request),
       'nvmet.host.query' => [
         {'id': 3, 'hostnqn': 'nqn.fixture:client', 'dhchap_key': _secret},
       ],
@@ -482,6 +666,21 @@ final class _Wire implements RpcTransport {
   @override
   Future<void> close() async {
     if (!_incoming.isClosed) await _incoming.close();
+  }
+
+  Object _rename(Map<String, dynamic> request) {
+    hostRow['hostnqn'] = ((request['params'] as List)[1] as Map)['hostnqn'];
+    switch (renameFailure) {
+      case 'auth after update':
+        hostRow['dhchap_key'] = _secret;
+      case 'hash after update':
+        hostRow['dhchap_hash'] = 'SHA-512';
+      case 'ID after update':
+        hostRow['id'] = 999;
+      case 'NQN after update':
+        hostRow['hostnqn'] = 'nqn.2026-09.example:wrong';
+    }
+    return Map.of(hostRow);
   }
 }
 

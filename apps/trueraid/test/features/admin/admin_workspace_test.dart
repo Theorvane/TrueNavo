@@ -360,6 +360,7 @@ void main() {
     ('nvmet.host_subsys.create', NvmePage),
     ('nvmet.host.delete', NvmePage),
     ('nvmet.host.create', NvmePage),
+    ('nvmet.host.update', NvmePage),
     ('nvmet.port_subsys.delete', NvmePage),
     ('nvmet.port_subsys.create', NvmePage),
     ('nvmet.port.delete', NvmePage),
@@ -832,6 +833,16 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
+  testWidgets('host NQN generic update cannot bypass credential guards', (
+    tester,
+  ) async {
+    final (_, api) = await _pump(tester, _page('nvmet.host.update'));
+    expect(api.adminCatalog.method('nvmet.host.update'), isNotNull);
+    expect(find.text('This action is unavailable'), findsOneWidget);
+    expect(_key('admin-review-submit'), findsNothing);
+    expect(api.requests, isEmpty);
+  });
+
   testWidgets('directory and review fit 320px with large text', (tester) async {
     await _pump(tester, const AdminWorkspace(), width: 320, scale: 2);
     expect(tester.takeException(), isNull);
@@ -1071,6 +1082,10 @@ class _Admin implements SessionRepository, AuthenticatedAdminSession {
         {'_name_': 'options', '_required_': false, 'type': 'object'},
       ]),
       'nvmet.host.create': _metadata([
+        {'_name_': 'data', '_required_': true, 'type': 'object'},
+      ]),
+      'nvmet.host.update': _metadata([
+        {'_name_': 'id', '_required_': true, 'type': 'integer'},
         {'_name_': 'data', '_required_': true, 'type': 'object'},
       ]),
       'nvmet.namespace.delete': _metadata([

@@ -12,6 +12,33 @@ abstract interface class AuthenticatedNvmeHostCreateSession {
   Future<NvmeHostCreated> createUnassociatedNvmeHost({required String hostNqn});
 }
 
+/// Narrow NQN editing for uncredentialed hosts. Key-bearing reads/results
+/// stay inside the SDK; no credential field is ever sent in the update.
+abstract interface class AuthenticatedNvmeHostRenameSession {
+  Future<NvmeUncredentialedHost> loadUncredentialedNvmeHost(int id);
+  Future<NvmeUncredentialedHost> renameUncredentialedNvmeHost({
+    required int id,
+    required String expectedNqn,
+    required String expectedHash,
+    required String newNqn,
+  });
+}
+
+final class NvmeUncredentialedHost {
+  const NvmeUncredentialedHost(this.id, this.nqn, this.hash);
+  final int id;
+  final String nqn, hash;
+
+  factory NvmeUncredentialedHost.project(Object? raw) {
+    final public = NvmeHostCreated.project(raw);
+    final hash = (raw as Map)['dhchap_hash'];
+    if (!const {'SHA-256', 'SHA-384', 'SHA-512'}.contains(hash)) {
+      throw const FormatException('Invalid uncredentialed NVMe host metadata');
+    }
+    return NvmeUncredentialedHost(public.id, public.nqn, hash as String);
+  }
+}
+
 /// Conservative printable ASCII input, preserving the exact initiator NQN.
 /// This is not complete NQN validation; the server remains authoritative.
 bool isSupportedNvmeHostNqn(String value) =>

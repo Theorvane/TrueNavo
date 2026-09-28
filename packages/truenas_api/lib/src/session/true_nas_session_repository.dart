@@ -147,6 +147,7 @@ final class TrueNasSessionRepository
         AuthenticatedIscsiAuthSession,
         AuthenticatedNvmeHostSession,
         AuthenticatedNvmeHostCreateSession,
+        AuthenticatedNvmeHostRenameSession,
         AuthenticatedNvmeHostAccessSession,
         AuthenticatedNvmePortAccessSession {
   TrueNasSessionRepository({
@@ -1684,6 +1685,105 @@ final class TrueNasSessionRepository
           .timeout(managementRequestTimeout);
       if (!management.isCurrent()) throw const NvmeHostException();
       return NvmeHostCreated.project(raw);
+    } on Object {
+      throw const NvmeHostException();
+    }
+  }
+
+  @override
+  Future<NvmeUncredentialedHost> loadUncredentialedNvmeHost(int id) async {
+    final management = _management;
+    final client = _client;
+    if (id <= 0 ||
+        management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !management.isCurrent() ||
+        !management.methods.contains('nvmet.host.query') ||
+        client == null ||
+        !client.isOpen) {
+      throw const NvmeHostException();
+    }
+    try {
+      final raw = await client
+          .call(
+            'nvmet.host.query',
+            id: _id(),
+            params: [
+              [
+                ['id', '=', id],
+              ],
+              {
+                'select': [
+                  'id',
+                  'hostnqn',
+                  'dhchap_key',
+                  'dhchap_ctrl_key',
+                  'dhchap_dhgroup',
+                  'dhchap_hash',
+                ],
+                'limit': 2,
+              },
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent() || raw is! List || raw.length != 1) {
+        throw const NvmeHostException();
+      }
+      final result = NvmeUncredentialedHost.project(raw.single);
+      if (result.id != id) throw const NvmeHostException();
+      return result;
+    } on Object {
+      throw const NvmeHostException();
+    }
+  }
+
+  @override
+  Future<NvmeUncredentialedHost> renameUncredentialedNvmeHost({
+    required int id,
+    required String expectedNqn,
+    required String expectedHash,
+    required String newNqn,
+  }) async {
+    final management = _management;
+    final client = _client;
+    if (id <= 0 ||
+        !isSupportedNvmeHostNqn(expectedNqn) ||
+        !isSupportedNvmeHostNqn(newNqn) ||
+        expectedNqn == newNqn ||
+        !const {'SHA-256', 'SHA-384', 'SHA-512'}.contains(expectedHash) ||
+        management == null ||
+        management.version != _ManagementVersion.v2510 ||
+        !management.isCurrent() ||
+        !management.methods.contains('nvmet.host.update') ||
+        client == null ||
+        !client.isOpen) {
+      throw const NvmeHostException();
+    }
+    try {
+      final before = await loadUncredentialedNvmeHost(id);
+      if (!management.isCurrent() ||
+          before.nqn != expectedNqn ||
+          before.hash != expectedHash) {
+        throw const NvmeHostException();
+      }
+      final raw = await client
+          .call(
+            'nvmet.host.update',
+            id: _id(),
+            params: [
+              id,
+              {'hostnqn': newNqn},
+            ],
+          )
+          .timeout(managementRequestTimeout);
+      if (!management.isCurrent()) throw const NvmeHostException();
+      final result = NvmeUncredentialedHost.project(raw);
+      if (result.id != id ||
+          result.nqn != newNqn ||
+          result.hash != expectedHash) {
+        throw const NvmeHostException();
+      }
+      return result;
     } on Object {
       throw const NvmeHostException();
     }

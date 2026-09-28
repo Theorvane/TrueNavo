@@ -929,6 +929,14 @@ const List<AdminOperationDefinition> adminOperationDefinitions = [
     warning: 'DH-CHAP authentication is not configured. This is not proof of initiator identity or access.',
     blockedReason: _secretFlow,
   ),
+  AdminOperationDefinition.change(
+    AdminDomain.shares,
+    'nvmet.host.update',
+    'Change unassociated NVMe host NQN',
+    'NQN-only editing through the protected uncredentialed-host workflow.',
+    warning: 'Existing initiator configuration may need to change. NVMe configuration reloads; concurrent administration is not excluded.',
+    blockedReason: _secretFlow,
+  ),
   AdminOperationDefinition.destructive(
     AdminDomain.shares,
     'nvmet.host.delete',
