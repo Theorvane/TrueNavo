@@ -32,6 +32,24 @@ final nvmeAttachedNamespaceNsidCoordinatorProvider =
 
 enum NvmeAttachedNamespaceNsidOutcome { completed, rejected, unknown }
 
+/// Public hints only. A suggestion never replaces fresh review/preflight.
+final class NvmeAttachedNamespaceNsidCandidate {
+  NvmeAttachedNamespaceNsidCandidate._(
+    this.target,
+    this.subsystem,
+    this.mapping,
+    this.port,
+    List<int> usedNsids,
+    this.suggestedNsid,
+  ) : usedNsids = List.unmodifiable(usedNsids);
+  final NvmeNamespace target;
+  final NvmeSubsystem subsystem;
+  final NvmePortMapping mapping;
+  final NvmePort port;
+  final List<int> usedNsids;
+  final int suggestedNsid;
+}
+
 final class NvmeAttachedNamespaceNsidResult {
   const NvmeAttachedNamespaceNsidResult(this.outcome, this.message);
   final NvmeAttachedNamespaceNsidOutcome outcome;
@@ -179,6 +197,63 @@ final class NvmeAttachedNamespaceNsidCoordinator {
       );
     }
     return target;
+  }
+
+  Future<List<NvmeAttachedNamespaceNsidCandidate>> loadCandidates() async {
+    _guard();
+    if (_busy) throw StateError('Another operation is in progress.');
+    final owner = lock.acquire();
+    if (owner == null) throw StateError('Another operation is in progress.');
+    _busy = true;
+    _issued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final candidates = <NvmeAttachedNamespaceNsidCandidate>[];
+      for (final namespace in snapshot.topology.namespaces) {
+        final NvmeNamespace target;
+        try {
+          target = _target(snapshot, namespace.id);
+        } on StateError {
+          continue;
+        }
+        final mapping = snapshot.topology.portMappings.singleWhere(
+          (m) => m.subsystemId == target.subsystemId,
+        );
+        final used = snapshot.topology.namespaces
+            .where((n) => n.subsystemId == target.subsystemId)
+            .map((n) => n.nsid!)
+            .toSet();
+        var suggestion = 1;
+        while (used.contains(suggestion)) {
+          suggestion++;
+        }
+        if (suggestion >= 4294967295) {
+          throw StateError('No valid explicit NSID suggestion.');
+        }
+        candidates.add(
+          NvmeAttachedNamespaceNsidCandidate._(
+            target,
+            snapshot.topology.subsystems.singleWhere(
+              (s) => s.id == target.subsystemId,
+            ),
+            mapping,
+            snapshot.topology.ports.singleWhere((p) => p.id == mapping.portId),
+            used.toList()..sort(),
+            suggestion,
+          ),
+        );
+      }
+      candidates.sort((a, b) => a.target.id.compareTo(b.target.id));
+      _guard();
+      return List.unmodifiable(candidates);
+    } on Object {
+      throw StateError(
+        'NSID target discovery failed. No configuration request was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
   }
 
   Future<NvmeAttachedNamespaceNsidReview> prepare(

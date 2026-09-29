@@ -19,6 +19,8 @@ class _NsidState extends ConsumerState<NvmeAttachedNamespaceNsidEditor> {
   NvmeAttachedNamespaceNsidReview? _review;
   NvmeAttachedNamespaceNsidCoordinator? _owner;
   Object? _session, _reviewSession;
+  List<NvmeAttachedNamespaceNsidCandidate>? _candidates;
+  NvmeAttachedNamespaceNsidCoordinator? _candidateOwner;
   bool _busy = false,
       _reload = false,
       _limitations = false,
@@ -51,6 +53,52 @@ class _NsidState extends ConsumerState<NvmeAttachedNamespaceNsidEditor> {
     _nsid.dispose();
     _phrase.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCandidates(
+    NvmeAttachedNamespaceNsidCoordinator coordinator,
+  ) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _nsid.clear();
+      _message = null;
+    });
+    try {
+      final candidates = await coordinator.loadCandidates();
+      if (!mounted ||
+          epoch != _epoch ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(
+            coordinator,
+            ref.read(nvmeAttachedNamespaceNsidCoordinatorProvider),
+          )) {
+        return;
+      }
+      setState(() {
+        _candidates = candidates;
+        _candidateOwner = coordinator;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          identical(session, ref.read(dashboardActiveSessionProvider)) &&
+          identical(
+            coordinator,
+            ref.read(nvmeAttachedNamespaceNsidCoordinatorProvider),
+          )) {
+        setState(
+          () => _message = 'NSID target discovery failed. No configuration request was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _prepare(
@@ -121,6 +169,8 @@ class _NsidState extends ConsumerState<NvmeAttachedNamespaceNsidEditor> {
       _busy = false;
       if (identical(session, ref.read(dashboardActiveSessionProvider))) {
         _discard();
+        _candidates = null;
+        _candidateOwner = null;
         _message = result.message;
       }
     });
@@ -138,21 +188,98 @@ class _NsidState extends ConsumerState<NvmeAttachedNamespaceNsidEditor> {
       _discard();
       _id.clear();
       _nsid.clear();
+      _candidates = null;
+      _candidateOwner = null;
       _message = null;
       _session = session;
     }
     if (_owner != null && !identical(coordinator, _owner)) _discard();
+    if (_candidateOwner != null && !identical(coordinator, _candidateOwner)) {
+      _discard();
+      _id.clear();
+      _nsid.clear();
+      _candidates = null;
+      _candidateOwner = null;
+      _message = null;
+    }
     final active =
         !_busy &&
         coordinator?.available == true &&
         coordinator?.locked == false;
     final review = _review;
+    final candidates = _candidates;
+    final selected = candidates
+        ?.where((c) => c.target.id == _targetId)
+        .singleOrNull;
     return TdPanel(
       title: 'Change singly attached disabled ZVOL namespace NSID',
       description: 'Only a disabled unlocked ZVOL in a restricted subsystem behind one disabled TCP/RDMA port, with no other port mapping or host grant and safe disabled residents, is supported. NSIDs must remain unique. No port, enablement or backing change is submitted.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          OutlinedButton(
+            key: const Key('nvme-attached-namespace-nsid-discover'),
+            onPressed: active ? () => _loadCandidates(coordinator!) : null,
+            child: const Text('Load or refresh eligible NSID targets'),
+          ),
+          if (candidates != null) ...[
+            const Text(
+              'Discovery and free NSID suggestions are public snapshot hints, not runtime safety or reservations. Review and submission independently reread the server. Only an explicit NSID is submitted; automatic assignment is not used.',
+            ),
+            if (candidates.isEmpty)
+              const Text('No eligible namespace NSID targets were found.'),
+            if (candidates.isNotEmpty)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Choose namespace',
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    key: const Key('nvme-attached-namespace-nsid-choice'),
+                    isExpanded: true,
+                    value: selected?.target.id,
+                    hint: const Text('Select a namespace'),
+                    items: [
+                      for (final candidate in candidates)
+                        DropdownMenuItem(
+                          value: candidate.target.id,
+                          child: Text(
+                            '#${candidate.target.id} · NSID ${candidate.target.nsid} · ${candidate.subsystem.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: active
+                        ? (id) => setState(() {
+                            _discard();
+                            _id.text = id?.toString() ?? '';
+                            _nsid.clear();
+                            _message = null;
+                          })
+                        : null,
+                  ),
+                ),
+              ),
+            if (selected != null) ...[
+              Text(
+                'Subsystem #${selected.subsystem.id}: ${selected.subsystem.name} — ${selected.subsystem.subnqn}; association #${selected.mapping.id}, disabled ${selected.port.transport} port #${selected.port.id}; used NSIDs: ${selected.usedNsids.join(', ')}',
+              ),
+              OutlinedButton(
+                key: const Key('nvme-attached-namespace-nsid-suggestion'),
+                onPressed: active
+                    ? () => setState(() {
+                        _discard();
+                        _nsid.text = selected.suggestedNsid.toString();
+                        _message = null;
+                      })
+                    : null,
+                child: Text(
+                  'Use suggested free NSID ${selected.suggestedNsid}',
+                ),
+              ),
+            ],
+          ],
           TextField(
             key: const Key('nvme-attached-namespace-nsid-id'),
             controller: _id,
@@ -162,7 +289,10 @@ class _NsidState extends ConsumerState<NvmeAttachedNamespaceNsidEditor> {
             decoration: const InputDecoration(
               labelText: 'Exact namespace database ID (not NSID)',
             ),
-            onChanged: (_) => setState(_discard),
+            onChanged: (_) => setState(() {
+              _discard();
+              _nsid.clear();
+            }),
           ),
           TextField(
             key: const Key('nvme-attached-namespace-nsid-new'),

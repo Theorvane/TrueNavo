@@ -79,12 +79,17 @@ class _Fake
       hostMappings = <Map<String, Object?>>[];
   void Function()? onDispatch;
   String? failure;
+  String? queryFailure;
+  bool reverseRows = false;
+  int hostLoads = 0;
+  final extraNamespaces = <Map<String, Object?>>[];
   bool malformed = false;
   bool extraSubsystem = false;
   Completer<void>? gate;
   final started = Completer<void>();
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    hostLoads++;
     if (gate != null) {
       if (!started.isCompleted) started.complete();
       await gate!.future;
@@ -112,11 +117,20 @@ class _Fake
       'nvmet.namespace.query' => [
         malformed ? {'id': 7} : Map.of(namespace),
         Map.of(other),
+        ...extraNamespaces,
       ],
       'nvmet.port_subsys.query' => [for (final m in mappings) Map.of(m)],
       _ => null,
     };
-    if (rows != null) return AdminCompleted(request, value: rows);
+    if (rows != null) {
+      if (queryFailure == request.method.name) {
+        throw StateError('private-server-error');
+      }
+      return AdminCompleted(
+        request,
+        value: reverseRows ? rows.reversed.toList() : rows,
+      );
+    }
     if (request.method.name != 'nvmet.namespace.update') {
       throw StateError('Unexpected method');
     }
@@ -214,7 +228,553 @@ class _Active extends Notifier<AuthenticatedSession?> {
 
 final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
+class _CoordinatorChoice
+    extends Notifier<NvmeAttachedNamespaceNsidCoordinator?> {
+  @override
+  NvmeAttachedNamespaceNsidCoordinator? build() => null;
+  void select(NvmeAttachedNamespaceNsidCoordinator coordinator) =>
+      state = coordinator;
+}
+
+final _choice =
+    NotifierProvider<_CoordinatorChoice, NvmeAttachedNamespaceNsidCoordinator?>(
+      _CoordinatorChoice.new,
+    );
+
+Future<ProviderContainer> _mountDiscovery(
+  WidgetTester tester,
+  _Harness h, {
+  double width = 430,
+  bool dark = true,
+}) async {
+  tester.view.physicalSize = Size(width, 960);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  final container = ProviderContainer(
+    overrides: [
+      dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
+      nvmeAttachedNamespaceNsidCoordinatorProvider.overrideWith((ref) {
+        final session = ref.watch(dashboardActiveSessionProvider);
+        final coordinator = ref.watch(_choice);
+        return identical(session, h.session) ? coordinator : null;
+      }),
+    ],
+  );
+  addTearDown(container.dispose);
+  container.read(_active.notifier).select(h.session);
+  container.read(_choice.notifier).select(h.coordinator);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 960),
+            textScaler: const TextScaler.linear(2),
+            viewInsets: const EdgeInsets.only(bottom: 200),
+          ),
+          child: child!,
+        ),
+        home: const Scaffold(
+          body: SingleChildScrollView(child: NvmeAttachedNamespaceNsidEditor()),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return container;
+}
+
+Future<void> _tap(WidgetTester tester, String suffix) async {
+  final finder = find.byKey(Key('nvme-attached-namespace-nsid-$suffix'));
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _select(WidgetTester tester, int id, int nsid) async {
+  await _tap(tester, 'choice');
+  await tester.tap(find.text('#$id · NSID $nsid · unused').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  for (final dark in [true, false]) {
+    for (final width in [320.0, 430.0]) {
+      for (final nsid in [1, 4294967294]) {
+        testWidgets(
+          'NSID selector and explicit suggestion $width dark=$dark current=$nsid at 200% with keyboard',
+          (tester) async {
+            final h = _Harness();
+            h.api.namespace['nsid'] = nsid;
+            final desired = nsid == 1 ? 3 : 1;
+            await _mountDiscovery(tester, h, width: width, dark: dark);
+            await _tap(tester, 'discover');
+            await _select(tester, 7, nsid);
+            expect(h.writes, 0);
+            await _tap(tester, 'suggestion');
+            expect(
+              tester
+                  .widget<TextField>(
+                    find.byKey(const Key('nvme-attached-namespace-nsid-new')),
+                  )
+                  .controller!
+                  .text,
+              '$desired',
+            );
+            await _tap(tester, 'review');
+            for (final consent in ['reload', 'limitations', 'identity']) {
+              await _tap(tester, consent);
+            }
+            final phrase = find.byKey(
+              const Key('nvme-attached-namespace-nsid-phrase'),
+            );
+            await tester.ensureVisible(phrase);
+            await tester.enterText(
+              phrase,
+              'CHANGE ATTACHED NVME NAMESPACE 7 NSID $nsid TO $desired KEEP ASSOCIATION 11 PORT 3 SUBSYSTEM 2 NQN nqn.2026-09.example:unused',
+            );
+            await tester.pumpAndSettle();
+            await _tap(tester, 'submit');
+            expect(h.writes, 1);
+            expect(h.api.namespace['nsid'], desired);
+            expect(
+              find.byKey(const Key('nvme-attached-namespace-nsid-choice')),
+              findsNothing,
+            );
+            await _tap(tester, 'discover');
+            await _select(tester, 7, desired);
+            expect(
+              find.text('Use suggested free NSID ${nsid == 1 ? 1 : 3}'),
+              findsOneWidget,
+            );
+            expect(h.writes, 1);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
+    }
+  }
+  testWidgets('refresh clears both IDs phrase review and three consents', (
+    tester,
+  ) async {
+    final h = _Harness();
+    await _mountDiscovery(tester, h);
+    await _tap(tester, 'discover');
+    await _select(tester, 7, 1);
+    await _tap(tester, 'suggestion');
+    await _tap(tester, 'review');
+    for (final consent in ['reload', 'limitations', 'identity']) {
+      await _tap(tester, consent);
+    }
+    await _tap(tester, 'discover');
+    expect(
+      find.byKey(const Key('nvme-attached-namespace-nsid-phrase')),
+      findsNothing,
+    );
+    for (final field in ['id', 'new']) {
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(Key('nvme-attached-namespace-nsid-$field')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+    }
+    await _select(tester, 8, 2);
+    await _tap(tester, 'suggestion');
+    await _tap(tester, 'review');
+    for (final consent in ['reload', 'limitations', 'identity']) {
+      expect(
+        tester
+            .widget<Checkbox>(
+              find.byKey(Key('nvme-attached-namespace-nsid-$consent')),
+            )
+            .value,
+        false,
+      );
+    }
+    expect(h.writes, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+    'suggestion and manual namespace changes discard prior consent and desired NSID',
+    (tester) async {
+      final h = _Harness();
+      await _mountDiscovery(tester, h);
+      await _tap(tester, 'discover');
+      await _select(tester, 7, 1);
+      await _tap(tester, 'suggestion');
+      await _tap(tester, 'review');
+      await _tap(tester, 'reload');
+      await _tap(tester, 'suggestion');
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-nsid-phrase')),
+        findsNothing,
+      );
+      await _tap(tester, 'review');
+      expect(
+        tester
+            .widget<Checkbox>(
+              find.byKey(const Key('nvme-attached-namespace-nsid-reload')),
+            )
+            .value,
+        false,
+      );
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-nsid-id')),
+        '8',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-nsid-new')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-nsid-phrase')),
+        findsNothing,
+      );
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-nsid-new')),
+        '4',
+      );
+      await tester.pumpAndSettle();
+      await _tap(tester, 'review');
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-nsid-phrase')),
+        findsOneWidget,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  for (final reason in ['session', 'coordinator']) {
+    testWidgets('$reason clears existing NSID discovery selections', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mountDiscovery(tester, h);
+      await _tap(tester, 'discover');
+      await _select(tester, 7, 1);
+      await _tap(tester, 'suggestion');
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      } else {
+        container.read(_choice.notifier).select(_Harness().coordinator);
+        expect(
+          container.read(nvmeAttachedNamespaceNsidCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-nsid-choice')),
+        findsNothing,
+      );
+      for (final field in ['id', 'new']) {
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(Key('nvme-attached-namespace-nsid-$field')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+      }
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final reason in ['session', 'coordinator', 'dispose']) {
+    testWidgets('$reason rejects late NSID discovery restoration', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mountDiscovery(tester, h);
+      h.api.gate = Completer<void>();
+      final button = find.byKey(
+        const Key('nvme-attached-namespace-nsid-discover'),
+      );
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+      await h.api.started.future;
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      }
+      if (reason == 'coordinator') {
+        container.read(_choice.notifier).select(_Harness().coordinator);
+        expect(
+          container.read(nvmeAttachedNamespaceNsidCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      if (reason == 'dispose') {
+        await tester.pumpWidget(const SizedBox());
+      } else {
+        await tester.pump();
+      }
+      h.api.gate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-nsid-choice')),
+        findsNothing,
+      );
+      expect(
+        find.text(
+          'NSID target discovery failed. No configuration request was sent.',
+        ),
+        findsNothing,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final failure in [false, true]) {
+    testWidgets('NSID discovery distinguishes empty and failure=$failure', (
+      tester,
+    ) async {
+      final h = _Harness();
+      if (failure) {
+        h.api.queryFailure = 'nvmet.port.query';
+      } else {
+        h.api.ports.single['enabled'] = true;
+      }
+      await _mountDiscovery(tester, h);
+      await _tap(tester, 'discover');
+      expect(
+        find.text('No eligible namespace NSID targets were found.'),
+        failure ? findsNothing : findsOneWidget,
+      );
+      expect(
+        find.text(
+          'NSID target discovery failed. No configuration request was sent.',
+        ),
+        failure ? findsOneWidget : findsNothing,
+      );
+      h.api.queryFailure = null;
+      h.api.ports.single['enabled'] = false;
+      await _tap(tester, 'discover');
+      await _select(tester, 7, 1);
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-nsid-suggestion')),
+        findsOneWidget,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final kind in ['oversized', 'unresolved']) {
+    test('$kind discovery inventory fails closed', () async {
+      final h = _Harness();
+      if (kind == 'oversized') {
+        h.api.ports.addAll([
+          for (var id = 100; id < 200; id++)
+            {'id': id, 'addr_trtype': 'TCP', 'enabled': false},
+        ]);
+      } else {
+        h.api.other['subsys'] = {'id': 999};
+      }
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+      expect(h.writes, 0);
+    });
+  }
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final current in [1, 4, 4294967294]) {
+      test(
+        '$transport explicit suggestion for current NSID $current is read-only and independently reviewed',
+        () async {
+          final h = _Harness();
+          h.api.namespace['nsid'] = current;
+          h.api.ports.single['addr_trtype'] = transport;
+          h.api.reverseRows = true;
+          final candidates = await h.coordinator.loadCandidates();
+          expect(candidates.map((c) => c.target.id), [7, 8]);
+          final candidate = candidates.first;
+          expect(candidate.suggestedNsid, current == 1 ? 3 : 1);
+          expect(candidate.usedNsids, current == 1 ? [1, 2] : [2, current]);
+          expect(candidate.mapping.id, 11);
+          expect(candidate.port.transport, transport);
+          expect(candidate.subsystem.subnqn, h.api.subsystem['subnqn']);
+          expect(() => candidates.clear(), throwsUnsupportedError);
+          expect(() => candidate.usedNsids.clear(), throwsUnsupportedError);
+          expect(h.writes, 0);
+          expect(h.api.hostLoads, 1);
+          final review = await h.coordinator.prepare(
+            candidate.target.id,
+            nsid: candidate.suggestedNsid,
+          );
+          expect(h.api.hostLoads, 2);
+          expect(
+            (await h.execute(review)).outcome,
+            NvmeAttachedNamespaceNsidOutcome.completed,
+          );
+          expect(
+            h.api.calls
+                .singleWhere((r) => r.method.name == 'nvmet.namespace.update')
+                .arguments,
+            [
+              7,
+              {'nsid': candidate.suggestedNsid},
+            ],
+          );
+          expect(h.api.hostLoads, 4);
+        },
+      );
+    }
+  }
+  test('sorted contiguous inventory yields smallest free explicit NSID without including unrelated subsystem', () async {
+    final h = _Harness();
+    h.api.reverseRows = true;
+    h.api.extraNamespaces.addAll([
+      for (var i = 3; i <= 20; i++)
+        {
+          'id': i + 10,
+          'nsid': i,
+          'subsys': {'id': 2},
+          'device_type': 'ZVOL',
+          'enabled': false,
+          'locked': false,
+        },
+    ]);
+    h.api.extraSubsystem = true;
+    h.api.extraNamespaces.add({
+      'id': 99,
+      'nsid': 21,
+      'subsys': {'id': 4},
+      'device_type': 'ZVOL',
+      'enabled': false,
+      'locked': false,
+    });
+    final candidates = await h.coordinator.loadCandidates();
+    expect(candidates.map((c) => c.target.id), [
+      7,
+      8,
+      for (var i = 3; i <= 20; i++) i + 10,
+    ]);
+    expect(candidates.every((c) => c.suggestedNsid == 21), true);
+    expect(candidates.first.usedNsids, [for (var i = 1; i <= 20; i++) i]);
+    expect(h.writes, 0);
+  });
+  test('discovery invalidates old authorization and stale suggestions cannot bypass new collisions', () async {
+    final h = _Harness();
+    final old = await h.coordinator.prepare(7, nsid: 3);
+    final candidates = await h.coordinator.loadCandidates();
+    expect(
+      (await h.execute(old)).outcome,
+      NvmeAttachedNamespaceNsidOutcome.rejected,
+    );
+    h.api.other['nsid'] = candidates.first.suggestedNsid;
+    await expectLater(
+      h.coordinator.prepare(7, nsid: candidates.first.suggestedNsid),
+      throwsStateError,
+    );
+    h.api.other['nsid'] = 2;
+    final review = await h.coordinator.prepare(
+      7,
+      nsid: candidates.first.suggestedNsid,
+    );
+    h.api.other['nsid'] = 3;
+    expect(
+      (await h.execute(review)).outcome,
+      NvmeAttachedNamespaceNsidOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+  for (final query in [
+    'nvmet.subsys.query',
+    'nvmet.port.query',
+    'nvmet.namespace.query',
+    'nvmet.port_subsys.query',
+  ]) {
+    test('$query discovery failure is sanitized and lock released', () async {
+      final h = _Harness();
+      h.api.queryFailure = query;
+      await expectLater(
+        h.coordinator.loadCandidates(),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.toString(),
+            'sanitized',
+            isNot(contains('private-server-error')),
+          ),
+        ),
+      );
+      final owner = h.lock.acquire();
+      expect(owner, isNotNull);
+      h.lock.release(owner!);
+      h.api.queryFailure = null;
+      expect(await h.coordinator.loadCandidates(), hasLength(2));
+      expect(h.writes, 0);
+    });
+  }
+  for (final reason in ['session', 'dispose', 'lock', 'uncertain']) {
+    test('$reason blocks discovery without queries', () async {
+      final h = _Harness();
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      if (reason == 'uncertain') {
+        final review = await h.coordinator.prepare(7, nsid: 3);
+        h.api.failure = 'unknown';
+        await h.execute(review);
+        h.api.calls.clear();
+      }
+      final owner = reason == 'lock' ? h.lock.acquire() : null;
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+      expect(h.api.calls, isEmpty);
+      if (owner != null) h.lock.release(owner);
+    });
+  }
+  for (final reason in ['session', 'dispose', 'concurrent']) {
+    test(
+      '$reason during discovery rejects stale work and releases lock',
+      () async {
+        final h = _Harness();
+        h.api.gate = Completer<void>();
+        final pending = h.coordinator.loadCandidates();
+        final checked = reason == 'concurrent'
+            ? null
+            : expectLater(pending, throwsStateError);
+        await h.api.started.future;
+        if (reason == 'session') h.current = false;
+        if (reason == 'dispose') h.coordinator.dispose();
+        if (reason == 'concurrent') {
+          await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+          await expectLater(
+            h.coordinator.prepare(7, nsid: 3),
+            throwsStateError,
+          );
+        }
+        h.api.gate!.complete();
+        if (checked != null) {
+          await checked;
+        } else {
+          expect(await pending, hasLength(2));
+        }
+        final owner = h.lock.acquire();
+        expect(owner, isNotNull);
+        h.lock.release(owner!);
+        expect(h.writes, 0);
+      },
+    );
+  }
   for (final nsid in [-1, 0, 4294967295, 4294967296]) {
     test(
       'invalid or reserved requested NSID $nsid sends no reads or writes',
@@ -350,6 +910,29 @@ void main() {
     },
   );
   for (final entry in unsafe.entries) {
+    test(
+      '${entry.key} discovery filters unsafe targets or avoids occupied/no-op suggestions',
+      () async {
+        final h = _Harness();
+        entry.value(h.api);
+        try {
+          final candidates = await h.coordinator.loadCandidates();
+          if (const {'no-op', 'collision'}.contains(entry.key)) {
+            final candidate = candidates.singleWhere((c) => c.target.id == 7);
+            expect(
+              candidate.usedNsids.contains(candidate.suggestedNsid),
+              false,
+            );
+            expect(candidate.suggestedNsid, isNot(candidate.target.nsid));
+          } else {
+            expect(candidates.any((c) => c.target.id == 7), false);
+          }
+        } on StateError catch (error) {
+          expect(error.toString(), contains('NSID target discovery failed'));
+        }
+        expect(h.writes, 0);
+      },
+    );
     test(
       '${entry.key} is rejected before review and at fresh preflight',
       () async {
@@ -533,6 +1116,7 @@ void main() {
         },
       );
       expect(h.coordinator.available, false);
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
       await expectLater(h.coordinator.prepare(7, nsid: 3), throwsStateError);
       expect(h.api.calls, isEmpty);
     });
