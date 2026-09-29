@@ -25,6 +25,11 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
       _reload = false,
       _limitations = false,
       _identityRisk = false;
+  bool _attachedDestination = false, _destinationExposure = false;
+  Provider<NvmeAttachedNamespaceMoveCoordinator?> get _coordinatorProvider =>
+      _attachedDestination
+      ? nvmePairedNamespaceMoveCoordinatorProvider
+      : nvmeAttachedNamespaceMoveCoordinatorProvider;
   String? _message;
   int _epoch = 0;
   int? get _targetId => RegExp(r'^[1-9][0-9]{0,9}$').hasMatch(_id.text)
@@ -45,6 +50,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
     _owner = null;
     _reviewSession = null;
     _reload = _limitations = _identityRisk = false;
+    _destinationExposure = false;
     _phrase.clear();
   }
 
@@ -76,10 +82,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
       if (!mounted ||
           epoch != _epoch ||
           !identical(session, ref.read(dashboardActiveSessionProvider)) ||
-          !identical(
-            coordinator,
-            ref.read(nvmeAttachedNamespaceMoveCoordinatorProvider),
-          )) {
+          !identical(coordinator, ref.read(_coordinatorProvider))) {
         return;
       }
       setState(() {
@@ -117,10 +120,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
       if (!mounted ||
           epoch != _epoch ||
           !identical(session, ref.read(dashboardActiveSessionProvider)) ||
-          !identical(
-            coordinator,
-            ref.read(nvmeAttachedNamespaceMoveCoordinatorProvider),
-          )) {
+          !identical(coordinator, ref.read(_coordinatorProvider))) {
         coordinator.cancel(review);
         return;
       }
@@ -134,7 +134,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
           epoch == _epoch &&
           identical(session, ref.read(dashboardActiveSessionProvider))) {
         setState(
-          () => _message = 'Review failed. Select a singly attached disabled unlocked ZVOL namespace and a different restricted isolated destination with safe disabled unlocked unique-NSID ZVOL residents. Nothing is enabled or removed. Nothing was sent.',
+          () => _message = 'Review failed. Select a singly attached disabled unlocked ZVOL and a different restricted destination compatible with the selected mode, safe disabled unlocked ZVOL residents and noncolliding NSIDs. Nothing is enabled or removed. Nothing was sent.',
         );
       }
     } finally {
@@ -150,6 +150,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
     final reload = _reload,
         limitations = _limitations,
         identityRisk = _identityRisk;
+    final exposure = _destinationExposure;
     _review = null;
     setState(() {
       _busy = true;
@@ -161,6 +162,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
       acknowledgeReload: reload,
       acknowledgeLimitations: limitations,
       acknowledgeIdentityRisk: identityRisk,
+      acknowledgeDestinationExposure: exposure,
     );
     if (!mounted) return;
     setState(() {
@@ -181,7 +183,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(dashboardActiveSessionProvider);
-    final coordinator = ref.watch(nvmeAttachedNamespaceMoveCoordinatorProvider);
+    final coordinator = ref.watch(_coordinatorProvider);
     if (!identical(session, _session)) {
       _discard();
       _id.clear();
@@ -211,11 +213,37 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
         .where((s) => s.id == _desiredDestination)
         .singleOrNull;
     return TdPanel(
-      title: 'Move a singly attached disabled ZVOL to an isolated subsystem',
-      description: 'Only a disabled unlocked ZVOL in a restricted subsystem behind one disabled TCP/RDMA port, with no other port mapping or host grant and safe disabled residents, is supported. The different destination must be restricted and have no port or host mapping and only safe disabled unlocked ZVOL residents with noncolliding NSIDs. Known public subsystem NQNs must be unique. Only the saved subsystem assignment changes; NSID, port, enablement and backing fields remain unchanged.',
+      title: _attachedDestination
+          ? 'Move a disabled ZVOL between singly attached subsystems'
+          : 'Move a singly attached disabled ZVOL to an isolated subsystem',
+      description: _attachedDestination
+          ? 'Both restricted subsystems must have exactly one disabled unshared TCP/RDMA port, no host grants, and only disabled unlocked unique-NSID ZVOL residents. Destination NSIDs must not collide. Both associations and ports remain unchanged. Disabled saved flags do not prove runtime isolation or prevent future exposure. Only the saved subsystem assignment changes.'
+          : 'Only a disabled unlocked ZVOL in a restricted subsystem behind one disabled TCP/RDMA port, with no other port mapping or host grant and safe disabled residents, is supported. The different destination must be restricted and have no port or host mapping and only safe disabled unlocked ZVOL residents with noncolliding NSIDs. Known public subsystem NQNs must be unique. Only the saved subsystem assignment changes; NSID, port, enablement and backing fields remain unchanged.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Row(
+            children: [
+              Checkbox(
+                key: const Key('nvme-attached-namespace-move-destination-mode'),
+                value: _attachedDestination,
+                onChanged: _busy
+                    ? null
+                    : (value) => setState(() {
+                        _discard();
+                        _candidates = null;
+                        _candidateOwner = null;
+                        _id.clear();
+                        _destinationId.clear();
+                        _message = null;
+                        _attachedDestination = value == true;
+                      }),
+              ),
+              const Expanded(
+                child: Text('Use a singly attached disabled destination'),
+              ),
+            ],
+          ),
           OutlinedButton(
             key: const Key('nvme-attached-namespace-move-discover'),
             onPressed: active ? () => _loadCandidates(coordinator!) : null,
@@ -328,8 +356,10 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
             enabled: active,
             keyboardType: TextInputType.number,
             maxLength: 10,
-            decoration: const InputDecoration(
-              labelText: 'Exact isolated destination subsystem database ID',
+            decoration: InputDecoration(
+              labelText: _attachedDestination
+                  ? 'Exact singly attached destination subsystem database ID'
+                  : 'Exact isolated destination subsystem database ID',
             ),
             onChanged: (_) => setState(_discard),
           ),
@@ -350,6 +380,10 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
               'An operation is in progress or an NVMe change is unverified. Reconnect before editing.',
             ),
           if (review != null) ...[
+            if (review.destinationMapping != null)
+              Text(
+                'Preserved destination association #${review.destinationMapping!.id}, disabled port #${review.destinationPort!.id} ${review.destinationPort!.transport}',
+              ),
             Text('Server: ${review.endpoint}'),
             Text(
               'Namespace #${review.target.id}, preserved NSID ${review.target.nsid}; subsystem #${review.source.id} NQN ${review.source.subnqn} → #${review.destination.id} NQN ${review.destination.subnqn}',
@@ -424,6 +458,25 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
               ],
             ),
             const Text('Confirmation phrase (copy or type exactly):'),
+            if (review.destinationMapping != null)
+              Row(
+                children: [
+                  Checkbox(
+                    key: const Key('nvme-attached-namespace-move-exposure'),
+                    value: _destinationExposure,
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(
+                            () => _destinationExposure = value == true,
+                          ),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'I accept destination discovery/access and future-exposure risks. Both saved ports remain disabled; runtime isolation, client reconfiguration and backing health are not proven.',
+                    ),
+                  ),
+                ],
+              ),
             SelectableText(
               review.confirmation,
               key: const Key('nvme-attached-namespace-move-confirmation'),
@@ -446,6 +499,8 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
                       _reload &&
                       _limitations &&
                       _identityRisk &&
+                      (review.destinationMapping == null ||
+                          _destinationExposure) &&
                       _phrase.text == review.confirmation
                   ? () => _submit(coordinator!, review)
                   : null,

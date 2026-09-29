@@ -213,7 +213,15 @@ class _Fake
 }
 
 class _Harness {
-  _Harness() {
+  _Harness({this.paired = false}) {
+    if (paired) {
+      api.ports.add({'id': 5, 'addr_trtype': 'RDMA', 'enabled': false});
+      api.mappings.add({
+        'id': 12,
+        'port': {'id': 5},
+        'subsys': {'id': 4},
+      });
+    }
     session = AuthenticatedSession(
       profileId: 'fixture',
       repository: api,
@@ -225,11 +233,13 @@ class _Harness {
       api: api,
       hostsApi: api,
       lock: lock,
+      requireAttachedDestination: paired,
       isCurrent: () => current,
       now: () => now,
     );
   }
   final api = _Fake(), lock = ServerOperationLock();
+  final bool paired;
   late final AuthenticatedSession session;
   late final NvmeAttachedNamespaceMoveCoordinator coordinator;
   bool current = true;
@@ -242,12 +252,14 @@ class _Harness {
     bool reload = true,
     bool limitations = true,
     bool identity = true,
+    bool exposure = true,
   }) => coordinator.execute(
     r,
     phrase ?? r.confirmation,
     acknowledgeReload: reload,
     acknowledgeLimitations: limitations,
     acknowledgeIdentityRisk: identity,
+    acknowledgeDestinationExposure: exposure,
   );
 }
 
@@ -275,13 +287,22 @@ Future<void> _tap(WidgetTester tester, String suffix) async {
   await tester.pumpAndSettle();
 }
 
-Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
+Future<ProviderContainer> _mount(
+  WidgetTester tester,
+  _Harness h, {
+  bool dark = true,
+}) async {
   final c = ProviderContainer(
     overrides: [
       dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
-      nvmeAttachedNamespaceMoveCoordinatorProvider.overrideWithValue(
-        h.coordinator,
-      ),
+      if (h.paired)
+        nvmePairedNamespaceMoveCoordinatorProvider.overrideWithValue(
+          h.coordinator,
+        )
+      else
+        nvmeAttachedNamespaceMoveCoordinatorProvider.overrideWithValue(
+          h.coordinator,
+        ),
     ],
   );
   addTearDown(c.dispose);
@@ -290,13 +311,23 @@ Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
     UncontrolledProviderScope(
       container: c,
       child: MaterialApp(
-        theme: TrueRAIDTheme.dark(),
+        theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+        builder: h.paired
+            ? (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: const TextScaler.linear(2),
+                  viewInsets: const EdgeInsets.only(bottom: 200),
+                ),
+                child: child!,
+              )
+            : null,
         home: const Scaffold(
           body: SingleChildScrollView(child: NvmeAttachedNamespaceMoveEditor()),
         ),
       ),
     ),
   );
+  if (h.paired) await _tap(tester, 'destination-mode');
   await tester.enterText(
     find.byKey(const Key('nvme-attached-namespace-move-id')),
     '7',
@@ -310,6 +341,320 @@ Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
 }
 
 void main() {
+  testWidgets('mode changes clear hints IDs review and all four consents', (
+    tester,
+  ) async {
+    final h = _Harness(paired: true);
+    await _mount(tester, h);
+    await _tap(tester, 'discover');
+    await tester.enterText(
+      find.byKey(const Key('nvme-attached-namespace-move-id')),
+      '7',
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-attached-namespace-move-new')),
+      '4',
+    );
+    await tester.pumpAndSettle();
+    await _tap(tester, 'review');
+    for (final consent in ['reload', 'limitations', 'identity', 'exposure']) {
+      await _tap(tester, consent);
+    }
+    await _tap(tester, 'destination-mode');
+    expect(
+      find.byKey(const Key('nvme-attached-namespace-move-source-choice')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('nvme-attached-namespace-move-submit')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('nvme-attached-namespace-move-id')),
+          )
+          .controller!
+          .text,
+      isEmpty,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('nvme-attached-namespace-move-new')),
+          )
+          .controller!
+          .text,
+      isEmpty,
+    );
+    await _tap(tester, 'destination-mode');
+    await tester.enterText(
+      find.byKey(const Key('nvme-attached-namespace-move-id')),
+      '7',
+    );
+    await tester.enterText(
+      find.byKey(const Key('nvme-attached-namespace-move-new')),
+      '4',
+    );
+    await tester.pumpAndSettle();
+    await _tap(tester, 'review');
+    for (final consent in ['reload', 'limitations', 'identity', 'exposure']) {
+      expect(
+        tester
+            .widget<Checkbox>(
+              find.byKey(Key('nvme-attached-namespace-move-$consent')),
+            )
+            .value,
+        false,
+      );
+    }
+    expect(h.writes, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final populated in [false, true]) {
+      for (final onlyTarget in [false, true]) {
+        test(
+          'paired move $transport populated=$populated onlyTarget=$onlyTarget',
+          () async {
+            final h = _Harness(paired: true);
+            h.api.ports.last['addr_trtype'] = transport;
+            h.api.includeOther = !onlyTarget;
+            final savedNsid = onlyTarget ? 4294967294 : 1;
+            h.api.namespace['nsid'] = savedNsid;
+            if (populated) h.api.residents.add(_resident(13, 3));
+            final beforePorts = h.api.ports
+                .map(Map<String, Object?>.of)
+                .toList();
+            final beforeMappings = h.api.mappings
+                .map(Map<String, Object?>.of)
+                .toList();
+            final choices = await h.coordinator.loadCandidates();
+            expect(choices.first.destinations.map((s) => s.id), [4]);
+            final r = await h.coordinator.prepare(7, destinationId: 4);
+            expect(r.destinationMapping!.id, 12);
+            expect(r.destinationPort!.id, 5);
+            expect(
+              r.confirmation,
+              endsWith('KEEP DESTINATION ASSOCIATION 12 PORT 5'),
+            );
+            expect(
+              (await h.execute(r)).outcome,
+              NvmeAttachedNamespaceMoveOutcome.completed,
+            );
+            expect(h.api.ports, beforePorts);
+            expect(h.api.mappings, beforeMappings);
+            expect(h.api.namespace['nsid'], savedNsid);
+            expect(h.api.namespace['enabled'], false);
+            expect(
+              h.api.calls
+                  .singleWhere((r) => r.method.name == 'nvmet.namespace.update')
+                  .arguments,
+              [
+                7,
+                {'subsys_id': 4},
+              ],
+            );
+            expect(h.writes, 1);
+          },
+        );
+      }
+    }
+  }
+  test('paired mode never accepts an isolated destination or another coordinator review', () async {
+    final h = _Harness(paired: true);
+    final other = _Harness();
+    final r = await other.coordinator.prepare(7, destinationId: 4);
+    expect(
+      (await h.execute(r)).outcome,
+      NvmeAttachedNamespaceMoveOutcome.rejected,
+    );
+    h.api.mappings.removeLast();
+    expect(await h.coordinator.loadCandidates(), isEmpty);
+    await expectLater(
+      h.coordinator.prepare(7, destinationId: 4),
+      throwsStateError,
+    );
+    expect(h.writes, 0);
+  });
+  for (final consent in ['reload', 'limitations', 'identity', 'exposure']) {
+    test('paired move requires $consent independently', () async {
+      final h = _Harness(paired: true);
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      expect(
+        (await h.execute(
+          r,
+          reload: consent != 'reload',
+          limitations: consent != 'limitations',
+          identity: consent != 'identity',
+          exposure: consent != 'exposure',
+        )).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    });
+  }
+  final pairedUnsafe = <String, void Function(_Fake)>{
+    'enabled destination port': (a) => a.ports.last['enabled'] = true,
+    'FC destination port': (a) => a.ports.last['addr_trtype'] = 'FC',
+    'destination address drift': (a) => a.ports.last['max_queue_size'] = 16,
+    'destination mapping ID': (a) => a.mappings.last['id'] = 14,
+    'destination mapping removed': (a) => a.mappings.removeLast(),
+    'destination NQN': (a) =>
+        a.destination['subnqn'] = 'nqn.2026-09.example:changed',
+    'destination access': (a) => a.destination['allow_any_host'] = true,
+    'destination host grant': (a) => a.hostMappings.add({
+      'id': 16,
+      'host': {'id': 9},
+      'subsys': {'id': 4},
+    }),
+    'destination collision': (a) => a.residents.add(_resident(15, 1)),
+    'destination FILE': (a) =>
+        a.residents.add({..._resident(15, 3), 'device_type': 'FILE'}),
+    'destination locked': (a) =>
+        a.residents.add({..._resident(15, 3), 'locked': true}),
+    'destination enabled': (a) =>
+        a.residents.add({..._resident(15, 3), 'enabled': true}),
+    'shared destination port': (a) => a.mappings.first['port'] = {'id': 5},
+    'extra destination mapping': (a) => a.mappings.add({
+      'id': 16,
+      'port': {'id': 3},
+      'subsys': {'id': 4},
+    }),
+  };
+  for (final entry in pairedUnsafe.entries) {
+    test('paired preflight rejects fresh ${entry.key}', () async {
+      final h = _Harness(paired: true);
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      entry.value(h.api);
+      expect(
+        (await h.execute(r)).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    });
+    test('paired readback ${entry.key} fences without retry', () async {
+      final h = _Harness(paired: true);
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      h.api.onDispatch = () => entry.value(h.api);
+      expect(
+        (await h.execute(r)).outcome,
+        NvmeAttachedNamespaceMoveOutcome.unknown,
+      );
+      expect(h.coordinator.locked, true);
+      expect(
+        (await h.execute(r)).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      expect(h.writes, 1);
+    });
+  }
+  for (final reason in [
+    'expiry',
+    'clock backwards',
+    'session',
+    'dispose',
+    'cancel',
+    'phrase',
+    'lock',
+  ]) {
+    test('paired review $reason cannot dispatch', () async {
+      final h = _Harness(paired: true);
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      Object? owner;
+      if (reason == 'expiry') h.now = h.now.add(const Duration(minutes: 5));
+      if (reason == 'clock backwards') {
+        h.now = h.now.subtract(const Duration(seconds: 1));
+      }
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      if (reason == 'cancel') h.coordinator.cancel(r);
+      if (reason == 'lock') owner = h.lock.acquire();
+      expect(
+        (await h.execute(
+          r,
+          phrase: reason == 'phrase' ? 'WRONG' : null,
+        )).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      if (owner != null) h.lock.release(owner);
+      expect(h.writes, 0);
+    });
+  }
+  for (final dark in [false, true]) {
+    for (final width in [320.0, 430.0]) {
+      for (final populated in [false, true]) {
+        testWidgets(
+          'paired selectors $width dark=$dark populated=$populated at 200% keyboard',
+          (tester) async {
+            final h = _Harness(paired: true);
+            if (populated) h.api.residents.add(_resident(13, 3));
+            tester.view.physicalSize = Size(width, 960);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.resetPhysicalSize);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            await _mount(tester, h, dark: dark);
+            expect(h.api.calls, isEmpty);
+            await _tap(tester, 'discover');
+            await _tap(tester, 'source-choice');
+            await tester.tap(find.text('#7 · NSID 1 · unused').last);
+            await tester.pumpAndSettle();
+            await _tap(tester, 'destination-choice');
+            await tester.tap(find.text('#4 · destination').last);
+            await tester.pumpAndSettle();
+            await _tap(tester, 'review');
+            final phrase = tester
+                .widget<SelectableText>(
+                  find.byKey(
+                    const Key('nvme-attached-namespace-move-confirmation'),
+                  ),
+                )
+                .data!;
+            expect(phrase, endsWith('KEEP DESTINATION ASSOCIATION 12 PORT 5'));
+            for (final consent in ['reload', 'limitations', 'identity']) {
+              await _tap(tester, consent);
+            }
+            await tester.ensureVisible(
+              find.byKey(const Key('nvme-attached-namespace-move-phrase')),
+            );
+            await tester.enterText(
+              find.byKey(const Key('nvme-attached-namespace-move-phrase')),
+              phrase,
+            );
+            await tester.pumpAndSettle();
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.byKey(
+                      const Key('nvme-attached-namespace-move-submit'),
+                    ),
+                  )
+                  .onPressed,
+              isNull,
+            );
+            await _tap(tester, 'exposure');
+            await _tap(tester, 'submit');
+            expect(h.writes, 1);
+            await _tap(tester, 'destination-mode');
+            expect(
+              find.byKey(
+                const Key('nvme-attached-namespace-move-source-choice'),
+              ),
+              findsNothing,
+            );
+            expect(
+              find.byKey(const Key('nvme-attached-namespace-move-submit')),
+              findsNothing,
+            );
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
+    }
+  }
   test(
     'destination NSID collision is filtered independently per source',
     () async {

@@ -32,6 +32,29 @@ final nvmeAttachedNamespaceMoveCoordinatorProvider =
 
 enum NvmeAttachedNamespaceMoveOutcome { completed, rejected, unknown }
 
+final nvmePairedNamespaceMoveCoordinatorProvider =
+    Provider.autoDispose<NvmeAttachedNamespaceMoveCoordinator?>((ref) {
+      final session = ref.watch(dashboardActiveSessionProvider);
+      final api = session?.repository;
+      if (session?.endpoint == null ||
+          api is! AuthenticatedAdminSession ||
+          api is! AuthenticatedNvmeHostSession) {
+        return null;
+      }
+      final coordinator = NvmeAttachedNamespaceMoveCoordinator(
+        session: session!,
+        api: api as AuthenticatedAdminSession,
+        hostsApi: api as AuthenticatedNvmeHostSession,
+        lock: ref.read(serverOperationLockProvider),
+        requireAttachedDestination: true,
+        isCurrent: () =>
+            ref.mounted &&
+            identical(session, ref.read(dashboardActiveSessionProvider)),
+      );
+      ref.onDispose(coordinator.dispose);
+      return coordinator;
+    });
+
 final class NvmeAttachedNamespaceMoveResult {
   const NvmeAttachedNamespaceMoveResult(this.outcome, this.message);
   final NvmeAttachedNamespaceMoveOutcome outcome;
@@ -48,6 +71,8 @@ final class NvmeAttachedNamespaceMoveReview {
     this.sourceNamespaces,
     this.mapping,
     this.port,
+    this.destinationMapping,
+    this.destinationPort,
     this._proof,
     this.issuedAt,
   );
@@ -57,10 +82,13 @@ final class NvmeAttachedNamespaceMoveReview {
   final List<NvmeNamespace> destinationNamespaces, sourceNamespaces;
   final NvmePortMapping mapping;
   final NvmePort port;
+  final NvmePortMapping? destinationMapping;
+  final NvmePort? destinationPort;
   final String _proof;
   final DateTime issuedAt;
   String get confirmation =>
-      'MOVE ATTACHED NVME NAMESPACE ${target.id} FROM SUBSYSTEM ${source.id} NQN ${source.subnqn} TO ${destination.id} NQN ${destination.subnqn} KEEP NSID ${target.nsid} KEEP ASSOCIATION ${mapping.id} PORT ${port.id}';
+      'MOVE ATTACHED NVME NAMESPACE ${target.id} FROM SUBSYSTEM ${source.id} NQN ${source.subnqn} TO ${destination.id} NQN ${destination.subnqn} KEEP NSID ${target.nsid} KEEP ASSOCIATION ${mapping.id} PORT ${port.id}'
+      '${destinationMapping == null ? '' : ' KEEP DESTINATION ASSOCIATION ${destinationMapping!.id} PORT ${destinationPort!.id}'}';
 }
 
 /// A public discovery hint, never authority to dispatch a change.
@@ -84,6 +112,7 @@ final class NvmeAttachedNamespaceMoveCoordinator {
     required this.hostsApi,
     required this.lock,
     required this.isCurrent,
+    this.requireAttachedDestination = false,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
   final AuthenticatedSession session;
@@ -91,6 +120,7 @@ final class NvmeAttachedNamespaceMoveCoordinator {
   final AuthenticatedNvmeHostSession hostsApi;
   final ServerOperationLock lock;
   final bool Function() isCurrent;
+  final bool requireAttachedDestination;
   final DateTime Function() _now;
   final _issued = <NvmeAttachedNamespaceMoveReview>{};
   bool _busy = false, _closed = false;
@@ -215,14 +245,16 @@ final class NvmeAttachedNamespaceMoveCoordinator {
         source.subnqn == destination.subnqn ||
         source.allowAnyHost ||
         destination.allowAnyHost ||
-        snapshot.topology.portMappings.any(
-          (m) => m.subsystemId == destinationId,
-        ) ||
+        (!requireAttachedDestination &&
+            snapshot.topology.portMappings.any(
+              (m) => m.subsystemId == destinationId,
+            )) ||
         snapshot.hosts.mappings.any((m) => m.subsystemId == destinationId)) {
       throw StateError(
-        'Select a different restricted isolated destination with a known distinct NQN.',
+        'Select a different restricted destination compatible with the selected mode and a known distinct NQN.',
       );
     }
+    if (requireAttachedDestination) _source(snapshot, destinationId);
     final namespaces = snapshot.topology.namespaces
         .where((n) => n.subsystemId == destinationId && n.id != movedId)
         .toList();
@@ -357,6 +389,20 @@ final class NvmeAttachedNamespaceMoveCoordinator {
                       .portId,
             )
             .single,
+        requireAttachedDestination
+            ? snapshot.topology.portMappings.singleWhere(
+                (m) => m.subsystemId == destinationId,
+              )
+            : null,
+        requireAttachedDestination
+            ? snapshot.topology.ports.singleWhere(
+                (p) =>
+                    p.id ==
+                    snapshot.topology.portMappings
+                        .singleWhere((m) => m.subsystemId == destinationId)
+                        .portId,
+              )
+            : null,
         snapshot.proof(),
         _now().toUtc(),
       );
@@ -378,6 +424,7 @@ final class NvmeAttachedNamespaceMoveCoordinator {
     required bool acknowledgeReload,
     required bool acknowledgeLimitations,
     required bool acknowledgeIdentityRisk,
+    bool acknowledgeDestinationExposure = false,
   }) async {
     final issued = _issued.remove(review);
     if (!issued ||
@@ -389,7 +436,9 @@ final class NvmeAttachedNamespaceMoveCoordinator {
         phrase != review.confirmation ||
         !acknowledgeReload ||
         !acknowledgeLimitations ||
-        !acknowledgeIdentityRisk) {
+        !acknowledgeIdentityRisk ||
+        (review.destinationMapping != null &&
+            !acknowledgeDestinationExposure)) {
       return _rejected();
     }
     final owner = lock.acquire();
