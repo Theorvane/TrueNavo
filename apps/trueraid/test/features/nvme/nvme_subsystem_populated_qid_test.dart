@@ -231,6 +231,9 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          nvmeSubsystemPopulatedQidCoordinatorProvider.overrideWithValue(
+            h.coordinator,
+          ),
         ],
       );
       addTearDown(container.dispose);
@@ -584,6 +587,9 @@ void main() {
               overrides: [
                 dashboardActiveSessionProvider.overrideWith(
                   (ref) => ref.watch(_active),
+                ),
+                nvmeSubsystemPopulatedQidCoordinatorProvider.overrideWithValue(
+                  h.coordinator,
                 ),
               ],
             );

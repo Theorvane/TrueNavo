@@ -589,6 +589,9 @@ void main() {
             dashboardActiveSessionProvider.overrideWith(
               (ref) => ref.watch(_active),
             ),
+            nvmeAssociatedPortEnabledCoordinatorProvider.overrideWithValue(
+              h.coordinator,
+            ),
           ],
         );
         addTearDown(container.dispose);

@@ -390,6 +390,9 @@ void main() {
               dashboardActiveSessionProvider.overrideWith(
                 (ref) => ref.watch(_active),
               ),
+              nvmeNamespaceNsidCoordinatorProvider.overrideWithValue(
+                h.coordinator,
+              ),
             ],
           );
           addTearDown(container.dispose);
