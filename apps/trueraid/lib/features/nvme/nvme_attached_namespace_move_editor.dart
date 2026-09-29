@@ -26,9 +26,12 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
       _limitations = false,
       _identityRisk = false;
   bool _attachedDestination = false, _destinationExposure = false;
+  bool _isolatedSource = false;
   Provider<NvmeAttachedNamespaceMoveCoordinator?> get _coordinatorProvider =>
       _attachedDestination
-      ? nvmePairedNamespaceMoveCoordinatorProvider
+      ? (_isolatedSource
+            ? nvmeIsolatedSourceAttachedDestinationMoveCoordinatorProvider
+            : nvmePairedNamespaceMoveCoordinatorProvider)
       : nvmeAttachedNamespaceMoveCoordinatorProvider;
   String? _message;
   int _epoch = 0;
@@ -134,7 +137,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
           epoch == _epoch &&
           identical(session, ref.read(dashboardActiveSessionProvider))) {
         setState(
-          () => _message = 'Review failed. Select a singly attached disabled unlocked ZVOL and a different restricted destination compatible with the selected mode, safe disabled unlocked ZVOL residents and noncolliding NSIDs. Nothing is enabled or removed. Nothing was sent.',
+          () => _message = 'Review failed. Select a disabled unlocked ZVOL source and a different restricted destination compatible with the selected connection mode, safe disabled unlocked ZVOL residents and noncolliding NSIDs. Nothing is enabled or removed. Nothing was sent.',
         );
       }
     } finally {
@@ -214,10 +217,14 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
         .singleOrNull;
     return TdPanel(
       title: _attachedDestination
-          ? 'Move a disabled ZVOL between singly attached subsystems'
+          ? (_isolatedSource
+                ? 'Move an isolated disabled ZVOL to a singly attached subsystem'
+                : 'Move a disabled ZVOL between singly attached subsystems')
           : 'Move a singly attached disabled ZVOL to an isolated subsystem',
       description: _attachedDestination
-          ? 'Both restricted subsystems must have exactly one disabled unshared TCP/RDMA port, no host grants, and only disabled unlocked unique-NSID ZVOL residents. Destination NSIDs must not collide. Both associations and ports remain unchanged. Disabled saved flags do not prove runtime isolation or prevent future exposure. Only the saved subsystem assignment changes.'
+          ? (_isolatedSource
+                ? 'The restricted source must have no port or host mapping. The restricted destination must have exactly one disabled unshared TCP/RDMA port and no host grant. Both may contain only disabled unlocked unique-NSID ZVOLs, without destination NSID collisions. No port or association fields are submitted; runtime access, addresses and hidden backing identity are not attested.'
+                : 'Both restricted subsystems must have exactly one disabled unshared TCP/RDMA port, no host grants, and only disabled unlocked unique-NSID ZVOL residents. Destination NSIDs must not collide. Both associations and ports remain unchanged. Disabled saved flags do not prove runtime isolation or prevent future exposure. Only the saved subsystem assignment changes.')
           : 'Only a disabled unlocked ZVOL in a restricted subsystem behind one disabled TCP/RDMA port, with no other port mapping or host grant and safe disabled residents, is supported. The different destination must be restricted and have no port or host mapping and only safe disabled unlocked ZVOL residents with noncolliding NSIDs. Known public subsystem NQNs must be unique. Only the saved subsystem assignment changes; NSID, port, enablement and backing fields remain unchanged.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -237,6 +244,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
                         _destinationId.clear();
                         _message = null;
                         _attachedDestination = value == true;
+                        _isolatedSource = false;
                       }),
               ),
               const Expanded(
@@ -244,6 +252,33 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
               ),
             ],
           ),
+          if (_attachedDestination)
+            Row(
+              children: [
+                Checkbox(
+                  key: const Key(
+                    'nvme-attached-namespace-move-isolated-source',
+                  ),
+                  value: _isolatedSource,
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() {
+                          _discard();
+                          _candidates = null;
+                          _candidateOwner = null;
+                          _id.clear();
+                          _destinationId.clear();
+                          _message = null;
+                          _isolatedSource = value == true;
+                        }),
+                ),
+                const Expanded(
+                  child: Text(
+                    'Use an isolated source without a port association',
+                  ),
+                ),
+              ],
+            ),
           OutlinedButton(
             key: const Key('nvme-attached-namespace-move-discover'),
             onPressed: active ? () => _loadCandidates(coordinator!) : null,
@@ -389,7 +424,9 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
               'Namespace #${review.target.id}, preserved NSID ${review.target.nsid}; subsystem #${review.source.id} NQN ${review.source.subnqn} → #${review.destination.id} NQN ${review.destination.subnqn}',
             ),
             Text(
-              'Preserved association #${review.mapping.id}, disabled port #${review.port.id} ${review.port.transport}; subsystem ${review.source.name}; NQN ${review.source.subnqn}',
+              review.mapping == null
+                  ? 'Source subsystem #${review.source.id} has no port association.'
+                  : 'Preserved association #${review.mapping!.id}, disabled port #${review.port!.id} ${review.port!.transport}; subsystem ${review.source.name}; NQN ${review.source.subnqn}',
             ),
             Text(
               'Unchanged neighboring namespaces: ${review.sourceNamespaces.length}',
@@ -452,7 +489,7 @@ class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
                 ),
                 const Expanded(
                   child: Text(
-                    'I understand moving a namespace changes its subsystem NQN context and may disrupt initiator discovery or access. The original disabled port association remains unchanged; no port or namespace is enabled. Disabled saved flags do not prove runtime quiescence or isolation; initiator compatibility and discovery are not tested.',
+                    'I understand moving a namespace changes its subsystem NQN context and may disrupt discovery or access. No port or namespace is enabled; reviewed associations are preserved. Saved flags and absent grants do not prove runtime isolation or actual client access.',
                   ),
                 ),
               ],

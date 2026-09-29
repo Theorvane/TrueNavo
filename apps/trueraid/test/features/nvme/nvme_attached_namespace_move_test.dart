@@ -213,8 +213,8 @@ class _Fake
 }
 
 class _Harness {
-  _Harness({this.paired = false}) {
-    if (paired) {
+  _Harness({this.paired = false, this.isolatedSource = false}) {
+    if (paired || isolatedSource) {
       api.ports.add({'id': 5, 'addr_trtype': 'RDMA', 'enabled': false});
       api.mappings.add({
         'id': 12,
@@ -222,6 +222,7 @@ class _Harness {
         'subsys': {'id': 4},
       });
     }
+    if (isolatedSource) api.mappings.removeAt(0);
     session = AuthenticatedSession(
       profileId: 'fixture',
       repository: api,
@@ -233,13 +234,15 @@ class _Harness {
       api: api,
       hostsApi: api,
       lock: lock,
-      requireAttachedDestination: paired,
+      requireAttachedDestination: paired || isolatedSource,
+      requireIsolatedSource: isolatedSource,
       isCurrent: () => current,
       now: () => now,
     );
   }
   final api = _Fake(), lock = ServerOperationLock();
   final bool paired;
+  final bool isolatedSource;
   late final AuthenticatedSession session;
   late final NvmeAttachedNamespaceMoveCoordinator coordinator;
   bool current = true;
@@ -295,7 +298,10 @@ Future<ProviderContainer> _mount(
   final c = ProviderContainer(
     overrides: [
       dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
-      if (h.paired)
+      if (h.isolatedSource)
+        nvmeIsolatedSourceAttachedDestinationMoveCoordinatorProvider
+            .overrideWithValue(h.coordinator)
+      else if (h.paired)
         nvmePairedNamespaceMoveCoordinatorProvider.overrideWithValue(
           h.coordinator,
         )
@@ -312,7 +318,7 @@ Future<ProviderContainer> _mount(
       container: c,
       child: MaterialApp(
         theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
-        builder: h.paired
+        builder: (h.paired || h.isolatedSource)
             ? (context, child) => MediaQuery(
                 data: MediaQuery.of(context).copyWith(
                   textScaler: const TextScaler.linear(2),
@@ -327,7 +333,8 @@ Future<ProviderContainer> _mount(
       ),
     ),
   );
-  if (h.paired) await _tap(tester, 'destination-mode');
+  if (h.paired || h.isolatedSource) await _tap(tester, 'destination-mode');
+  if (h.isolatedSource) await _tap(tester, 'isolated-source');
   await tester.enterText(
     find.byKey(const Key('nvme-attached-namespace-move-id')),
     '7',
@@ -341,6 +348,347 @@ Future<ProviderContainer> _mount(
 }
 
 void main() {
+  testWidgets(
+    'isolated source option clears IDs review hints and four consents',
+    (tester) async {
+      final h = _Harness(isolatedSource: true);
+      await _mount(tester, h);
+      await _tap(tester, 'discover');
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-move-id')),
+        '7',
+      );
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-move-new')),
+        '4',
+      );
+      await tester.pumpAndSettle();
+      await _tap(tester, 'review');
+      for (final consent in ['reload', 'limitations', 'identity', 'exposure']) {
+        await _tap(tester, consent);
+      }
+      await _tap(tester, 'isolated-source');
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-move-submit')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-move-source-choice')),
+        findsNothing,
+      );
+      for (final suffix in ['id', 'new']) {
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(Key('nvme-attached-namespace-move-$suffix')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+      }
+      await _tap(tester, 'isolated-source');
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-move-id')),
+        '7',
+      );
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-move-new')),
+        '4',
+      );
+      await tester.pumpAndSettle();
+      await _tap(tester, 'review');
+      for (final consent in ['reload', 'limitations', 'identity', 'exposure']) {
+        expect(
+          tester
+              .widget<Checkbox>(
+                find.byKey(Key('nvme-attached-namespace-move-$consent')),
+              )
+              .value,
+          false,
+        );
+      }
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final onlyTarget in [false, true]) {
+      for (final populated in [false, true]) {
+        for (final nsid in [1, 4294967294]) {
+          test(
+            'isolated to attached $transport onlyTarget=$onlyTarget populated=$populated NSID=$nsid',
+            () async {
+              final h = _Harness(isolatedSource: true);
+              h.api.ports.last['addr_trtype'] = transport;
+              h.api.includeOther = !onlyTarget;
+              h.api.namespace['nsid'] = nsid;
+              if (populated) h.api.residents.add(_resident(13, 3));
+              final beforeMappings = h.api.mappings
+                  .map(Map<String, Object?>.of)
+                  .toList();
+              final choices = await h.coordinator.loadCandidates();
+              expect(
+                choices.map((c) => c.target.id),
+                onlyTarget ? [7] : [7, 8],
+              );
+              final r = await h.coordinator.prepare(7, destinationId: 4);
+              expect(r.mapping, isNull);
+              expect(r.port, isNull);
+              expect(r.destinationMapping!.id, 12);
+              expect(r.destinationPort!.id, 5);
+              expect(
+                r.confirmation,
+                startsWith('MOVE ISOLATED NVME NAMESPACE 7'),
+              );
+              expect(
+                r.confirmation,
+                endsWith('KEEP DESTINATION ASSOCIATION 12 PORT 5'),
+              );
+              expect(
+                r.sourceNamespaces.map((n) => n.id),
+                onlyTarget ? isEmpty : [8],
+              );
+              expect(
+                () => r.destinationNamespaces.clear(),
+                throwsUnsupportedError,
+              );
+              expect(
+                (await h.execute(r)).outcome,
+                NvmeAttachedNamespaceMoveOutcome.completed,
+              );
+              expect(h.api.namespace['nsid'], nsid);
+              expect(h.api.namespace['enabled'], false);
+              expect(h.api.mappings, beforeMappings);
+              expect(
+                h.api.calls
+                    .singleWhere(
+                      (r) => r.method.name == 'nvmet.namespace.update',
+                    )
+                    .arguments,
+                [
+                  7,
+                  {'subsys_id': 4},
+                ],
+              );
+              expect(h.writes, 1);
+            },
+          );
+        }
+      }
+    }
+  }
+  test(
+    'isolated-source policy cannot accidentally accept an isolated destination',
+    () async {
+      final h = _Harness(isolatedSource: true);
+      h.api.mappings.clear();
+      expect(await h.coordinator.loadCandidates(), isEmpty);
+      await expectLater(
+        h.coordinator.prepare(7, destinationId: 4),
+        throwsStateError,
+      );
+      final invalid = NvmeAttachedNamespaceMoveCoordinator(
+        session: h.session,
+        api: h.api,
+        hostsApi: h.api,
+        lock: h.lock,
+        isCurrent: () => true,
+        requireIsolatedSource: true,
+      );
+      expect(invalid.available, false);
+      await expectLater(invalid.loadCandidates(), throwsStateError);
+      expect(h.writes, 0);
+    },
+  );
+  for (final consent in ['reload', 'limitations', 'identity', 'exposure']) {
+    test('isolated-source move requires $consent independently', () async {
+      final h = _Harness(isolatedSource: true);
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      expect(
+        (await h.execute(
+          r,
+          reload: consent != 'reload',
+          limitations: consent != 'limitations',
+          identity: consent != 'identity',
+          exposure: consent != 'exposure',
+        )).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    });
+  }
+  final isolatedSourceUnsafe = <String, void Function(_Fake)>{
+    'source association': (a) => a.mappings.add({
+      'id': 16,
+      'port': {'id': 3},
+      'subsys': {'id': 2},
+    }),
+    'source host grant': (a) => a.hostMappings.add({
+      'id': 16,
+      'host': {'id': 9},
+      'subsys': {'id': 2},
+    }),
+    'source unrestricted': (a) => a.subsystem['allow_any_host'] = true,
+    'source FILE neighbor': (a) => a.other['device_type'] = 'FILE',
+    'source enabled neighbor': (a) => a.other['enabled'] = true,
+    'source locked neighbor': (a) => a.other['locked'] = true,
+    'source NSID collision': (a) => a.other['nsid'] = 1,
+    'source NQN collision': (a) =>
+        a.subsystem['subnqn'] = a.destination['subnqn'],
+  };
+  for (final entry in isolatedSourceUnsafe.entries) {
+    test(
+      'isolated-source unsafe ${entry.key} rejects discovery and prepare',
+      () async {
+        final h = _Harness(isolatedSource: true);
+        entry.value(h.api);
+        expect(await h.coordinator.loadCandidates(), isEmpty);
+        await expectLater(
+          h.coordinator.prepare(7, destinationId: 4),
+          throwsStateError,
+        );
+        expect(h.writes, 0);
+      },
+    );
+    test(
+      'isolated-source fresh ${entry.key} rejects before dispatch',
+      () async {
+        final h = _Harness(isolatedSource: true);
+        final r = await h.coordinator.prepare(7, destinationId: 4);
+        entry.value(h.api);
+        expect(
+          (await h.execute(r)).outcome,
+          NvmeAttachedNamespaceMoveOutcome.rejected,
+        );
+        expect(h.writes, 0);
+      },
+    );
+    test(
+      'isolated-source readback ${entry.key} fences original session',
+      () async {
+        final h = _Harness(isolatedSource: true);
+        final r = await h.coordinator.prepare(7, destinationId: 4);
+        h.api.onDispatch = () => entry.value(h.api);
+        expect(
+          (await h.execute(r)).outcome,
+          NvmeAttachedNamespaceMoveOutcome.unknown,
+        );
+        expect(h.coordinator.locked, true);
+        expect(
+          (await h.execute(r)).outcome,
+          NvmeAttachedNamespaceMoveOutcome.rejected,
+        );
+        expect(h.writes, 1);
+      },
+    );
+  }
+  for (final reason in [
+    'expiry',
+    'backwards clock',
+    'session',
+    'dispose',
+    'cancel',
+    'lock',
+  ]) {
+    test('isolated-source $reason cannot dispatch', () async {
+      final h = _Harness(isolatedSource: true);
+      final r = await h.coordinator.prepare(7, destinationId: 4);
+      Object? owner;
+      if (reason == 'expiry') h.now = h.now.add(const Duration(minutes: 5));
+      if (reason == 'backwards clock') {
+        h.now = h.now.subtract(const Duration(seconds: 1));
+      }
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      if (reason == 'cancel') h.coordinator.cancel(r);
+      if (reason == 'lock') owner = h.lock.acquire();
+      expect(
+        (await h.execute(r)).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      if (owner != null) h.lock.release(owner);
+      expect(h.writes, 0);
+    });
+  }
+  for (final dark in [false, true]) {
+    for (final width in [320.0, 430.0]) {
+      for (final populated in [false, true]) {
+        testWidgets(
+          'isolated to attached selectors $width dark=$dark populated=$populated 200% keyboard',
+          (tester) async {
+            final h = _Harness(isolatedSource: true);
+            if (populated) h.api.residents.add(_resident(13, 3));
+            tester.view.physicalSize = Size(width, 960);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.resetPhysicalSize);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            await _mount(tester, h, dark: dark);
+            expect(h.api.calls, isEmpty);
+            await _tap(tester, 'discover');
+            await _tap(tester, 'source-choice');
+            await tester.tap(find.text('#7 · NSID 1 · unused').last);
+            await tester.pumpAndSettle();
+            await _tap(tester, 'destination-choice');
+            await tester.tap(find.text('#4 · destination').last);
+            await tester.pumpAndSettle();
+            await _tap(tester, 'review');
+            expect(
+              find.text('Source subsystem #2 has no port association.'),
+              findsOneWidget,
+            );
+            final phrase = tester
+                .widget<SelectableText>(
+                  find.byKey(
+                    const Key('nvme-attached-namespace-move-confirmation'),
+                  ),
+                )
+                .data!;
+            expect(phrase, startsWith('MOVE ISOLATED NVME NAMESPACE 7'));
+            for (final consent in ['reload', 'limitations', 'identity']) {
+              await _tap(tester, consent);
+            }
+            await tester.ensureVisible(
+              find.byKey(const Key('nvme-attached-namespace-move-phrase')),
+            );
+            await tester.enterText(
+              find.byKey(const Key('nvme-attached-namespace-move-phrase')),
+              phrase,
+            );
+            await tester.pumpAndSettle();
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.byKey(
+                      const Key('nvme-attached-namespace-move-submit'),
+                    ),
+                  )
+                  .onPressed,
+              isNull,
+            );
+            await _tap(tester, 'exposure');
+            await _tap(tester, 'submit');
+            expect(h.writes, 1);
+            expect(h.api.mappings, hasLength(1));
+            await _tap(tester, 'isolated-source');
+            expect(
+              find.byKey(const Key('nvme-attached-namespace-move-submit')),
+              findsNothing,
+            );
+            expect(
+              find.byKey(
+                const Key('nvme-attached-namespace-move-source-choice'),
+              ),
+              findsNothing,
+            );
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
+    }
+  }
   testWidgets('mode changes clear hints IDs review and all four consents', (
     tester,
   ) async {
@@ -525,6 +873,39 @@ void main() {
     }),
   };
   for (final entry in pairedUnsafe.entries) {
+    if (entry.key != 'shared destination port') {
+      test(
+        'isolated-source fresh ${entry.key} rejects before dispatch',
+        () async {
+          final h = _Harness(isolatedSource: true);
+          final r = await h.coordinator.prepare(7, destinationId: 4);
+          entry.value(h.api);
+          expect(
+            (await h.execute(r)).outcome,
+            NvmeAttachedNamespaceMoveOutcome.rejected,
+          );
+          expect(h.writes, 0);
+        },
+      );
+      test(
+        'isolated-source readback ${entry.key} fences without retry',
+        () async {
+          final h = _Harness(isolatedSource: true);
+          final r = await h.coordinator.prepare(7, destinationId: 4);
+          h.api.onDispatch = () => entry.value(h.api);
+          expect(
+            (await h.execute(r)).outcome,
+            NvmeAttachedNamespaceMoveOutcome.unknown,
+          );
+          expect(h.coordinator.locked, true);
+          expect(
+            (await h.execute(r)).outcome,
+            NvmeAttachedNamespaceMoveOutcome.rejected,
+          );
+          expect(h.writes, 1);
+        },
+      );
+    }
     test('paired preflight rejects fresh ${entry.key}', () async {
       final h = _Harness(paired: true);
       final r = await h.coordinator.prepare(7, destinationId: 4);
@@ -1044,8 +1425,8 @@ void main() {
                 onlyTarget ? isEmpty : [8],
               );
               expect(() => r.sourceNamespaces.clear(), throwsUnsupportedError);
-              expect(r.mapping.id, 11);
-              expect(r.port.id, 3);
+              expect(r.mapping!.id, 11);
+              expect(r.port!.id, 3);
               expect(
                 (await h.execute(r)).outcome,
                 NvmeAttachedNamespaceMoveOutcome.completed,

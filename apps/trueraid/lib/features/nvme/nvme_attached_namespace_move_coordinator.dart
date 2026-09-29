@@ -61,6 +61,30 @@ final class NvmeAttachedNamespaceMoveResult {
   final String message;
 }
 
+final nvmeIsolatedSourceAttachedDestinationMoveCoordinatorProvider =
+    Provider.autoDispose<NvmeAttachedNamespaceMoveCoordinator?>((ref) {
+      final session = ref.watch(dashboardActiveSessionProvider);
+      final api = session?.repository;
+      if (session?.endpoint == null ||
+          api is! AuthenticatedAdminSession ||
+          api is! AuthenticatedNvmeHostSession) {
+        return null;
+      }
+      final coordinator = NvmeAttachedNamespaceMoveCoordinator(
+        session: session!,
+        api: api as AuthenticatedAdminSession,
+        hostsApi: api as AuthenticatedNvmeHostSession,
+        lock: ref.read(serverOperationLockProvider),
+        requireAttachedDestination: true,
+        requireIsolatedSource: true,
+        isCurrent: () =>
+            ref.mounted &&
+            identical(session, ref.read(dashboardActiveSessionProvider)),
+      );
+      ref.onDispose(coordinator.dispose);
+      return coordinator;
+    });
+
 final class NvmeAttachedNamespaceMoveReview {
   NvmeAttachedNamespaceMoveReview._(
     this.endpoint,
@@ -80,14 +104,15 @@ final class NvmeAttachedNamespaceMoveReview {
   final NvmeNamespace target;
   final NvmeSubsystem source, destination;
   final List<NvmeNamespace> destinationNamespaces, sourceNamespaces;
-  final NvmePortMapping mapping;
-  final NvmePort port;
+  final NvmePortMapping? mapping;
+  final NvmePort? port;
   final NvmePortMapping? destinationMapping;
   final NvmePort? destinationPort;
   final String _proof;
   final DateTime issuedAt;
   String get confirmation =>
-      'MOVE ATTACHED NVME NAMESPACE ${target.id} FROM SUBSYSTEM ${source.id} NQN ${source.subnqn} TO ${destination.id} NQN ${destination.subnqn} KEEP NSID ${target.nsid} KEEP ASSOCIATION ${mapping.id} PORT ${port.id}'
+      'MOVE ${mapping == null ? 'ISOLATED' : 'ATTACHED'} NVME NAMESPACE ${target.id} FROM SUBSYSTEM ${source.id} NQN ${source.subnqn} TO ${destination.id} NQN ${destination.subnqn} KEEP NSID ${target.nsid}'
+      '${mapping == null ? '' : ' KEEP ASSOCIATION ${mapping!.id} PORT ${port!.id}'}'
       '${destinationMapping == null ? '' : ' KEEP DESTINATION ASSOCIATION ${destinationMapping!.id} PORT ${destinationPort!.id}'}';
 }
 
@@ -113,6 +138,7 @@ final class NvmeAttachedNamespaceMoveCoordinator {
     required this.lock,
     required this.isCurrent,
     this.requireAttachedDestination = false,
+    this.requireIsolatedSource = false,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
   final AuthenticatedSession session;
@@ -121,12 +147,14 @@ final class NvmeAttachedNamespaceMoveCoordinator {
   final ServerOperationLock lock;
   final bool Function() isCurrent;
   final bool requireAttachedDestination;
+  final bool requireIsolatedSource;
   final DateTime Function() _now;
   final _issued = <NvmeAttachedNamespaceMoveReview>{};
   bool _busy = false, _closed = false;
   bool get locked => _busy || _closed || NvmeWriteFence.isUncertain(session);
   bool get available =>
       !_closed &&
+      (!requireIsolatedSource || requireAttachedDestination) &&
       session.endpoint != null &&
       api.adminCatalog.versionSupported &&
       api.adminCatalog.method('nvmet.host.query') != null &&
@@ -166,6 +194,14 @@ final class NvmeAttachedNamespaceMoveCoordinator {
   }
 
   NvmeSubsystem _source(NvmeMutationSnapshot snapshot, int id) {
+    return _restricted(snapshot, id, attached: !requireIsolatedSource);
+  }
+
+  NvmeSubsystem _restricted(
+    NvmeMutationSnapshot snapshot,
+    int id, {
+    bool attached = true,
+  }) {
     final source = snapshot.topology.subsystems
         .where((s) => s.id == id)
         .singleOrNull;
@@ -187,14 +223,16 @@ final class NvmeAttachedNamespaceMoveCoordinator {
         source.subnqn == null ||
         nqns.any((n) => n == null) ||
         nqns.toSet().length != nqns.length ||
-        mappings.length != 1 ||
-        port == null ||
-        port.enabled ||
-        !const {'TCP', 'RDMA'}.contains(port.transport) ||
-        snapshot.topology.portMappings
-                .where((m) => m.portId == port.id)
-                .length !=
-            1 ||
+        (attached
+            ? (mappings.length != 1 ||
+                  port == null ||
+                  port.enabled ||
+                  !const {'TCP', 'RDMA'}.contains(port.transport) ||
+                  snapshot.topology.portMappings
+                          .where((m) => m.portId == port.id)
+                          .length !=
+                      1)
+            : mappings.isNotEmpty) ||
         snapshot.hosts.mappings.any((m) => m.subsystemId == id) ||
         residents.any(
           (n) => n.deviceType != 'ZVOL' || n.enabled || n.locked != false,
@@ -254,7 +292,7 @@ final class NvmeAttachedNamespaceMoveCoordinator {
         'Select a different restricted destination compatible with the selected mode and a known distinct NQN.',
       );
     }
-    if (requireAttachedDestination) _source(snapshot, destinationId);
+    if (requireAttachedDestination) _restricted(snapshot, destinationId);
     final namespaces = snapshot.topology.namespaces
         .where((n) => n.subsystemId == destinationId && n.id != movedId)
         .toList();
@@ -376,19 +414,23 @@ final class NvmeAttachedNamespaceMoveCoordinator {
               .toList()
             ..sort((a, b) => a.id.compareTo(b.id)),
         ),
-        snapshot.topology.portMappings
-            .where((m) => m.subsystemId == source.id)
-            .single,
-        snapshot.topology.ports
-            .where(
-              (p) =>
-                  p.id ==
-                  snapshot.topology.portMappings
-                      .where((m) => m.subsystemId == source.id)
-                      .single
-                      .portId,
-            )
-            .single,
+        requireIsolatedSource
+            ? null
+            : snapshot.topology.portMappings
+                  .where((m) => m.subsystemId == source.id)
+                  .single,
+        requireIsolatedSource
+            ? null
+            : snapshot.topology.ports
+                  .where(
+                    (p) =>
+                        p.id ==
+                        snapshot.topology.portMappings
+                            .where((m) => m.subsystemId == source.id)
+                            .single
+                            .portId,
+                  )
+                  .single,
         requireAttachedDestination
             ? snapshot.topology.portMappings.singleWhere(
                 (m) => m.subsystemId == destinationId,
