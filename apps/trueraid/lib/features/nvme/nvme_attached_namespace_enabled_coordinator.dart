@@ -32,6 +32,22 @@ final nvmeAttachedNamespaceEnabledCoordinatorProvider =
 
 enum NvmeAttachedNamespaceEnabledOutcome { completed, rejected, unknown }
 
+/// Public configuration hints; selection is never authorization to update.
+final class NvmeAttachedNamespaceEnabledCandidate {
+  const NvmeAttachedNamespaceEnabledCandidate._(
+    this.target,
+    this.subsystem,
+    this.mapping,
+    this.port,
+    this.enabled,
+  );
+  final NvmeNamespace target;
+  final NvmeSubsystem subsystem;
+  final NvmePortMapping mapping;
+  final NvmePort port;
+  final bool enabled;
+}
+
 final class NvmeAttachedNamespaceEnabledResult {
   const NvmeAttachedNamespaceEnabledResult(this.outcome, this.message);
   final NvmeAttachedNamespaceEnabledOutcome outcome;
@@ -182,6 +198,54 @@ final class NvmeAttachedNamespaceEnabledCoordinator {
       );
     }
     return target;
+  }
+
+  Future<List<NvmeAttachedNamespaceEnabledCandidate>> loadCandidates({
+    required bool enabled,
+  }) async {
+    _guard();
+    if (_busy) throw StateError('Another operation is in progress.');
+    final owner = lock.acquire();
+    if (owner == null) throw StateError('Another operation is in progress.');
+    _busy = true;
+    _issued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final candidates = <NvmeAttachedNamespaceEnabledCandidate>[];
+      for (final namespace in snapshot.topology.namespaces) {
+        final NvmeNamespace target;
+        try {
+          target = _target(snapshot, namespace.id);
+        } on StateError {
+          continue;
+        }
+        if (target.enabled == enabled) continue;
+        final mapping = snapshot.topology.portMappings.singleWhere(
+          (m) => m.subsystemId == target.subsystemId,
+        );
+        candidates.add(
+          NvmeAttachedNamespaceEnabledCandidate._(
+            target,
+            snapshot.topology.subsystems.singleWhere(
+              (s) => s.id == target.subsystemId,
+            ),
+            mapping,
+            snapshot.topology.ports.singleWhere((p) => p.id == mapping.portId),
+            enabled,
+          ),
+        );
+      }
+      candidates.sort((a, b) => a.target.id.compareTo(b.target.id));
+      _guard();
+      return List.unmodifiable(candidates);
+    } on Object {
+      throw StateError(
+        'Namespace state target discovery failed. No configuration request was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
   }
 
   Future<NvmeAttachedNamespaceEnabledReview> prepare(

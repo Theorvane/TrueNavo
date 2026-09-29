@@ -79,12 +79,16 @@ class _Fake
       hostMappings = <Map<String, Object?>>[];
   void Function()? onDispatch;
   String? failure;
+  String? queryFailure;
+  bool reverseRows = false;
+  int hostLoads = 0;
   bool malformed = false;
   bool extraSubsystem = false;
   Completer<void>? gate;
   final started = Completer<void>();
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    hostLoads++;
     if (gate != null) {
       if (!started.isCompleted) started.complete();
       await gate!.future;
@@ -116,7 +120,15 @@ class _Fake
       'nvmet.port_subsys.query' => [for (final m in mappings) Map.of(m)],
       _ => null,
     };
-    if (rows != null) return AdminCompleted(request, value: rows);
+    if (rows != null) {
+      if (queryFailure == request.method.name) {
+        throw StateError('private-server-error');
+      }
+      return AdminCompleted(
+        request,
+        value: reverseRows ? rows.reversed.toList() : rows,
+      );
+    }
     if (request.method.name != 'nvmet.namespace.update') {
       throw StateError('Unexpected method');
     }
@@ -221,19 +233,62 @@ class _Active extends Notifier<AuthenticatedSession?> {
 
 final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
-Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
+class _CoordinatorChoice
+    extends Notifier<NvmeAttachedNamespaceEnabledCoordinator?> {
+  @override
+  NvmeAttachedNamespaceEnabledCoordinator? build() => null;
+  void select(NvmeAttachedNamespaceEnabledCoordinator coordinator) =>
+      state = coordinator;
+}
+
+final _choice =
+    NotifierProvider<
+      _CoordinatorChoice,
+      NvmeAttachedNamespaceEnabledCoordinator?
+    >(_CoordinatorChoice.new);
+
+Future<ProviderContainer> _mount(
+  WidgetTester tester,
+  _Harness h, {
+  bool discovery = false,
+  double? width,
+  bool dark = true,
+}) async {
+  if (width != null) {
+    tester.view.physicalSize = Size(width, 960);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
   final container = ProviderContainer(
     overrides: [
       dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
+      if (discovery)
+        nvmeAttachedNamespaceEnabledCoordinatorProvider.overrideWith((ref) {
+          final session = ref.watch(dashboardActiveSessionProvider);
+          final coordinator = ref.watch(_choice);
+          return identical(session, h.session) ? coordinator : null;
+        }),
     ],
   );
   addTearDown(container.dispose);
   container.read(_active.notifier).select(h.session);
+  if (discovery) container.read(_choice.notifier).select(h.coordinator);
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
-        theme: TrueRAIDTheme.dark(),
+        theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+        builder: width == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 960),
+                  textScaler: const TextScaler.linear(2),
+                  viewInsets: const EdgeInsets.only(bottom: 200),
+                ),
+                child: child!,
+              ),
         home: const Scaffold(
           body: SingleChildScrollView(
             child: NvmeAttachedNamespaceEnabledEditor(),
@@ -250,7 +305,472 @@ Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
   return container;
 }
 
+Future<void> _tap(WidgetTester tester, String suffix) async {
+  final finder = find.byKey(Key('nvme-attached-namespace-enabled-$suffix'));
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _select(WidgetTester tester, int id, int nsid) async {
+  await _tap(tester, 'choice');
+  await tester.tap(find.text('#$id · NSID $nsid · unused').last);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _direction(WidgetTester tester, bool enabled) async {
+  await _tap(tester, 'value');
+  await tester.tap(find.text(enabled ? 'Enabled' : 'Disabled').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  for (final dark in [true, false]) {
+    for (final width in [320.0, 430.0]) {
+      for (final enabled in [true, false]) {
+        testWidgets(
+          'state selector $width dark=$dark requested=$enabled at 200% with keyboard',
+          (tester) async {
+            final h = _Harness();
+            h.api.namespace['enabled'] = !enabled;
+            await _mount(tester, h, discovery: true, width: width, dark: dark);
+            if (!enabled) await _direction(tester, false);
+            await _tap(tester, 'discover');
+            await _select(tester, 7, 1);
+            expect(
+              find.textContaining(
+                'Saved namespace state: ${!enabled} → $enabled;',
+              ),
+              findsOneWidget,
+            );
+            expect(h.writes, 0);
+            await _tap(tester, 'review');
+            for (final consent in ['reload', 'limitations', 'exposure']) {
+              await _tap(tester, consent);
+            }
+            final phrase = find.byKey(
+              const Key('nvme-attached-namespace-enabled-phrase'),
+            );
+            await tester.ensureVisible(phrase);
+            await tester.enterText(
+              phrase,
+              '${enabled ? 'ENABLE' : 'DISABLE'} ATTACHED NVME NAMESPACE 7 NSID 1 FROM ${!enabled} TO $enabled KEEP ASSOCIATION 11 PORT 3 SUBSYSTEM 2 NQN nqn.2026-09.example:unused',
+            );
+            await tester.pumpAndSettle();
+            await _tap(tester, 'submit');
+            expect(h.writes, 1);
+            expect(h.api.namespace['enabled'], enabled);
+            expect(h.api.namespace['nsid'], 1);
+            expect(h.api.ports.single['enabled'], false);
+            expect(h.api.other['enabled'], false);
+            expect(
+              find.byKey(const Key('nvme-attached-namespace-enabled-choice')),
+              findsNothing,
+            );
+            await _direction(tester, !enabled);
+            await _tap(tester, 'discover');
+            await _select(tester, 7, 1);
+            await _tap(tester, 'review');
+            for (final consent in ['reload', 'limitations', 'exposure']) {
+              expect(
+                tester
+                    .widget<Checkbox>(
+                      find.byKey(
+                        Key('nvme-attached-namespace-enabled-$consent'),
+                      ),
+                    )
+                    .value,
+                false,
+              );
+            }
+            expect(h.writes, 1);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
+    }
+  }
+  for (final reason in ['refresh', 'direction', 'manual']) {
+    testWidgets('$reason clears prior state review and consents', (
+      tester,
+    ) async {
+      final h = _Harness();
+      await _mount(tester, h, discovery: true);
+      await _tap(tester, 'discover');
+      await _select(tester, 7, 1);
+      await _tap(tester, 'review');
+      for (final consent in ['reload', 'limitations', 'exposure']) {
+        await _tap(tester, consent);
+      }
+      if (reason == 'refresh') {
+        await _tap(tester, 'discover');
+      }
+      if (reason == 'direction') {
+        await _direction(tester, false);
+        expect(
+          find.byKey(const Key('nvme-attached-namespace-enabled-choice')),
+          findsNothing,
+        );
+        h.api.namespace['enabled'] = true;
+        await _tap(tester, 'discover');
+      }
+      if (reason == 'manual') {
+        await tester.enterText(
+          find.byKey(const Key('nvme-attached-namespace-enabled-id')),
+          '8',
+        );
+        await tester.pumpAndSettle();
+      } else {
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const Key('nvme-attached-namespace-enabled-id')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+      }
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-enabled-phrase')),
+        findsNothing,
+      );
+      if (reason != 'manual') await _select(tester, 7, 1);
+      await _tap(tester, 'review');
+      for (final consent in ['reload', 'limitations', 'exposure']) {
+        expect(
+          tester
+              .widget<Checkbox>(
+                find.byKey(Key('nvme-attached-namespace-enabled-$consent')),
+              )
+              .value,
+          false,
+        );
+      }
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final reason in ['session', 'coordinator']) {
+    testWidgets('$reason clears state candidate selections', (tester) async {
+      final h = _Harness();
+      final container = await _mount(tester, h, discovery: true);
+      await _tap(tester, 'discover');
+      await _select(tester, 7, 1);
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      } else {
+        container.read(_choice.notifier).select(_Harness().coordinator);
+        expect(
+          container.read(nvmeAttachedNamespaceEnabledCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-enabled-choice')),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-enabled-id')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final reason in ['session', 'coordinator', 'dispose']) {
+    testWidgets('$reason cannot restore late state discovery', (tester) async {
+      final h = _Harness();
+      final container = await _mount(tester, h, discovery: true);
+      h.api.gate = Completer<void>();
+      final button = find.byKey(
+        const Key('nvme-attached-namespace-enabled-discover'),
+      );
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+      await h.api.started.future;
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      }
+      if (reason == 'coordinator') {
+        container.read(_choice.notifier).select(_Harness().coordinator);
+        expect(
+          container.read(nvmeAttachedNamespaceEnabledCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      if (reason == 'dispose') {
+        await tester.pumpWidget(const SizedBox());
+      } else {
+        await tester.pump();
+      }
+      h.api.gate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-enabled-choice')),
+        findsNothing,
+      );
+      expect(
+        find.text(
+          'Namespace state target discovery failed. No configuration request was sent.',
+        ),
+        findsNothing,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final failure in [false, true]) {
+    testWidgets(
+      'state discovery distinguishes empty from failure=$failure with manual fallback',
+      (tester) async {
+        final h = _Harness();
+        if (failure) {
+          h.api.queryFailure = 'nvmet.port.query';
+        } else {
+          h.api.ports.single['enabled'] = true;
+        }
+        await _mount(tester, h, discovery: true);
+        await _tap(tester, 'discover');
+        expect(
+          find.text('No eligible namespace enable targets were found.'),
+          failure ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.text(
+            'Namespace state target discovery failed. No configuration request was sent.',
+          ),
+          failure ? findsOneWidget : findsNothing,
+        );
+        h.api.queryFailure = null;
+        h.api.ports.single['enabled'] = false;
+        await tester.enterText(
+          find.byKey(const Key('nvme-attached-namespace-enabled-id')),
+          '7',
+        );
+        await tester.pumpAndSettle();
+        await _tap(tester, 'review');
+        expect(
+          find.byKey(const Key('nvme-attached-namespace-enabled-phrase')),
+          findsOneWidget,
+        );
+        expect(h.writes, 0);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+  for (final kind in ['oversized', 'unresolved']) {
+    test('$kind state discovery fails closed', () async {
+      final h = _Harness();
+      if (kind == 'oversized') {
+        h.api.ports.addAll([
+          for (var id = 100; id < 200; id++)
+            {'id': id, 'addr_trtype': 'TCP', 'enabled': false},
+        ]);
+      } else {
+        h.api.other['subsys'] = {'id': 999};
+      }
+      await expectLater(
+        h.coordinator.loadCandidates(enabled: true),
+        throwsStateError,
+      );
+      expect(h.writes, 0);
+    });
+  }
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final enabled in [true, false]) {
+      test(
+        '$transport discovery lists only eligible direction $enabled without writes',
+        () async {
+          final h = _Harness();
+          h.api.namespace['enabled'] = !enabled;
+          h.api.ports.single['addr_trtype'] = transport;
+          h.api.reverseRows = true;
+          final candidates = await h.coordinator.loadCandidates(
+            enabled: enabled,
+          );
+          expect(candidates.map((c) => c.target.id), enabled ? [7, 8] : [7]);
+          expect(
+            candidates.every(
+              (c) => c.target.enabled != c.enabled && c.enabled == enabled,
+            ),
+            true,
+          );
+          expect(candidates.first.mapping.id, 11);
+          expect(candidates.first.port.transport, transport);
+          expect(candidates.first.subsystem.subnqn, h.api.subsystem['subnqn']);
+          expect(() => candidates.clear(), throwsUnsupportedError);
+          expect(h.api.hostLoads, 1);
+          expect(h.api.calls.map((r) => r.method.name), [
+            'nvmet.subsys.query',
+            'nvmet.port.query',
+            'nvmet.namespace.query',
+            'nvmet.port_subsys.query',
+          ]);
+          expect(h.writes, 0);
+          final review = await h.coordinator.prepare(
+            candidates.first.target.id,
+            enabled: enabled,
+          );
+          expect(h.api.hostLoads, 2);
+          expect(
+            (await h.execute(review)).outcome,
+            NvmeAttachedNamespaceEnabledOutcome.completed,
+          );
+          expect(
+            h.api.calls
+                .singleWhere((r) => r.method.name == 'nvmet.namespace.update')
+                .arguments,
+            [
+              7,
+              {'enabled': enabled},
+            ],
+          );
+          expect(h.api.hostLoads, 4);
+          expect(h.api.ports.single['enabled'], false);
+        },
+      );
+    }
+  }
+  test(
+    'two enabled residents permit neither direction until neighbors are safe',
+    () async {
+      final h = _Harness();
+      h.api.namespace['enabled'] = true;
+      h.api.other['enabled'] = true;
+      expect(await h.coordinator.loadCandidates(enabled: true), isEmpty);
+      expect(await h.coordinator.loadCandidates(enabled: false), isEmpty);
+      h.api.other['enabled'] = false;
+      expect(
+        (await h.coordinator.loadCandidates(enabled: false))
+            .map((c) => c.target.id),
+        [7],
+      );
+      expect(await h.coordinator.loadCandidates(enabled: true), isEmpty);
+      expect(h.writes, 0);
+    },
+  );
+  test('discovery consumes old review and stale flags cannot bypass fresh validation', () async {
+    final h = _Harness();
+    final old = await h.coordinator.prepare(7, enabled: true);
+    final candidates = await h.coordinator.loadCandidates(enabled: true);
+    expect(
+      (await h.execute(old)).outcome,
+      NvmeAttachedNamespaceEnabledOutcome.rejected,
+    );
+    h.api.namespace['enabled'] = true;
+    await expectLater(
+      h.coordinator.prepare(candidates.first.target.id, enabled: true),
+      throwsStateError,
+    );
+    h.api.namespace['enabled'] = false;
+    final review = await h.coordinator.prepare(7, enabled: true);
+    h.api.ports.single['enabled'] = true;
+    expect(
+      (await h.execute(review)).outcome,
+      NvmeAttachedNamespaceEnabledOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+  for (final query in [
+    'nvmet.subsys.query',
+    'nvmet.port.query',
+    'nvmet.namespace.query',
+    'nvmet.port_subsys.query',
+  ]) {
+    test(
+      '$query discovery failures are sanitized and release shared lock',
+      () async {
+        final h = _Harness();
+        h.api.queryFailure = query;
+        await expectLater(
+          h.coordinator.loadCandidates(enabled: true),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.toString(),
+              'sanitized',
+              isNot(contains('private-server-error')),
+            ),
+          ),
+        );
+        final owner = h.lock.acquire();
+        expect(owner, isNotNull);
+        h.lock.release(owner!);
+        h.api.queryFailure = null;
+        expect(await h.coordinator.loadCandidates(enabled: true), hasLength(2));
+        expect(h.writes, 0);
+      },
+    );
+  }
+  for (final reason in ['session', 'dispose', 'lock', 'uncertain']) {
+    test('$reason blocks state discovery without reads', () async {
+      final h = _Harness();
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      if (reason == 'uncertain') {
+        final review = await h.coordinator.prepare(7, enabled: true);
+        h.api.failure = 'unknown';
+        await h.execute(review);
+        h.api.calls.clear();
+      }
+      final owner = reason == 'lock' ? h.lock.acquire() : null;
+      await expectLater(
+        h.coordinator.loadCandidates(enabled: true),
+        throwsStateError,
+      );
+      expect(h.api.calls, isEmpty);
+      if (owner != null) h.lock.release(owner);
+    });
+  }
+  for (final reason in ['session', 'dispose', 'concurrent']) {
+    test(
+      '$reason during state discovery cannot restore stale results',
+      () async {
+        final h = _Harness();
+        h.api.gate = Completer<void>();
+        final pending = h.coordinator.loadCandidates(enabled: true);
+        final checked = reason == 'concurrent'
+            ? null
+            : expectLater(pending, throwsStateError);
+        await h.api.started.future;
+        if (reason == 'session') h.current = false;
+        if (reason == 'dispose') h.coordinator.dispose();
+        if (reason == 'concurrent') {
+          await expectLater(
+            h.coordinator.loadCandidates(enabled: false),
+            throwsStateError,
+          );
+          await expectLater(
+            h.coordinator.prepare(7, enabled: true),
+            throwsStateError,
+          );
+        }
+        h.api.gate!.complete();
+        if (checked != null) {
+          await checked;
+        } else {
+          expect(await pending, hasLength(2));
+        }
+        final owner = h.lock.acquire();
+        expect(owner, isNotNull);
+        h.lock.release(owner!);
+        expect(h.writes, 0);
+      },
+    );
+  }
   test('new review supersedes an earlier review without dispatch', () async {
     final h = _Harness();
     final old = await h.coordinator.prepare(7, enabled: true);
@@ -409,6 +929,20 @@ void main() {
     'duplicate existing NSIDs': (a) => a.other['nsid'] = 1,
   };
   for (final entry in unsafe.entries) {
+    test('${entry.key} cannot appear as an enable candidate', () async {
+      final h = _Harness();
+      entry.value(h.api);
+      try {
+        final candidates = await h.coordinator.loadCandidates(enabled: true);
+        expect(candidates.any((c) => c.target.id == 7), false);
+      } on StateError catch (error) {
+        expect(
+          error.toString(),
+          contains('Namespace state target discovery failed'),
+        );
+      }
+      expect(h.writes, 0);
+    });
     test(
       '${entry.key} is rejected before review and at fresh preflight',
       () async {
@@ -609,6 +1143,10 @@ void main() {
       );
       expect(h.coordinator.available, false);
       await expectLater(
+        h.coordinator.loadCandidates(enabled: true),
+        throwsStateError,
+      );
+      await expectLater(
         h.coordinator.prepare(7, enabled: true),
         throwsStateError,
       );
@@ -705,6 +1243,8 @@ void main() {
           expect(h.api.namespace['enabled'], true);
           await tap('nvme-attached-namespace-enabled-value');
           await tester.tap(find.text('Disabled').last);
+          await tester.pumpAndSettle();
+          await tester.enterText(id, '7');
           await tester.pumpAndSettle();
           await tap('nvme-attached-namespace-enabled-review');
           for (final consent in ['reload', 'limitations', 'exposure']) {

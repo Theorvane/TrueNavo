@@ -18,6 +18,8 @@ class _EnabledState extends ConsumerState<NvmeAttachedNamespaceEnabledEditor> {
   NvmeAttachedNamespaceEnabledReview? _review;
   NvmeAttachedNamespaceEnabledCoordinator? _owner;
   Object? _session, _reviewSession;
+  List<NvmeAttachedNamespaceEnabledCandidate>? _candidates;
+  NvmeAttachedNamespaceEnabledCoordinator? _candidateOwner;
   bool _enabled = true,
       _busy = false,
       _reload = false,
@@ -45,6 +47,54 @@ class _EnabledState extends ConsumerState<NvmeAttachedNamespaceEnabledEditor> {
     _id.dispose();
     _phrase.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCandidates(
+    NvmeAttachedNamespaceEnabledCoordinator coordinator,
+  ) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    final enabled = _enabled;
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _message = null;
+    });
+    try {
+      final candidates = await coordinator.loadCandidates(enabled: enabled);
+      if (!mounted ||
+          epoch != _epoch ||
+          enabled != _enabled ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(
+            coordinator,
+            ref.read(nvmeAttachedNamespaceEnabledCoordinatorProvider),
+          )) {
+        return;
+      }
+      setState(() {
+        _candidates = candidates;
+        _candidateOwner = coordinator;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          enabled == _enabled &&
+          identical(session, ref.read(dashboardActiveSessionProvider)) &&
+          identical(
+            coordinator,
+            ref.read(nvmeAttachedNamespaceEnabledCoordinatorProvider),
+          )) {
+        setState(
+          () => _message = 'Namespace state target discovery failed. No configuration request was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _prepare(
@@ -115,6 +165,8 @@ class _EnabledState extends ConsumerState<NvmeAttachedNamespaceEnabledEditor> {
       _busy = false;
       if (identical(session, ref.read(dashboardActiveSessionProvider))) {
         _discard();
+        _candidates = null;
+        _candidateOwner = null;
         _message = result.message;
       }
     });
@@ -133,21 +185,86 @@ class _EnabledState extends ConsumerState<NvmeAttachedNamespaceEnabledEditor> {
     if (!identical(session, _session)) {
       _discard();
       _id.clear();
+      _candidates = null;
+      _candidateOwner = null;
       _message = null;
       _session = session;
     }
     if (_owner != null && !identical(coordinator, _owner)) _discard();
+    if (_candidateOwner != null && !identical(coordinator, _candidateOwner)) {
+      _discard();
+      _id.clear();
+      _candidates = null;
+      _candidateOwner = null;
+      _message = null;
+    }
     final active =
         !_busy &&
         coordinator?.available == true &&
         coordinator?.locked == false;
     final review = _review;
+    final candidates = _candidates;
+    final selected = candidates
+        ?.where((c) => c.target.id == _targetId && c.enabled == _enabled)
+        .singleOrNull;
     return TdPanel(
       title: 'Change singly attached ZVOL namespace enabled setting',
       description: 'Saved enabled flag only for an unlocked ZVOL in a restricted subsystem behind one disabled TCP/RDMA port, with no other port mapping or host grant and disabled unlocked ZVOL neighbors with valid unique NSIDs. The port stays disabled. Runtime isolation, client compatibility and backing ownership or health are not proven.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          OutlinedButton(
+            key: const Key('nvme-attached-namespace-enabled-discover'),
+            onPressed: active ? () => _loadCandidates(coordinator!) : null,
+            child: Text(
+              'Load or refresh eligible ${_enabled ? 'enable' : 'disable'} targets',
+            ),
+          ),
+          if (candidates != null) ...[
+            const Text(
+              'Discovery is a public configuration snapshot, not proof of runtime isolation or actual client access. Only the selected saved-state transition is listed; review and submission independently reread the server.',
+            ),
+            if (candidates.isEmpty)
+              Text(
+                'No eligible namespace ${_enabled ? 'enable' : 'disable'} targets were found.',
+              ),
+            if (candidates.isNotEmpty)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Choose namespace',
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    key: const Key('nvme-attached-namespace-enabled-choice'),
+                    isExpanded: true,
+                    value: selected?.target.id,
+                    hint: const Text('Select a namespace'),
+                    items: [
+                      for (final candidate in candidates)
+                        DropdownMenuItem(
+                          value: candidate.target.id,
+                          child: Text(
+                            '#${candidate.target.id} · NSID ${candidate.target.nsid} · ${candidate.subsystem.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: active
+                        ? (id) => setState(() {
+                            _discard();
+                            _id.text = id?.toString() ?? '';
+                            _message = null;
+                          })
+                        : null,
+                  ),
+                ),
+              ),
+            if (selected != null)
+              Text(
+                'Saved namespace state: ${selected.target.enabled} → ${selected.enabled}; subsystem #${selected.subsystem.id}: ${selected.subsystem.name} — ${selected.subsystem.subnqn}; association #${selected.mapping.id}, disabled ${selected.port.transport} port #${selected.port.id}',
+              ),
+          ],
           TextField(
             key: const Key('nvme-attached-namespace-enabled-id'),
             controller: _id,
@@ -174,6 +291,10 @@ class _EnabledState extends ConsumerState<NvmeAttachedNamespaceEnabledEditor> {
                 ? (value) => setState(() {
                     _discard();
                     _enabled = value!;
+                    _id.clear();
+                    _candidates = null;
+                    _candidateOwner = null;
+                    _message = null;
                   })
                 : null,
           ),
