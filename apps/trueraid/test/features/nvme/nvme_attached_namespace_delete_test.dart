@@ -79,6 +79,9 @@ class _Fake
       hostMappings = <Map<String, Object?>>[];
   void Function()? onDispatch;
   String? failure;
+  String? queryFailure;
+  bool reverseRows = false;
+  int hostLoads = 0;
   bool malformed = false;
   bool namespaceAbsent = false, includeOther = true, otherAbsent = false;
   final extraNamespaces = <Map<String, Object?>>[];
@@ -87,6 +90,7 @@ class _Fake
   final started = Completer<void>();
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    hostLoads++;
     if (gate != null) {
       if (!started.isCompleted) started.complete();
       await gate!.future;
@@ -119,7 +123,15 @@ class _Fake
       'nvmet.port_subsys.query' => [for (final m in mappings) Map.of(m)],
       _ => null,
     };
-    if (rows != null) return AdminCompleted(request, value: rows);
+    if (rows != null) {
+      if (queryFailure == request.method.name) {
+        throw StateError('private-server-error');
+      }
+      return AdminCompleted(
+        request,
+        value: reverseRows ? rows.reversed.toList() : rows,
+      );
+    }
     if (request.method.name != 'nvmet.namespace.delete') {
       throw StateError('Unexpected method');
     }
@@ -204,6 +216,13 @@ class _Harness {
   late final NvmeAttachedNamespaceDeleteCoordinator coordinator;
   bool current = true;
   DateTime now = DateTime.utc(2026, 9, 28);
+  bool get lockFree {
+    final owner = lock.acquire();
+    if (owner == null) return false;
+    lock.release(owner);
+    return true;
+  }
+
   int get writes =>
       api.calls.where((r) => r.method.name == 'nvmet.namespace.delete').length;
   Future<NvmeAttachedNamespaceDeleteResult> execute(
@@ -229,19 +248,64 @@ class _Active extends Notifier<AuthenticatedSession?> {
 
 final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
-Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
+class _CoordinatorChoice
+    extends Notifier<NvmeAttachedNamespaceDeleteCoordinator?> {
+  @override
+  NvmeAttachedNamespaceDeleteCoordinator? build() => null;
+  void select(NvmeAttachedNamespaceDeleteCoordinator coordinator) =>
+      state = coordinator;
+}
+
+final _coordinatorChoice =
+    NotifierProvider<
+      _CoordinatorChoice,
+      NvmeAttachedNamespaceDeleteCoordinator?
+    >(_CoordinatorChoice.new);
+
+Future<ProviderContainer> _mount(
+  WidgetTester tester,
+  _Harness h, {
+  bool controlled = false,
+  double? width,
+  bool dark = true,
+}) async {
+  if (width != null) {
+    tester.view.physicalSize = Size(width, 960);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
   final container = ProviderContainer(
     overrides: [
       dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
+      if (controlled)
+        nvmeAttachedNamespaceDeleteCoordinatorProvider.overrideWith((ref) {
+          final session = ref.watch(dashboardActiveSessionProvider);
+          final coordinator = ref.watch(_coordinatorChoice);
+          return identical(session, h.session) ? coordinator : null;
+        }),
     ],
   );
   addTearDown(container.dispose);
   container.read(_active.notifier).select(h.session);
+  if (controlled) {
+    container.read(_coordinatorChoice.notifier).select(h.coordinator);
+  }
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
-        theme: TrueRAIDTheme.dark(),
+        theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+        builder: width == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 960),
+                  textScaler: const TextScaler.linear(2),
+                  viewInsets: const EdgeInsets.only(bottom: 200),
+                ),
+                child: child!,
+              ),
         home: const Scaffold(
           body: SingleChildScrollView(
             child: NvmeAttachedNamespaceDeleteEditor(),
@@ -258,7 +322,497 @@ Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
   return container;
 }
 
+Future<void> _tap(WidgetTester tester, String suffix) async {
+  final finder = find.byKey(Key('nvme-attached-namespace-delete-$suffix'));
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _choose(WidgetTester tester, int id, int nsid) async {
+  await _tap(tester, 'choice');
+  await tester.tap(find.text('#$id · NSID $nsid · unused').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  testWidgets(
+    'discovery selection and manual fallback each require fresh review',
+    (tester) async {
+      final h = _Harness();
+      await _mount(tester, h, controlled: true);
+      await _tap(tester, 'discover');
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-delete-id')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      await _choose(tester, 7, 1);
+      expect(
+        find.textContaining('association #11, disabled TCP port #3'),
+        findsOneWidget,
+      );
+      expect(h.api.hostLoads, 1);
+      expect(h.writes, 0);
+      await _tap(tester, 'review');
+      expect(h.api.hostLoads, 2);
+      await _tap(tester, 'loss');
+      await tester.enterText(
+        find.byKey(const Key('nvme-attached-namespace-delete-id')),
+        '8',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-delete-phrase')),
+        findsNothing,
+      );
+      await _tap(tester, 'review');
+      expect(h.api.hostLoads, 3);
+      expect(
+        tester
+            .widget<Checkbox>(
+              find.byKey(const Key('nvme-attached-namespace-delete-loss')),
+            )
+            .value,
+        false,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets('refresh discards IDs review phrase and all three consents', (
+    tester,
+  ) async {
+    final h = _Harness();
+    await _mount(tester, h, controlled: true);
+    await _tap(tester, 'discover');
+    await _choose(tester, 7, 1);
+    await _tap(tester, 'review');
+    for (final consent in ['loss', 'limitations', 'exposure']) {
+      await _tap(tester, consent);
+    }
+    await tester.enterText(
+      find.byKey(const Key('nvme-attached-namespace-delete-phrase')),
+      'old confirmation',
+    );
+    await tester.pumpAndSettle();
+    await _tap(tester, 'discover');
+    expect(
+      find.byKey(const Key('nvme-attached-namespace-delete-phrase')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<DropdownButton<int>>(
+            find.byKey(const Key('nvme-attached-namespace-delete-choice')),
+          )
+          .value,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('nvme-attached-namespace-delete-id')),
+          )
+          .controller!
+          .text,
+      isEmpty,
+    );
+    await _choose(tester, 8, 2);
+    await _tap(tester, 'review');
+    for (final consent in ['loss', 'limitations', 'exposure']) {
+      expect(
+        tester
+            .widget<Checkbox>(
+              find.byKey(Key('nvme-attached-namespace-delete-$consent')),
+            )
+            .value,
+        false,
+      );
+    }
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('nvme-attached-namespace-delete-phrase')),
+          )
+          .controller!
+          .text,
+      isEmpty,
+    );
+    expect(h.writes, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+  for (final change in ['session', 'coordinator']) {
+    testWidgets('$change clears existing discovery hints and selection', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mount(tester, h, controlled: true);
+      await _tap(tester, 'discover');
+      await _choose(tester, 7, 1);
+      if (change == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      } else {
+        container
+            .read(_coordinatorChoice.notifier)
+            .select(_Harness().coordinator);
+        expect(
+          container.read(nvmeAttachedNamespaceDeleteCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-delete-choice')),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-delete-id')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final change in ['session', 'coordinator', 'dispose']) {
+    testWidgets('$change cannot restore late discovery candidates', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mount(tester, h, controlled: true);
+      h.api.gate = Completer<void>();
+      final button = find.byKey(
+        const Key('nvme-attached-namespace-delete-discover'),
+      );
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+      await h.api.started.future;
+      if (change == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+        await tester.pump();
+      } else if (change == 'coordinator') {
+        container
+            .read(_coordinatorChoice.notifier)
+            .select(_Harness().coordinator);
+        expect(
+          container.read(nvmeAttachedNamespaceDeleteCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+        await tester.pump();
+      } else {
+        await tester.pumpWidget(const SizedBox());
+      }
+      h.api.gate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-delete-choice')),
+        findsNothing,
+      );
+      expect(
+        find.text(
+          'Removal target discovery failed. No configuration request was sent.',
+        ),
+        findsNothing,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final failure in [false, true]) {
+    testWidgets(
+      'empty versus failed discovery failure=$failure and manual fallback',
+      (tester) async {
+        final h = _Harness();
+        if (failure) {
+          h.api.queryFailure = 'nvmet.port.query';
+        } else {
+          h.api.ports.single['enabled'] = true;
+        }
+        await _mount(tester, h, controlled: true);
+        await _tap(tester, 'discover');
+        expect(
+          find.text('No eligible namespace removal targets were found.'),
+          failure ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.text(
+            'Removal target discovery failed. No configuration request was sent.',
+          ),
+          failure ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byKey(const Key('nvme-attached-namespace-delete-choice')),
+          findsNothing,
+        );
+        h.api.queryFailure = null;
+        h.api.ports.single['enabled'] = false;
+        await tester.enterText(
+          find.byKey(const Key('nvme-attached-namespace-delete-id')),
+          '7',
+        );
+        await tester.pumpAndSettle();
+        await _tap(tester, 'review');
+        expect(
+          find.byKey(const Key('nvme-attached-namespace-delete-phrase')),
+          findsOneWidget,
+        );
+        expect(h.writes, 0);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+  for (final dark in [true, false]) {
+    for (final width in [320.0, 430.0]) {
+      for (final neighbor in [true, false]) {
+        testWidgets(
+          'removal selector $width dark=$dark neighbor=$neighbor at 200% with keyboard',
+          (tester) async {
+            final h = _Harness();
+            h.api.includeOther = neighbor;
+            await _mount(tester, h, controlled: true, width: width, dark: dark);
+            await _tap(tester, 'discover');
+            await _choose(tester, 7, 1);
+            await _tap(tester, 'review');
+            for (final consent in ['loss', 'limitations', 'exposure']) {
+              await _tap(tester, consent);
+            }
+            final phrase = find.byKey(
+              const Key('nvme-attached-namespace-delete-phrase'),
+            );
+            await tester.ensureVisible(phrase);
+            await tester.enterText(
+              phrase,
+              'DELETE ATTACHED NVME NAMESPACE 7 NSID 1 KEEP BACKING KEEP ASSOCIATION 11 PORT 3 SUBSYSTEM 2 NQN nqn.2026-09.example:unused',
+            );
+            await tester.pumpAndSettle();
+            await _tap(tester, 'submit');
+            expect(h.writes, 1);
+            expect(h.api.namespaceAbsent, true);
+            expect(h.api.otherAbsent, false);
+            expect(h.api.mappings.single['id'], 11);
+            expect(
+              find.byKey(const Key('nvme-attached-namespace-delete-choice')),
+              findsNothing,
+            );
+            await _tap(tester, 'discover');
+            if (neighbor) {
+              expect(
+                tester
+                    .widget<DropdownButton<int>>(
+                      find.byKey(
+                        const Key('nvme-attached-namespace-delete-choice'),
+                      ),
+                    )
+                    .items!
+                    .map((i) => i.value),
+                [8],
+              );
+            } else {
+              expect(
+                find.text('No eligible namespace removal targets were found.'),
+                findsOneWidget,
+              );
+            }
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
+    }
+  }
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final neighbor in [false, true]) {
+      test(
+        '$transport removal discovery with neighbor=$neighbor is read-only',
+        () async {
+          final h = _Harness();
+          h.api.includeOther = neighbor;
+          h.api.ports.single['addr_trtype'] = transport;
+          h.api.reverseRows = true;
+          final candidates = await h.coordinator.loadCandidates();
+          expect(candidates.map((c) => c.target.id), neighbor ? [7, 8] : [7]);
+          expect(candidates.first.target.nsid, 1);
+          expect(candidates.first.subsystem.subnqn, h.api.subsystem['subnqn']);
+          expect(candidates.first.mapping.id, 11);
+          expect(candidates.first.port.id, 3);
+          expect(candidates.first.port.transport, transport);
+          expect(() => candidates.clear(), throwsUnsupportedError);
+          expect(h.api.calls.map((r) => r.method.name), [
+            'nvmet.subsys.query',
+            'nvmet.port.query',
+            'nvmet.namespace.query',
+            'nvmet.port_subsys.query',
+          ]);
+          expect(h.api.hostLoads, 1);
+          expect(h.writes, 0);
+          expect(h.lockFree, true);
+          final review = await h.coordinator.prepare(
+            candidates.first.target.id,
+          );
+          expect(h.api.hostLoads, 2);
+          expect(
+            (await h.execute(review)).outcome,
+            NvmeAttachedNamespaceDeleteOutcome.completed,
+          );
+          expect(h.api.hostLoads, 4);
+          expect(
+            h.api.calls
+                .singleWhere((r) => r.method.name == 'nvmet.namespace.delete')
+                .arguments,
+            [
+              7,
+              {'remove': false},
+            ],
+          );
+        },
+      );
+    }
+  }
+  test('discovery clears issued authorization and returns sorted multiple candidates', () async {
+    final h = _Harness();
+    h.api.reverseRows = true;
+    h.api.extraNamespaces.addAll([
+      for (final (id, nsid) in [(10, 6), (6, 5)])
+        {
+          'id': id,
+          'nsid': nsid,
+          'subsys': {'id': 2},
+          'device_type': 'ZVOL',
+          'enabled': false,
+          'locked': false,
+        },
+    ]);
+    final old = await h.coordinator.prepare(7);
+    final candidates = await h.coordinator.loadCandidates();
+    expect(candidates.map((c) => c.target.id), [6, 7, 8, 10]);
+    expect(
+      (await h.execute(old)).outcome,
+      NvmeAttachedNamespaceDeleteOutcome.rejected,
+    );
+    expect(h.writes, 0);
+  });
+  test(
+    'candidate hints cannot bypass drift at fresh review or submit',
+    () async {
+      final h = _Harness();
+      final candidates = await h.coordinator.loadCandidates();
+      h.api.ports.single['enabled'] = true;
+      await expectLater(
+        h.coordinator.prepare(candidates.first.target.id),
+        throwsStateError,
+      );
+      h.api.ports.single['enabled'] = false;
+      final review = await h.coordinator.prepare(candidates.first.target.id);
+      h.api.other['nsid'] = 3;
+      expect(
+        (await h.execute(review)).outcome,
+        NvmeAttachedNamespaceDeleteOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    },
+  );
+  test(
+    'empty valid discovery is distinct from malformed inventory failure',
+    () async {
+      final h = _Harness();
+      h.api.namespaceAbsent = true;
+      h.api.includeOther = false;
+      expect(await h.coordinator.loadCandidates(), isEmpty);
+      h.api.namespaceAbsent = false;
+      h.api.includeOther = true;
+      h.api.malformed = true;
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+      expect(h.writes, 0);
+      expect(h.lockFree, true);
+    },
+  );
+  for (final query in [
+    'nvmet.subsys.query',
+    'nvmet.port.query',
+    'nvmet.namespace.query',
+    'nvmet.port_subsys.query',
+  ]) {
+    test(
+      'discovery sanitizes $query failures and releases lock for retry',
+      () async {
+        final h = _Harness();
+        h.api.queryFailure = query;
+        await expectLater(
+          h.coordinator.loadCandidates(),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.toString(),
+              'sanitized',
+              isNot(contains('private-server-error')),
+            ),
+          ),
+        );
+        expect(h.lockFree, true);
+        h.api.queryFailure = null;
+        expect(await h.coordinator.loadCandidates(), hasLength(2));
+        expect(h.writes, 0);
+      },
+    );
+  }
+  for (final reason in ['session', 'dispose', 'uncertain', 'lock']) {
+    test('$reason blocks discovery without query dispatch', () async {
+      final h = _Harness();
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      if (reason == 'uncertain') {
+        final r = await h.coordinator.prepare(7);
+        h.api.failure = 'unknown';
+        await h.execute(r);
+        h.api.calls.clear();
+      }
+      final owner = reason == 'lock' ? h.lock.acquire() : null;
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+      expect(h.api.calls, isEmpty);
+      if (owner != null) h.lock.release(owner);
+    });
+  }
+  for (final reason in ['session', 'dispose', 'concurrent']) {
+    test(
+      '$reason during discovery cannot restore stale hints or authorization',
+      () async {
+        final h = _Harness();
+        h.api.gate = Completer<void>();
+        final pending = h.coordinator.loadCandidates();
+        if (reason != 'concurrent') {
+          final failed = expectLater(pending, throwsStateError);
+          await h.api.started.future;
+          if (reason == 'session') h.current = false;
+          if (reason == 'dispose') h.coordinator.dispose();
+          h.api.gate!.complete();
+          await failed;
+        } else {
+          await h.api.started.future;
+          await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+          await expectLater(h.coordinator.prepare(7), throwsStateError);
+          h.api.gate!.complete();
+          expect(await pending, hasLength(2));
+        }
+        expect(h.writes, 0);
+        expect(h.lockFree, true);
+      },
+    );
+  }
   test('new review supersedes an earlier review without dispatch', () async {
     final h = _Harness();
     final old = await h.coordinator.prepare(7);
@@ -284,6 +838,7 @@ void main() {
 
     final a = _Harness();
     overflow(a.api);
+    await expectLater(a.coordinator.loadCandidates(), throwsStateError);
     await expectLater(a.coordinator.prepare(7), throwsStateError);
     expect(a.writes, 0);
     final b = _Harness();
@@ -412,6 +967,18 @@ void main() {
     'duplicate existing NSIDs': (a) => a.other['nsid'] = 1,
   };
   for (final entry in unsafe.entries) {
+    test('${entry.key} cannot appear as an eligible removal target', () async {
+      final h = _Harness();
+      entry.value(h.api);
+      try {
+        final candidates = await h.coordinator.loadCandidates();
+        expect(candidates.any((c) => c.target.id == 7), false);
+      } on StateError catch (error) {
+        expect(error.toString(), contains('Removal target discovery failed'));
+      }
+      expect(h.writes, 0);
+      expect(h.lockFree, true);
+    });
     test(
       '${entry.key} is rejected before review and at fresh preflight',
       () async {
@@ -602,6 +1169,7 @@ void main() {
         },
       );
       expect(h.coordinator.available, false);
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
       await expectLater(h.coordinator.prepare(7), throwsStateError);
       expect(h.api.calls, isEmpty);
     });

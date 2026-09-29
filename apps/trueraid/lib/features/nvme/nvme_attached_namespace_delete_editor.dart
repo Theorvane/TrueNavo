@@ -18,6 +18,8 @@ class _DeleteState extends ConsumerState<NvmeAttachedNamespaceDeleteEditor> {
   NvmeAttachedNamespaceDeleteReview? _review;
   NvmeAttachedNamespaceDeleteCoordinator? _owner;
   Object? _session, _reviewSession;
+  List<NvmeAttachedNamespaceDeleteCandidate>? _candidates;
+  NvmeAttachedNamespaceDeleteCoordinator? _candidateOwner;
   bool _busy = false,
       _configurationLoss = false,
       _limitations = false,
@@ -44,6 +46,51 @@ class _DeleteState extends ConsumerState<NvmeAttachedNamespaceDeleteEditor> {
     _id.dispose();
     _phrase.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCandidates(
+    NvmeAttachedNamespaceDeleteCoordinator coordinator,
+  ) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _message = null;
+    });
+    try {
+      final candidates = await coordinator.loadCandidates();
+      if (!mounted ||
+          epoch != _epoch ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(
+            coordinator,
+            ref.read(nvmeAttachedNamespaceDeleteCoordinatorProvider),
+          )) {
+        return;
+      }
+      setState(() {
+        _candidates = candidates;
+        _candidateOwner = coordinator;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          identical(session, ref.read(dashboardActiveSessionProvider)) &&
+          identical(
+            coordinator,
+            ref.read(nvmeAttachedNamespaceDeleteCoordinatorProvider),
+          )) {
+        setState(
+          () => _message = 'Removal target discovery failed. No configuration request was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _prepare(
@@ -111,6 +158,8 @@ class _DeleteState extends ConsumerState<NvmeAttachedNamespaceDeleteEditor> {
       _busy = false;
       if (identical(session, ref.read(dashboardActiveSessionProvider))) {
         _discard();
+        _candidates = null;
+        _candidateOwner = null;
         _message = result.message;
       }
     });
@@ -129,21 +178,82 @@ class _DeleteState extends ConsumerState<NvmeAttachedNamespaceDeleteEditor> {
     if (!identical(session, _session)) {
       _discard();
       _id.clear();
+      _candidates = null;
+      _candidateOwner = null;
       _message = null;
       _session = session;
     }
     if (_owner != null && !identical(coordinator, _owner)) _discard();
+    if (_candidateOwner != null && !identical(coordinator, _candidateOwner)) {
+      _discard();
+      _id.clear();
+      _candidates = null;
+      _candidateOwner = null;
+      _message = null;
+    }
     final active =
         !_busy &&
         coordinator?.available == true &&
         coordinator?.locked == false;
     final review = _review;
+    final candidates = _candidates;
+    final selected = candidates
+        ?.where((c) => c.target.id == _targetId)
+        .singleOrNull;
     return TdPanel(
       title: 'Remove singly attached disabled ZVOL namespace configuration',
       description: 'Configuration removal only for a disabled unlocked ZVOL behind one disabled TCP/RDMA port in a restricted subsystem without other port mappings or host grants. All residents must be disabled unlocked ZVOLs with valid unique NSIDs. Backing storage and port association deletion are not requested; actual client access and backing integrity are unverified.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          OutlinedButton(
+            key: const Key('nvme-attached-namespace-delete-discover'),
+            onPressed: active ? () => _loadCandidates(coordinator!) : null,
+            child: const Text('Load or refresh eligible removal targets'),
+          ),
+          if (candidates != null) ...[
+            const Text(
+              'Discovery is a public configuration snapshot, not proof of runtime safety. Selection only fills the database ID; review and submission independently reread the server.',
+            ),
+            if (candidates.isEmpty)
+              const Text('No eligible namespace removal targets were found.'),
+            if (candidates.isNotEmpty)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Choose namespace',
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    key: const Key('nvme-attached-namespace-delete-choice'),
+                    isExpanded: true,
+                    value: selected?.target.id,
+                    hint: const Text('Select a namespace'),
+                    items: [
+                      for (final candidate in candidates)
+                        DropdownMenuItem(
+                          value: candidate.target.id,
+                          child: Text(
+                            '#${candidate.target.id} · NSID ${candidate.target.nsid} · ${candidate.subsystem.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: active
+                        ? (id) => setState(() {
+                            _discard();
+                            _id.text = id?.toString() ?? '';
+                            _message = null;
+                          })
+                        : null,
+                  ),
+                ),
+              ),
+            if (selected != null)
+              Text(
+                'Subsystem #${selected.subsystem.id}: ${selected.subsystem.name} — ${selected.subsystem.subnqn}; NSID ${selected.target.nsid}; association #${selected.mapping.id}, disabled ${selected.port.transport} port #${selected.port.id}',
+              ),
+          ],
           TextField(
             key: const Key('nvme-attached-namespace-delete-id'),
             controller: _id,

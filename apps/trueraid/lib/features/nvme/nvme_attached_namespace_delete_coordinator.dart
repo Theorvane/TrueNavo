@@ -32,6 +32,20 @@ final nvmeAttachedNamespaceDeleteCoordinatorProvider =
 
 enum NvmeAttachedNamespaceDeleteOutcome { completed, rejected, unknown }
 
+/// A public discovery hint, never authorization to remove configuration.
+final class NvmeAttachedNamespaceDeleteCandidate {
+  const NvmeAttachedNamespaceDeleteCandidate._(
+    this.target,
+    this.subsystem,
+    this.mapping,
+    this.port,
+  );
+  final NvmeNamespace target;
+  final NvmeSubsystem subsystem;
+  final NvmePortMapping mapping;
+  final NvmePort port;
+}
+
 final class NvmeAttachedNamespaceDeleteResult {
   const NvmeAttachedNamespaceDeleteResult(this.outcome, this.message);
   final NvmeAttachedNamespaceDeleteOutcome outcome;
@@ -181,6 +195,50 @@ final class NvmeAttachedNamespaceDeleteCoordinator {
       );
     }
     return target;
+  }
+
+  Future<List<NvmeAttachedNamespaceDeleteCandidate>> loadCandidates() async {
+    _guard();
+    if (_busy) throw StateError('Another operation is in progress.');
+    final owner = lock.acquire();
+    if (owner == null) throw StateError('Another operation is in progress.');
+    _busy = true;
+    _issued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final candidates = <NvmeAttachedNamespaceDeleteCandidate>[];
+      for (final namespace in snapshot.topology.namespaces) {
+        final NvmeNamespace target;
+        try {
+          target = _target(snapshot, namespace.id);
+        } on StateError {
+          continue;
+        }
+        final mapping = snapshot.topology.portMappings.singleWhere(
+          (m) => m.subsystemId == target.subsystemId,
+        );
+        candidates.add(
+          NvmeAttachedNamespaceDeleteCandidate._(
+            target,
+            snapshot.topology.subsystems.singleWhere(
+              (s) => s.id == target.subsystemId,
+            ),
+            mapping,
+            snapshot.topology.ports.singleWhere((p) => p.id == mapping.portId),
+          ),
+        );
+      }
+      candidates.sort((a, b) => a.target.id.compareTo(b.target.id));
+      _guard();
+      return List.unmodifiable(candidates);
+    } on Object {
+      throw StateError(
+        'Removal target discovery failed. No configuration request was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
   }
 
   Future<NvmeAttachedNamespaceDeleteReview> prepare(int id) async {
