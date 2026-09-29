@@ -23,6 +23,8 @@ class _AttachedRenameState
   NvmeSubsystemAttachedRenameReview? _review;
   NvmeSubsystemAttachedRenameCoordinator? _owner;
   Object? _session, _reviewSession;
+  List<NvmeSubsystemAttachedRenameCandidate>? _candidates;
+  NvmeSubsystemAttachedRenameCoordinator? _candidateOwner;
   bool _busy = false,
       _reload = false,
       _limitations = false,
@@ -52,6 +54,52 @@ class _AttachedRenameState
     _name.dispose();
     _phrase.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCandidates(
+    NvmeSubsystemAttachedRenameCoordinator coordinator,
+  ) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _name.clear();
+      _message = null;
+    });
+    try {
+      final candidates = await coordinator.loadCandidates();
+      if (!mounted ||
+          epoch != _epoch ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(
+            coordinator,
+            ref.read(nvmeSubsystemAttachedRenameCoordinatorProvider),
+          )) {
+        return;
+      }
+      setState(() {
+        _candidates = candidates;
+        _candidateOwner = coordinator;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          identical(session, ref.read(dashboardActiveSessionProvider)) &&
+          identical(
+            coordinator,
+            ref.read(nvmeSubsystemAttachedRenameCoordinatorProvider),
+          )) {
+        setState(
+          () => _message = 'Rename target discovery failed. No configuration request was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _prepare(
@@ -122,6 +170,8 @@ class _AttachedRenameState
       _busy = false;
       if (identical(session, ref.read(dashboardActiveSessionProvider))) {
         _discard();
+        _candidates = null;
+        _candidateOwner = null;
         _message = result.message;
       }
     });
@@ -141,21 +191,88 @@ class _AttachedRenameState
       _discard();
       _id.clear();
       _name.clear();
+      _candidates = null;
+      _candidateOwner = null;
       _message = null;
       _session = session;
     }
     if (_owner != null && !identical(coordinator, _owner)) _discard();
+    if (_candidateOwner != null && !identical(coordinator, _candidateOwner)) {
+      _discard();
+      _id.clear();
+      _name.clear();
+      _candidates = null;
+      _candidateOwner = null;
+      _message = null;
+    }
     final active =
         !_busy &&
         coordinator?.available == true &&
         coordinator?.locked == false;
     final review = _review;
+    final candidates = _candidates;
+    final selected = candidates
+        ?.where((c) => c.target.id == _targetId)
+        .singleOrNull;
     return TdPanel(
       title: 'Rename a singly attached restricted NVMe subsystem',
       description: 'Only a restricted subsystem with one disabled TCP/RDMA port association and no host grant is supported. Residents, if any, must be disabled unlocked ZVOLs with valid unique NSIDs. Its NQN and all namespace and other settings remain unchanged; backing identity, runtime access and concurrent changes are not proven.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          OutlinedButton(
+            key: const Key('nvme-subsystem-attached-rename-discover'),
+            onPressed: active ? () => _loadCandidates(coordinator!) : null,
+            child: const Text('Load or refresh eligible rename targets'),
+          ),
+          if (candidates != null) ...[
+            const Text(
+              'Discovery is a public configuration snapshot, not proof of runtime safety. Selection only fills the database ID; review and submission independently reread the server. Only the display name changes; NQN and reviewed associations are preserved.',
+            ),
+            if (candidates.isEmpty)
+              const Text('No eligible subsystem rename targets were found.'),
+            if (candidates.isNotEmpty)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Choose subsystem',
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    key: const Key('nvme-subsystem-attached-rename-choice'),
+                    isExpanded: true,
+                    value: selected?.target.id,
+                    hint: const Text('Select a subsystem'),
+                    items: [
+                      for (final candidate in candidates)
+                        DropdownMenuItem(
+                          value: candidate.target.id,
+                          child: Text(
+                            '#${candidate.target.id} · ${candidate.target.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: active
+                        ? (id) => setState(() {
+                            _discard();
+                            _id.text = id?.toString() ?? '';
+                            _name.clear();
+                            _message = null;
+                          })
+                        : null,
+                  ),
+                ),
+              ),
+            if (selected != null) ...[
+              Text(
+                'Current name: ${selected.target.name}; preserved NQN: ${selected.target.subnqn}; association #${selected.mapping.id}, disabled ${selected.port.transport} port #${selected.port.id}',
+              ),
+              Text(
+                'Preserved namespaces (${selected.namespaces.length}): ${selected.namespaces.isEmpty ? 'none' : selected.namespaces.map((n) => '#${n.id} / NSID ${n.nsid}').join(', ')}',
+              ),
+            ],
+          ],
           TextField(
             key: const Key('nvme-subsystem-attached-rename-id'),
             controller: _id,

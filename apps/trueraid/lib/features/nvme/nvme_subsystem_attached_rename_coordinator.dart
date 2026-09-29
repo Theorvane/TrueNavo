@@ -34,6 +34,20 @@ final nvmeSubsystemAttachedRenameCoordinatorProvider =
 
 enum NvmeSubsystemAttachedRenameOutcome { completed, rejected, unknown }
 
+/// Public candidate metadata is a hint, not authorization to rename.
+final class NvmeSubsystemAttachedRenameCandidate {
+  NvmeSubsystemAttachedRenameCandidate._(
+    this.target,
+    this.mapping,
+    this.port,
+    List<NvmeNamespace> namespaces,
+  ) : namespaces = List.unmodifiable(namespaces);
+  final NvmeSubsystem target;
+  final NvmePortMapping mapping;
+  final NvmePort port;
+  final List<NvmeNamespace> namespaces;
+}
+
 final class NvmeSubsystemAttachedRenameResult {
   const NvmeSubsystemAttachedRenameResult(this.outcome, this.message);
   final NvmeSubsystemAttachedRenameOutcome outcome;
@@ -162,6 +176,51 @@ final class NvmeSubsystemAttachedRenameCoordinator {
       );
     }
     return target;
+  }
+
+  Future<List<NvmeSubsystemAttachedRenameCandidate>> loadCandidates() async {
+    _guard();
+    if (_busy) throw StateError('Another operation is in progress.');
+    final owner = lock.acquire();
+    if (owner == null) throw StateError('Another operation is in progress.');
+    _busy = true;
+    _issued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final candidates = <NvmeSubsystemAttachedRenameCandidate>[];
+      for (final subsystem in snapshot.topology.subsystems) {
+        final NvmeSubsystem target;
+        try {
+          target = _target(snapshot, subsystem.id);
+        } on StateError {
+          continue;
+        }
+        final mapping = snapshot.topology.portMappings.singleWhere(
+          (m) => m.subsystemId == target.id,
+        );
+        candidates.add(
+          NvmeSubsystemAttachedRenameCandidate._(
+            target,
+            mapping,
+            snapshot.topology.ports.singleWhere((p) => p.id == mapping.portId),
+            snapshot.topology.namespaces
+                .where((n) => n.subsystemId == target.id)
+                .toList()
+              ..sort((a, b) => a.id.compareTo(b.id)),
+          ),
+        );
+      }
+      candidates.sort((a, b) => a.target.id.compareTo(b.target.id));
+      _guard();
+      return List.unmodifiable(candidates);
+    } on Object {
+      throw StateError(
+        'Rename target discovery failed. No configuration request was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
   }
 
   bool _matches(NvmeSubsystem? actual, NvmeSubsystem before, String name) =>

@@ -79,12 +79,17 @@ class _Fake
       hostMappings = <Map<String, Object?>>[];
   void Function()? onDispatch;
   String? failure;
+  String? queryFailure;
+  bool reverseRows = false;
+  int hostLoads = 0;
+  final extraNamespaces = <Map<String, Object?>>[];
   bool malformed = false;
   bool extraSubsystem = true;
   Completer<void>? gate;
   final started = Completer<void>();
   @override
   Future<NvmeHostPublicRows> loadNvmeHostReferences() async {
+    hostLoads++;
     if (gate != null) {
       if (!started.isCompleted) started.complete();
       await gate!.future;
@@ -112,11 +117,20 @@ class _Fake
       'nvmet.namespace.query' => [
         malformed ? {'id': 7} : Map.of(namespace),
         Map.of(other),
+        ...extraNamespaces,
       ],
       'nvmet.port_subsys.query' => [for (final m in mappings) Map.of(m)],
       _ => null,
     };
-    if (rows != null) return AdminCompleted(request, value: rows);
+    if (rows != null) {
+      if (queryFailure == request.method.name) {
+        throw StateError('private-server-error');
+      }
+      return AdminCompleted(
+        request,
+        value: reverseRows ? rows.reversed.toList() : rows,
+      );
+    }
     if (request.method.name != 'nvmet.subsys.update') {
       throw StateError('Unexpected method');
     }
@@ -231,19 +245,63 @@ class _Active extends Notifier<AuthenticatedSession?> {
 final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
 const _newName = 'Renamed storage';
-Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
+
+class _CoordinatorChoice
+    extends Notifier<NvmeSubsystemAttachedRenameCoordinator?> {
+  @override
+  NvmeSubsystemAttachedRenameCoordinator? build() => null;
+  void select(NvmeSubsystemAttachedRenameCoordinator coordinator) =>
+      state = coordinator;
+}
+
+final _choice =
+    NotifierProvider<
+      _CoordinatorChoice,
+      NvmeSubsystemAttachedRenameCoordinator?
+    >(_CoordinatorChoice.new);
+
+Future<ProviderContainer> _mount(
+  WidgetTester tester,
+  _Harness h, {
+  bool discovery = false,
+  double? width,
+  bool dark = true,
+}) async {
+  if (width != null) {
+    tester.view.physicalSize = Size(width, 960);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
   final container = ProviderContainer(
     overrides: [
       dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
+      if (discovery)
+        nvmeSubsystemAttachedRenameCoordinatorProvider.overrideWith((ref) {
+          final session = ref.watch(dashboardActiveSessionProvider);
+          final coordinator = ref.watch(_choice);
+          return identical(session, h.session) ? coordinator : null;
+        }),
     ],
   );
   addTearDown(container.dispose);
   container.read(_active.notifier).select(h.session);
+  if (discovery) container.read(_choice.notifier).select(h.coordinator);
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
-        theme: TrueRAIDTheme.dark(),
+        theme: dark ? TrueRAIDTheme.dark() : TrueRAIDTheme.light(),
+        builder: width == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 960),
+                  textScaler: const TextScaler.linear(2),
+                  viewInsets: const EdgeInsets.only(bottom: 200),
+                ),
+                child: child!,
+              ),
         home: const Scaffold(
           body: SingleChildScrollView(
             child: NvmeSubsystemAttachedRenameEditor(),
@@ -264,7 +322,500 @@ Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
   return container;
 }
 
+Future<void> _tap(WidgetTester tester, String suffix) async {
+  final finder = find.byKey(Key('nvme-subsystem-attached-rename-$suffix'));
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _select(WidgetTester tester, int id, String name) async {
+  await _tap(tester, 'choice');
+  await tester.tap(find.text('#$id · $name').last);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _draft(WidgetTester tester, String name) async {
+  await tester.enterText(
+    find.byKey(const Key('nvme-subsystem-attached-rename-new')),
+    name,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  for (final dark in [true, false]) {
+    for (final width in [320.0, 430.0]) {
+      for (final populated in [true, false]) {
+        testWidgets(
+          'rename selector $width dark=$dark populated=$populated at 200% with keyboard',
+          (tester) async {
+            final h = _Harness();
+            if (!populated) h.api.namespace['subsys'] = {'id': 4};
+            await _mount(tester, h, discovery: true, width: width, dark: dark);
+            await _tap(tester, 'discover');
+            await _select(tester, 2, 'unused');
+            expect(
+              find.textContaining(
+                'Current name: unused; preserved NQN: nqn.2026-09.example:unused;',
+              ),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                populated
+                    ? 'Preserved namespaces (1): #7 / NSID 1'
+                    : 'Preserved namespaces (0): none',
+              ),
+              findsOneWidget,
+            );
+            expect(h.writes, 0);
+            await _draft(tester, _newName);
+            await _tap(tester, 'review');
+            for (final consent in ['reload', 'limitations', 'client']) {
+              await _tap(tester, consent);
+            }
+            final phrase = find.byKey(
+              const Key('nvme-subsystem-attached-rename-phrase'),
+            );
+            await tester.ensureVisible(phrase);
+            await tester.enterText(
+              phrase,
+              'RENAME ATTACHED NVME SUBSYSTEM 2 FROM unused TO $_newName KEEP NQN nqn.2026-09.example:unused KEEP ASSOCIATION 11 PORT 3',
+            );
+            await tester.pumpAndSettle();
+            await _tap(tester, 'submit');
+            expect(h.writes, 1);
+            expect(h.api.subsystem['name'], _newName);
+            expect(h.api.subsystem['subnqn'], 'nqn.2026-09.example:unused');
+            expect(h.api.ports.single['enabled'], false);
+            expect(
+              find.byKey(const Key('nvme-subsystem-attached-rename-choice')),
+              findsNothing,
+            );
+            await _tap(tester, 'discover');
+            await _select(tester, 2, _newName);
+            await _draft(tester, 'Renamed again');
+            await _tap(tester, 'review');
+            for (final consent in ['reload', 'limitations', 'client']) {
+              expect(
+                tester
+                    .widget<Checkbox>(
+                      find.byKey(
+                        Key('nvme-subsystem-attached-rename-$consent'),
+                      ),
+                    )
+                    .value,
+                false,
+              );
+            }
+            expect(h.writes, 1);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox());
+          },
+        );
+      }
+    }
+  }
+  for (final reason in ['refresh', 'selection', 'manual']) {
+    testWidgets('$reason invalidates rename review and resets consent', (
+      tester,
+    ) async {
+      final h = _Harness();
+      await _mount(tester, h, discovery: true);
+      await _tap(tester, 'discover');
+      await _select(tester, 2, 'unused');
+      await _draft(tester, _newName);
+      await _tap(tester, 'review');
+      for (final consent in ['reload', 'limitations', 'client']) {
+        await _tap(tester, consent);
+      }
+      if (reason == 'refresh') {
+        await _tap(tester, 'discover');
+        for (final field in ['id', 'new']) {
+          expect(
+            tester
+                .widget<TextField>(
+                  find.byKey(Key('nvme-subsystem-attached-rename-$field')),
+                )
+                .controller!
+                .text,
+            isEmpty,
+          );
+        }
+        await _select(tester, 2, 'unused');
+      } else if (reason == 'selection') {
+        await _select(tester, 2, 'unused');
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const Key('nvme-subsystem-attached-rename-new')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+      } else {
+        await tester.enterText(
+          find.byKey(const Key('nvme-subsystem-attached-rename-id')),
+          '4',
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('nvme-subsystem-attached-rename-phrase')),
+          findsNothing,
+        );
+        await tester.enterText(
+          find.byKey(const Key('nvme-subsystem-attached-rename-id')),
+          '2',
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(
+        find.byKey(const Key('nvme-subsystem-attached-rename-phrase')),
+        findsNothing,
+      );
+      await _draft(tester, _newName);
+      await _tap(tester, 'review');
+      for (final consent in ['reload', 'limitations', 'client']) {
+        expect(
+          tester
+              .widget<Checkbox>(
+                find.byKey(Key('nvme-subsystem-attached-rename-$consent')),
+              )
+              .value,
+          false,
+        );
+      }
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final reason in ['session', 'coordinator']) {
+    testWidgets('$reason clears rename hints and both draft inputs', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mount(tester, h, discovery: true);
+      await _tap(tester, 'discover');
+      await _select(tester, 2, 'unused');
+      await _draft(tester, _newName);
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      } else {
+        container.read(_choice.notifier).select(_Harness().coordinator);
+        expect(
+          container.read(nvmeSubsystemAttachedRenameCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-subsystem-attached-rename-choice')),
+        findsNothing,
+      );
+      for (final field in ['id', 'new']) {
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(Key('nvme-subsystem-attached-rename-$field')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+      }
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final reason in ['session', 'coordinator', 'dispose']) {
+    testWidgets('$reason cannot restore late rename candidates', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mount(tester, h, discovery: true);
+      h.api.gate = Completer<void>();
+      final button = find.byKey(
+        const Key('nvme-subsystem-attached-rename-discover'),
+      );
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+      await h.api.started.future;
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      }
+      if (reason == 'coordinator') {
+        container.read(_choice.notifier).select(_Harness().coordinator);
+        expect(
+          container.read(nvmeSubsystemAttachedRenameCoordinatorProvider),
+          isNot(same(h.coordinator)),
+        );
+      }
+      if (reason == 'dispose') {
+        await tester.pumpWidget(const SizedBox());
+      } else {
+        await tester.pump();
+      }
+      h.api.gate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-subsystem-attached-rename-choice')),
+        findsNothing,
+      );
+      expect(
+        find.text(
+          'Rename target discovery failed. No configuration request was sent.',
+        ),
+        findsNothing,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final failure in [false, true]) {
+    testWidgets(
+      'rename discovery distinguishes empty from failure=$failure and manual fallback',
+      (tester) async {
+        final h = _Harness();
+        if (failure) {
+          h.api.queryFailure = 'nvmet.port.query';
+        } else {
+          h.api.ports.single['enabled'] = true;
+        }
+        await _mount(tester, h, discovery: true);
+        await _tap(tester, 'discover');
+        expect(
+          find.text('No eligible subsystem rename targets were found.'),
+          failure ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.text(
+            'Rename target discovery failed. No configuration request was sent.',
+          ),
+          failure ? findsOneWidget : findsNothing,
+        );
+        h.api.queryFailure = null;
+        h.api.ports.single['enabled'] = false;
+        await tester.enterText(
+          find.byKey(const Key('nvme-subsystem-attached-rename-id')),
+          '2',
+        );
+        await _draft(tester, _newName);
+        await _tap(tester, 'review');
+        expect(
+          find.byKey(const Key('nvme-subsystem-attached-rename-phrase')),
+          findsOneWidget,
+        );
+        expect(h.writes, 0);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final populated in [false, true]) {
+      test(
+        '$transport rename discovery populated=$populated is read-only and independently reviewed',
+        () async {
+          final h = _Harness();
+          h.api.ports.single['addr_trtype'] = transport;
+          if (!populated) h.api.namespace['subsys'] = {'id': 4};
+          h.api.reverseRows = true;
+          final candidates = await h.coordinator.loadCandidates();
+          expect(candidates.map((c) => c.target.id), [2]);
+          expect(candidates.single.target.name, 'unused');
+          expect(candidates.single.target.subnqn, h.api.subsystem['subnqn']);
+          expect(candidates.single.mapping.id, 11);
+          expect(candidates.single.port.transport, transport);
+          expect(
+            candidates.single.namespaces.map((n) => n.id),
+            populated ? [7] : [],
+          );
+          expect(() => candidates.clear(), throwsUnsupportedError);
+          expect(
+            () => candidates.single.namespaces.clear(),
+            throwsUnsupportedError,
+          );
+          expect(h.api.calls.map((r) => r.method.name), [
+            'nvmet.subsys.query',
+            'nvmet.port.query',
+            'nvmet.namespace.query',
+            'nvmet.port_subsys.query',
+          ]);
+          expect(h.api.hostLoads, 1);
+          expect(h.writes, 0);
+          final review = await h.coordinator.prepare(
+            candidates.single.target.id,
+            name: _newName,
+          );
+          expect(h.api.hostLoads, 2);
+          expect(
+            (await h.execute(review)).outcome,
+            NvmeSubsystemAttachedRenameOutcome.completed,
+          );
+          expect(
+            h.api.calls
+                .singleWhere((r) => r.method.name == 'nvmet.subsys.update')
+                .arguments,
+            [
+              2,
+              {'name': _newName, 'subnqn': 'nqn.2026-09.example:unused'},
+            ],
+          );
+          expect(h.api.hostLoads, 4);
+          expect(h.api.subsystem['subnqn'], 'nqn.2026-09.example:unused');
+        },
+      );
+    }
+  }
+  test(
+    'sorted multiple candidate and resident hints remain immutable',
+    () async {
+      final h = _Harness();
+      h.api.reverseRows = true;
+      h.api.other['device_type'] = 'ZVOL';
+      h.api.ports.add({'id': 5, 'addr_trtype': 'RDMA', 'enabled': false});
+      h.api.mappings.add({
+        'id': 12,
+        'port': {'id': 5},
+        'subsys': {'id': 4},
+      });
+      h.api.extraNamespaces.addAll([
+        for (final (id, nsid) in [(10, 3), (6, 4)])
+          {
+            'id': id,
+            'nsid': nsid,
+            'subsys': {'id': 2},
+            'device_type': 'ZVOL',
+            'enabled': false,
+            'locked': false,
+          },
+      ]);
+      final candidates = await h.coordinator.loadCandidates();
+      expect(candidates.map((c) => c.target.id), [2, 4]);
+      expect(candidates.first.namespaces.map((n) => n.id), [6, 7, 10]);
+      expect(candidates.last.namespaces.single.id, 8);
+      expect(() => candidates.first.namespaces.clear(), throwsUnsupportedError);
+      expect(h.writes, 0);
+    },
+  );
+  test(
+    'discovery consumes earlier review and candidate cannot bypass fresh drift',
+    () async {
+      final h = _Harness();
+      final old = await h.coordinator.prepare(2, name: _newName);
+      final candidates = await h.coordinator.loadCandidates();
+      expect(
+        (await h.execute(old)).outcome,
+        NvmeSubsystemAttachedRenameOutcome.rejected,
+      );
+      h.api.ports.single['enabled'] = true;
+      await expectLater(
+        h.coordinator.prepare(candidates.single.target.id, name: _newName),
+        throwsStateError,
+      );
+      h.api.ports.single['enabled'] = false;
+      final review = await h.coordinator.prepare(2, name: _newName);
+      h.api.namespace['nsid'] = 3;
+      expect(
+        (await h.execute(review)).outcome,
+        NvmeSubsystemAttachedRenameOutcome.rejected,
+      );
+      expect(h.writes, 0);
+    },
+  );
+  for (final query in [
+    'nvmet.subsys.query',
+    'nvmet.port.query',
+    'nvmet.namespace.query',
+    'nvmet.port_subsys.query',
+  ]) {
+    test(
+      '$query rename discovery failure is sanitized and releases lock',
+      () async {
+        final h = _Harness();
+        h.api.queryFailure = query;
+        await expectLater(
+          h.coordinator.loadCandidates(),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.toString(),
+              'sanitized',
+              isNot(contains('private-server-error')),
+            ),
+          ),
+        );
+        final owner = h.lock.acquire();
+        expect(owner, isNotNull);
+        h.lock.release(owner!);
+        h.api.queryFailure = null;
+        expect(await h.coordinator.loadCandidates(), hasLength(1));
+        expect(h.writes, 0);
+      },
+    );
+  }
+  for (final reason in ['session', 'dispose', 'lock', 'uncertain']) {
+    test('$reason blocks rename discovery without reads', () async {
+      final h = _Harness();
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      if (reason == 'uncertain') {
+        final review = await h.coordinator.prepare(2, name: _newName);
+        h.api.failure = 'unknown';
+        await h.execute(review);
+        h.api.calls.clear();
+      }
+      final owner = reason == 'lock' ? h.lock.acquire() : null;
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+      expect(h.api.calls, isEmpty);
+      if (owner != null) h.lock.release(owner);
+    });
+  }
+  for (final reason in ['session', 'dispose', 'concurrent']) {
+    test(
+      '$reason during rename discovery cannot restore stale hints',
+      () async {
+        final h = _Harness();
+        h.api.gate = Completer<void>();
+        final pending = h.coordinator.loadCandidates();
+        final checked = reason == 'concurrent'
+            ? null
+            : expectLater(pending, throwsStateError);
+        await h.api.started.future;
+        if (reason == 'session') h.current = false;
+        if (reason == 'dispose') h.coordinator.dispose();
+        if (reason == 'concurrent') {
+          await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+          await expectLater(
+            h.coordinator.prepare(2, name: _newName),
+            throwsStateError,
+          );
+        }
+        h.api.gate!.complete();
+        if (checked != null) {
+          await checked;
+        } else {
+          expect(await pending, hasLength(1));
+        }
+        final owner = h.lock.acquire();
+        expect(owner, isNotNull);
+        h.lock.release(owner!);
+        expect(h.writes, 0);
+      },
+    );
+  }
+  test('unresolved discovery inventory fails closed', () async {
+    final h = _Harness();
+    h.api.other['subsys'] = {'id': 999};
+    await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+    expect(h.writes, 0);
+  });
   test(
     'RDMA rename preserves populated residents and optional settings',
     () async {
@@ -330,6 +881,7 @@ void main() {
     ]);
     final a = _Harness();
     overflow(a.api);
+    await expectLater(a.coordinator.loadCandidates(), throwsStateError);
     await expectLater(
       a.coordinator.prepare(2, name: _newName),
       throwsStateError,
@@ -383,6 +935,7 @@ void main() {
         },
       );
       expect(h.coordinator.available, false);
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
       await expectLater(
         h.coordinator.prepare(2, name: _newName),
         throwsStateError,
@@ -546,6 +1099,28 @@ void main() {
     'malformed': (a) => a.malformed = true,
   };
   for (final entry in unsafe.entries) {
+    test(
+      '${entry.key} rename discovery is a hint not requested-name authorization',
+      () async {
+        final h = _Harness();
+        entry.value(h.api);
+        try {
+          final candidates = await h.coordinator.loadCandidates();
+          if (entry.key == 'no-op') {
+            expect(candidates.single.target.name, _newName);
+            await expectLater(
+              h.coordinator.prepare(2, name: _newName),
+              throwsStateError,
+            );
+          } else {
+            expect(candidates.any((c) => c.target.id == 2), false);
+          }
+        } on StateError catch (error) {
+          expect(error.toString(), contains('Rename target discovery failed'));
+        }
+        expect(h.writes, 0);
+      },
+    );
     test('$entry rejects review and fresh preflight', () async {
       final a = _Harness();
       entry.value(a.api);
