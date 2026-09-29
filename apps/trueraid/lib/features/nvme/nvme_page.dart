@@ -45,6 +45,7 @@ import 'nvme_subsystem_restrict_editor.dart';
 import 'nvme_subsystem_rename_editor.dart';
 import 'nvme_subsystem_nqn_editor.dart';
 import 'nvme_subsystem_populated_rename_editor.dart';
+import 'nvme_subsystem_attached_rename_editor.dart';
 import 'nvme_subsystem_populated_ana_editor.dart';
 import 'nvme_subsystem_populated_pi_editor.dart';
 import 'nvme_subsystem_populated_qid_editor.dart';
@@ -179,6 +180,8 @@ class _NvmePageState extends ConsumerState<NvmePage> {
                   const NvmeSubsystemRenameEditor(),
                   const SizedBox(height: 20),
                   const NvmeSubsystemPopulatedRenameEditor(),
+                  const SizedBox(height: 20),
+                  const NvmeSubsystemAttachedRenameEditor(),
                   const SizedBox(height: 20),
                   const NvmeSubsystemNqnEditor(),
                   const SizedBox(height: 20),

@@ -1,6 +1,22 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: configuration-only removal of a singly attached disabled ZVOL namespace
+## Current continuation: NQN-preserving display-name editing of a singly attached restricted subsystem
+
+A separate native editor now renames an empty or safe ZVOL-populated restricted subsystem associated with exactly one disabled TCP/RDMA port. The port must have no other subsystem association and there must be no host grant. Residents, if any, must be disabled unlocked ZVOLs with known valid unique NSIDs. Enabled/shared/FC ports, unrestricted or host-granted targets, FILE/enabled/locked/unknown-state residents and incomplete inventory fail closed. Existing isolated empty/populated renaming workflows remain unchanged.
+
+The existing display-name validation is reused: 1–120 characters, no leading/trailing whitespace or ASCII controls; case-insensitive collisions across the complete subsystem inventory and no-ops reject. This is a conservative local display-name subset, not the API's universal maximum. Following the official [subsystem update API](https://api.truenas.com/v25.10/api_methods_nvmet.subsys.update.html), only `nvmet.subsys.update(id, {name: requestedName, subnqn: existingNqn})` is submitted. The NQN is explicitly preserved; no access-policy, port, association, namespace, backing or tuning-field changes are requested.
+
+An endpoint-bound single-use five-minute review shows exact subsystem ID/old-new name, preserved NQN, exact association/disabled port and immutable ID-sorted resident ID/NSID list. Three independent consents cover rename/reload, backing/runtime/concurrency limits and possible client disruption or dependent label updates. An exact action/ID/old-new/NQN/association/port phrase is required. Fresh complete bounded public topology and protected host references must match immediately before dispatch, with expiry rechecked after asynchronous preflight. Strict response and independent fresh readback must show the requested name while preserving NQN, access policy, optional ANA/PI/queue-ID/OUI reporting and values, associations, disabled port, resident metadata and every other projected row.
+
+Any uncertainty after possible dispatch fences the original session without retry or rollback. Cancellation, disposal, stale/foreign/superseded/replayed reviews, shared-lock contention, input or connection changes and public drift reject stale work; late review completion cannot restore a disposed page. All three consents reset on every new review.
+
+One hundred two fake API and widget tests cover TCP/RDMA and empty/populated resident preservation, immutable multi-resident review, Unicode and boundary display names, invalid input and full inventory collisions, unsafe targets and fresh-preflight drift, independently missing capabilities and oversized inventory, three mandatory consents, strict returned-name/NQN and unselected optional-setting response/readback preservation, failure fencing and lifecycle guards before/after dispatch, native ID/name/session/cancel invalidation, late page disposal and 320/430px dark/light 200% keyboard layouts with consent reset. The focused and existing NVMe page suites pass together (117 tests); app static analysis is clean.
+
+Sequential public projections cannot attest hidden backing identity/health, actual initiator identity or access, runtime quiescence, dependent external labels, client compatibility or atomicity. Disabled saved flags and absent host grants do not prove runtime isolation. No live NAS read or write occurred. Active/shared/host-granted/FC or unsafe-resident subsystem rename, attached NQN/tuning changes, backing-aware namespace creation and associated-host credential management remain pending; TD-037 remains partial. SDK sources are unchanged and its suite is not rerun in this continuation.
+
+Verification: final app static analysis clean; full app suite 6,114 passing and one existing skip. No live NAS requests were made.
+
+## Previous continuation: configuration-only removal of a singly attached disabled ZVOL namespace
 
 A separate native editor now removes an existing disabled unlocked ZVOL namespace configuration from a restricted subsystem with exactly one disabled TCP/RDMA port association. The port must have no other subsystem association and there must be no host grant. All residents must be disabled unlocked ZVOLs with known valid unique NSIDs. FILE, enabled/locked/unknown-state targets or neighbors, shared or FC ports, missing NQN and incomplete inventory fail closed. The existing isolated namespace removal workflow is unchanged.
 
