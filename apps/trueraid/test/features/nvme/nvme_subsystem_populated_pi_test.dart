@@ -524,6 +524,9 @@ void main() {
                 dashboardActiveSessionProvider.overrideWith(
                   (ref) => ref.watch(_active),
                 ),
+                nvmeSubsystemPopulatedPiCoordinatorProvider.overrideWithValue(
+                  h.coordinator,
+                ),
               ],
             );
             addTearDown(container.dispose);

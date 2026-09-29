@@ -415,6 +415,9 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          nvmeHostKeyReplaceCoordinatorProvider.overrideWithValue(
+            h.coordinator,
+          ),
         ],
         child: MaterialApp(
           theme: TrueRAIDTheme.dark(),

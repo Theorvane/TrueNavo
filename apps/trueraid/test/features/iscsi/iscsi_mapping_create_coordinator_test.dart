@@ -618,6 +618,7 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          iscsiMappingCreateCoordinatorProvider.overrideWithValue(h.coordinator),
         ],
         child: MaterialApp(
           theme: TrueRAIDTheme.dark(),
