@@ -81,7 +81,8 @@ class _Fake
   void Function()? onDispatch;
   String? failure;
   bool malformed = false;
-  bool includeOther = true;
+  bool includeOther = true, reverseRows = false;
+  final extraSubsystems = <Map<String, Object?>>[];
   final destination = <String, Object?>{
     'id': 4,
     'name': 'destination',
@@ -105,7 +106,11 @@ class _Fake
   Future<AdminResult> invokeAdmin(AdminRequest request) async {
     calls.add(request);
     final rows = switch (request.method.name) {
-      'nvmet.subsys.query' => [Map.of(subsystem), Map.of(destination)],
+      'nvmet.subsys.query' => [
+        Map.of(subsystem),
+        Map.of(destination),
+        for (final s in extraSubsystems) Map.of(s),
+      ],
       'nvmet.port.query' => [for (final p in ports) Map.of(p)],
       'nvmet.namespace.query' => [
         malformed ? {'id': 7} : Map.of(namespace),
@@ -115,7 +120,12 @@ class _Fake
       'nvmet.port_subsys.query' => [for (final m in mappings) Map.of(m)],
       _ => null,
     };
-    if (rows != null) return AdminCompleted(request, value: rows);
+    if (rows != null) {
+      return AdminCompleted(
+        request,
+        value: reverseRows ? rows.reversed.toList() : rows,
+      );
+    }
     if (request.method.name != 'nvmet.namespace.update') {
       throw StateError('Unexpected method');
     }
@@ -300,6 +310,291 @@ Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
 }
 
 void main() {
+  test(
+    'destination NSID collision is filtered independently per source',
+    () async {
+      final h = _Harness();
+      h.api.residents.add(_resident(12, 1));
+      final candidates = await h.coordinator.loadCandidates();
+      expect(candidates.map((c) => c.target.id), [8]);
+      expect(candidates.single.destinations.map((s) => s.id), [4]);
+      expect(h.writes, 0);
+    },
+  );
+  test('discovery results are not authority after port drift', () async {
+    final h = _Harness();
+    final candidates = await h.coordinator.loadCandidates();
+    h.api.ports.single['enabled'] = true;
+    await expectLater(
+      h.coordinator.prepare(
+        candidates.first.target.id,
+        destinationId: candidates.first.destinations.first.id,
+      ),
+      throwsStateError,
+    );
+    expect(h.writes, 0);
+  });
+  test('discovery cannot overlap review or another discovery', () async {
+    final h = _Harness();
+    h.api.gate = Completer<void>();
+    final pending = h.coordinator.loadCandidates();
+    await h.api.started.future;
+    await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+    await expectLater(
+      h.coordinator.prepare(7, destinationId: 4),
+      throwsStateError,
+    );
+    h.api.gate!.complete();
+    expect(await pending, hasLength(2));
+    final owner = h.lock.acquire();
+    expect(owner, isNotNull);
+    h.lock.release(owner!);
+    expect(h.writes, 0);
+  });
+
+  testWidgets(
+    'refresh and connection replacement clear selections and review',
+    (tester) async {
+      final h = _Harness();
+      final container = await _mount(tester, h);
+      Future<void> tap(String key) async {
+        final f = find.byKey(Key(key));
+        await tester.ensureVisible(f);
+        await tester.tap(f);
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> select() async {
+        tester
+            .widget<DropdownButton<int>>(
+              find.byKey(
+                const Key('nvme-attached-namespace-move-source-choice'),
+              ),
+            )
+            .onChanged!(7);
+        await tester.pumpAndSettle();
+        tester
+            .widget<DropdownButton<int>>(
+              find.byKey(
+                const Key('nvme-attached-namespace-move-destination-choice'),
+              ),
+            )
+            .onChanged!(4);
+        await tester.pumpAndSettle();
+        await tap('nvme-attached-namespace-move-review');
+        expect(
+          find.byKey(const Key('nvme-attached-namespace-move-submit')),
+          findsOneWidget,
+        );
+        for (final consent in ['reload', 'limitations', 'identity']) {
+          final checkbox = find.byKey(
+            Key('nvme-attached-namespace-move-$consent'),
+          );
+          expect(tester.widget<Checkbox>(checkbox).value, false);
+          await tap('nvme-attached-namespace-move-$consent');
+          expect(tester.widget<Checkbox>(checkbox).value, true);
+        }
+      }
+
+      expect(h.api.calls, isEmpty);
+      await tap('nvme-attached-namespace-move-discover');
+      await select();
+      await tap('nvme-attached-namespace-move-discover');
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-move-submit')),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-move-id')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-move-new')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      await select();
+      final replacement = _Harness();
+      container.read(_active.notifier).select(replacement.session);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-move-source-choice')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-move-submit')),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('nvme-attached-namespace-move-id')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(replacement.api.calls, isEmpty);
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  for (final reason in ['session', 'unmount']) {
+    testWidgets('late discovery after $reason does not restore old options', (
+      tester,
+    ) async {
+      final h = _Harness();
+      h.api.gate = Completer<void>();
+      final container = await _mount(tester, h);
+      final discover = find.byKey(
+        const Key('nvme-attached-namespace-move-discover'),
+      );
+      await tester.ensureVisible(discover);
+      await tester.tap(discover);
+      await tester.pump();
+      await h.api.started.future;
+      if (reason == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+        await tester.pump();
+      } else {
+        await tester.pumpWidget(const SizedBox());
+      }
+      h.api.gate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-attached-namespace-move-source-choice')),
+        findsNothing,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final failure in [false, true]) {
+    testWidgets(
+      'discovery distinguishes empty inventory from failure=$failure',
+      (tester) async {
+        final h = _Harness();
+        h.api.namespace['enabled'] = true;
+        h.api.malformed = failure;
+        await _mount(tester, h);
+        final discover = find.byKey(
+          const Key('nvme-attached-namespace-move-discover'),
+        );
+        await tester.ensureVisible(discover);
+        await tester.tap(discover);
+        await tester.pumpAndSettle();
+        expect(
+          find.text('No eligible namespace and destination pairs were found.'),
+          failure ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.text(
+            'Move target discovery failed. No configuration request was sent.',
+          ),
+          failure ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byKey(const Key('nvme-attached-namespace-move-source-choice')),
+          findsNothing,
+        );
+        expect(h.writes, 0);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+  test(
+    'discovery is bounded public immutable metadata and never writes',
+    () async {
+      final h = _Harness();
+      h.api.reverseRows = true;
+      h.api.extraSubsystems.add({
+        'id': 6,
+        'name': 'another',
+        'subnqn': 'nqn.2026-09.example:another',
+        'allow_any_host': false,
+      });
+      final candidates = await h.coordinator.loadCandidates();
+      expect(candidates.map((c) => c.target.id), [7, 8]);
+      expect(candidates.first.source.id, 2);
+      expect(candidates.first.destinations.map((s) => s.id), [4, 6]);
+      expect(() => candidates.clear(), throwsUnsupportedError);
+      expect(
+        () => candidates.first.destinations.clear(),
+        throwsUnsupportedError,
+      );
+      expect(h.writes, 0);
+      expect(h.api.calls.map((r) => r.method.name), [
+        'nvmet.subsys.query',
+        'nvmet.port.query',
+        'nvmet.namespace.query',
+        'nvmet.port_subsys.query',
+      ]);
+    },
+  );
+  test(
+    'discovery invalidates an earlier review and does not authorize dispatch',
+    () async {
+      final h = _Harness();
+      final review = await h.coordinator.prepare(7, destinationId: 4);
+      await h.coordinator.loadCandidates();
+      expect(
+        (await h.execute(review)).outcome,
+        NvmeAttachedNamespaceMoveOutcome.rejected,
+      );
+      expect(h.writes, 0);
+      h.api.namespace['enabled'] = true;
+      await expectLater(
+        h.coordinator.prepare(7, destinationId: 4),
+        throwsStateError,
+      );
+    },
+  );
+  for (final reason in ['session', 'dispose', 'lock', 'malformed']) {
+    test(
+      'discovery $reason fails closed and releases its operation lock',
+      () async {
+        final h = _Harness();
+        Object? owner;
+        if (reason == 'session') h.current = false;
+        if (reason == 'dispose') h.coordinator.dispose();
+        if (reason == 'lock') owner = h.lock.acquire();
+        if (reason == 'malformed') h.api.malformed = true;
+        await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+        expect(h.writes, 0);
+        if (owner != null) h.lock.release(owner);
+        final fresh = h.lock.acquire();
+        expect(fresh, isNotNull);
+        h.lock.release(fresh!);
+      },
+    );
+  }
+  for (final reason in ['session', 'dispose']) {
+    test('late discovery $reason response cannot be used', () async {
+      final h = _Harness();
+      h.api.gate = Completer<void>();
+      final future = h.coordinator.loadCandidates();
+      final rejected = expectLater(future, throwsStateError);
+      await h.api.started.future;
+      if (reason == 'session') h.current = false;
+      if (reason == 'dispose') h.coordinator.dispose();
+      h.api.gate!.complete();
+      await rejected;
+      expect(h.writes, 0);
+    });
+  }
+
   for (final field in ['nsid', 'subsys', 'device_type', 'locked', 'enabled']) {
     for (final phase in ['response', 'readback']) {
       test('$phase missing selected $field fences original session', () async {
@@ -362,6 +657,7 @@ void main() {
       ]);
       final a = _Harness();
       overflow(a.api);
+      await expectLater(a.coordinator.loadCandidates(), throwsStateError);
       await expectLater(
         a.coordinator.prepare(7, destinationId: 4),
         throwsStateError,
@@ -390,6 +686,13 @@ void main() {
               if (populated) h.api.residents.add(_resident(12, 3));
               final beforeOther = Map.of(h.api.other),
                   beforeMapping = Map.of(h.api.mappings.single);
+              final choices = await h.coordinator.loadCandidates();
+              expect(
+                choices.map((c) => c.target.id),
+                onlyTarget ? [7] : [7, 8],
+              );
+              expect(choices.first.destinations.map((s) => s.id), [4]);
+              expect(h.writes, 0);
               final r = await h.coordinator.prepare(7, destinationId: 4);
               expect(
                 r.sourceNamespaces.map((n) => n.id),
@@ -669,7 +972,7 @@ void main() {
       'subsys': {'id': 4},
     }),
     'destination port mapping': (a) => a.mappings.add({
-      'id': 11,
+      'id': 12,
       'port': {'id': 3},
       'subsys': {'id': 4},
     }),
@@ -678,6 +981,16 @@ void main() {
     'duplicate existing NSIDs': (a) => a.other['nsid'] = 1,
   };
   for (final entry in unsafe.entries) {
+    test('discovery excludes ${entry.key} attached relocation pairs', () async {
+      final h = _Harness();
+      entry.value(h.api);
+      if (const {'malformed', 'unknown port enabled'}.contains(entry.key)) {
+        await expectLater(h.coordinator.loadCandidates(), throwsStateError);
+      } else {
+        expect(await h.coordinator.loadCandidates(), isEmpty);
+      }
+      expect(h.writes, 0);
+    });
     test(
       '${entry.key} is rejected before review and at fresh preflight',
       () async {
@@ -874,6 +1187,7 @@ void main() {
         },
       );
       expect(h.coordinator.available, false);
+      await expectLater(h.coordinator.loadCandidates(), throwsStateError);
       await expectLater(
         h.coordinator.prepare(7, destinationId: 4),
         throwsStateError,
@@ -934,11 +1248,13 @@ void main() {
             }
 
             final id = find.byKey(const Key('nvme-attached-namespace-move-id'));
-            await tester.enterText(id, '7');
-            await tester.enterText(
-              find.byKey(const Key('nvme-attached-namespace-move-new')),
-              '4',
-            );
+            expect(h.api.calls, isEmpty);
+            await tap('nvme-attached-namespace-move-discover');
+            await tap('nvme-attached-namespace-move-source-choice');
+            await tester.tap(find.text('#7 · NSID 1 · unused').last);
+            await tester.pumpAndSettle();
+            await tap('nvme-attached-namespace-move-destination-choice');
+            await tester.tap(find.text('#4 · destination').last);
             await tester.pumpAndSettle();
             await tap('nvme-attached-namespace-move-review');
             expect(h.writes, 0);
@@ -989,6 +1305,10 @@ void main() {
             expect(h.api.namespace['subsys'], {'id': 4});
             expect(h.api.namespace['nsid'], 1);
             await tester.enterText(id, '8');
+            await tester.enterText(
+              find.byKey(const Key('nvme-attached-namespace-move-new')),
+              '4',
+            );
             await tester.pumpAndSettle();
             await tap('nvme-attached-namespace-move-review');
             for (final consent in ['reload', 'limitations', 'identity']) {

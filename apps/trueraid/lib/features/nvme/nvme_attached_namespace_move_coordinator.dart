@@ -63,6 +63,18 @@ final class NvmeAttachedNamespaceMoveReview {
       'MOVE ATTACHED NVME NAMESPACE ${target.id} FROM SUBSYSTEM ${source.id} NQN ${source.subnqn} TO ${destination.id} NQN ${destination.subnqn} KEEP NSID ${target.nsid} KEEP ASSOCIATION ${mapping.id} PORT ${port.id}';
 }
 
+/// A public discovery hint, never authority to dispatch a change.
+final class NvmeAttachedNamespaceMoveCandidate {
+  NvmeAttachedNamespaceMoveCandidate._(
+    this.target,
+    this.source,
+    Iterable<NvmeSubsystem> destinations,
+  ) : destinations = List.unmodifiable(destinations);
+  final NvmeNamespace target;
+  final NvmeSubsystem source;
+  final List<NvmeSubsystem> destinations;
+}
+
 /// Saved subsystem assignment only; no backing paths, sizes or identifiers are submitted.
 /// Public sequential snapshots do not prove backing identity/health or runtime IO.
 final class NvmeAttachedNamespaceMoveCoordinator {
@@ -228,6 +240,65 @@ final class NvmeAttachedNamespaceMoveCoordinator {
       );
     }
     return destination;
+  }
+
+  /// Loads only public metadata. Selection still requires an independent review.
+  Future<List<NvmeAttachedNamespaceMoveCandidate>> loadCandidates() async {
+    _guard();
+    if (_busy) throw StateError('Another operation is in progress.');
+    final owner = lock.acquire();
+    if (owner == null) throw StateError('Another operation is in progress.');
+    _busy = true;
+    _issued.clear();
+    try {
+      final snapshot = await _snapshot();
+      final result = <NvmeAttachedNamespaceMoveCandidate>[];
+      for (final namespace in snapshot.topology.namespaces) {
+        final NvmeNamespace target;
+        try {
+          target = _target(snapshot, namespace.id);
+        } on StateError {
+          continue;
+        }
+        final destinations = <NvmeSubsystem>[];
+        for (final subsystem in snapshot.topology.subsystems) {
+          try {
+            destinations.add(
+              _destination(
+                snapshot,
+                target.subsystemId,
+                subsystem.id,
+                preservedNsid: target.nsid!,
+              ),
+            );
+          } on StateError {
+            continue;
+          }
+        }
+        destinations.sort((a, b) => a.id.compareTo(b.id));
+        if (destinations.isNotEmpty) {
+          result.add(
+            NvmeAttachedNamespaceMoveCandidate._(
+              target,
+              snapshot.topology.subsystems.singleWhere(
+                (s) => s.id == target.subsystemId,
+              ),
+              destinations,
+            ),
+          );
+        }
+      }
+      result.sort((a, b) => a.target.id.compareTo(b.target.id));
+      _guard();
+      return List.unmodifiable(result);
+    } on Object {
+      throw StateError(
+        'Move target discovery failed. No configuration request was sent.',
+      );
+    } finally {
+      _busy = false;
+      lock.release(owner);
+    }
   }
 
   Future<NvmeAttachedNamespaceMoveReview> prepare(
