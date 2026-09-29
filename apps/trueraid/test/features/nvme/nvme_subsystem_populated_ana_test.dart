@@ -475,6 +475,10 @@ void main() {
                 dashboardActiveSessionProvider.overrideWith(
                   (ref) => ref.watch(_active),
                 ),
+                // Keep saved-setting review time deterministic.
+                nvmeSubsystemPopulatedAnaCoordinatorProvider.overrideWithValue(
+                  h.coordinator,
+                ),
               ],
             );
             addTearDown(container.dispose);

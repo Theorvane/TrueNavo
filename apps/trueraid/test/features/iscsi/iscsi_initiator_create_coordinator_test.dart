@@ -281,6 +281,10 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          // Reuse the controlled fixture clock; do not depend on wall time.
+          iscsiInitiatorCreateCoordinatorProvider.overrideWithValue(
+            h.coordinator,
+          ),
         ],
         child: MaterialApp(
           theme: TrueRAIDTheme.dark(),

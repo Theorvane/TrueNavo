@@ -269,6 +269,10 @@ void main() {
       ProviderScope(
         overrides: [
           dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+          // Keep review time deterministic, as in the coordinator unit tests.
+          iscsiInitiatorDeleteCoordinatorProvider.overrideWithValue(
+            h.coordinator,
+          ),
         ],
         child: MaterialApp(
           theme: TrueRAIDTheme.dark(),
