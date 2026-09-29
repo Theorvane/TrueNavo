@@ -8,8 +8,8 @@ import 'package:trueraid_design_system/trueraid_design_system.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
 import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid/features/management/server_operation_lock.dart';
-import 'package:trueraid/features/nvme/nvme_subsystem_populated_oui_coordinator.dart';
-import 'package:trueraid/features/nvme/nvme_subsystem_populated_oui_editor.dart';
+import 'package:trueraid/features/nvme/nvme_subsystem_attached_qid_coordinator.dart';
+import 'package:trueraid/features/nvme/nvme_subsystem_attached_qid_editor.dart';
 
 class _Fake
     implements
@@ -17,7 +17,7 @@ class _Fake
         AuthenticatedAdminSession,
         AuthenticatedNvmeHostSession {
   @override
-  final adminCatalog = AdminCatalog.fromMetadata(
+  AdminCatalog adminCatalog = AdminCatalog.fromMetadata(
     version: '25.10.1',
     metadata: {
       for (final name in [
@@ -49,7 +49,7 @@ class _Fake
     'name': 'unused',
     'subnqn': 'nqn.2026-09.example:unused',
     'allow_any_host': false,
-    'ieee_oui': '00:11:22',
+    'qid_max': 16,
   };
   final namespace = <String, Object?>{
     'id': 7,
@@ -70,10 +70,16 @@ class _Fake
   final ports = <Map<String, Object?>>[
     {'id': 3, 'addr_trtype': 'TCP', 'enabled': false},
   ];
-  final mappings = <Map<String, Object?>>[],
+  final mappings = <Map<String, Object?>>[
+        {
+          'id': 11,
+          'port': {'id': 3},
+          'subsys': {'id': 2},
+        },
+      ],
       hostMappings = <Map<String, Object?>>[];
-  String? failure;
   void Function()? onDispatch;
+  String? failure;
   bool malformed = false;
   bool extraSubsystem = true;
   Completer<void>? gate;
@@ -121,7 +127,7 @@ class _Fake
       return AdminFailed(request, reason: AdminFailureReason.denied);
     }
     if (failure == 'unknown') return AdminOutcomeUnknown(request);
-    subsystem['ieee_oui'] = (request.arguments[1] as Map)['ieee_oui'];
+    subsystem['qid_max'] = (request.arguments[1] as Map)['qid_max'];
     final returned = Map.of(subsystem);
     if (failure == 'response ID') returned['id'] = 999;
     if (failure == 'response NQN') {
@@ -131,28 +137,39 @@ class _Fake
     if (failure == 'namespace enabled') namespace['enabled'] = true;
     if (failure == 'namespace NSID') namespace['nsid'] = 4;
     if (failure == 'response access') returned['allow_any_host'] = true;
-    for (final field in ['ieee_oui', 'pi_enable', 'ana', 'qid_max']) {
+    for (final field in ['qid_max', 'pi_enable', 'ana', 'ieee_oui']) {
+      if (failure == 'response missing $field') returned.remove(field);
+      if (failure == 'readback missing $field') subsystem.remove(field);
       if (failure == 'response $field') {
         returned[field] = subsystem[field] == null
-            ? (field == 'ieee_oui'
-                  ? '12:34:56'
-                  : field == 'qid_max'
-                  ? 32
+            ? (field == 'qid_max'
+                  ? 5
+                  : field == 'ieee_oui'
+                  ? 'changed'
                   : true)
             : null;
       }
       if (failure == 'readback $field') {
-        subsystem[field] = field == 'ieee_oui'
-            ? '12:34:56'
-            : field == 'qid_max'
-            ? 32
+        subsystem[field] = field == 'qid_max'
+            ? 5
+            : field == 'ieee_oui'
+            ? 'changed'
             : true;
       }
     }
-    if (failure == 'readback ieee_oui') subsystem['ieee_oui'] = '00:11:22';
-    if (failure == 'response missing OUI') returned.remove('ieee_oui');
-    if (failure == 'response malformed OUI') returned['ieee_oui'] = 123;
-    if (failure == 'readback missing OUI') subsystem.remove('ieee_oui');
+    if (failure == 'readback qid_max') subsystem['qid_max'] = 16;
+    if (failure == 'response missing QID') returned.remove('qid_max');
+    if (failure == 'response malformed QID') returned['qid_max'] = '1';
+    if (failure == 'readback missing QID') subsystem.remove('qid_max');
+    if (failure == 'readback malformed QID') subsystem['qid_max'] = '1';
+    if (failure == 'port enabled') ports.single['enabled'] = true;
+    if (failure == 'port transport') ports.single['addr_trtype'] = 'FC';
+    if (failure == 'port settings') ports.single['pi_enable'] = null;
+    if (failure == 'mapping removed') mappings.clear();
+    if (failure == 'mapping ID') mappings.single['id'] = 12;
+    if (failure == 'mapping pair') mappings.single['subsys'] = {'id': 4};
+    if (failure == 'namespace locked') namespace['locked'] = true;
+    if (failure == 'namespace FILE') namespace['device_type'] = 'FILE';
     if (failure == 'readback NQN') {
       subsystem['subnqn'] = 'nqn.2026-09.example:wrong';
     }
@@ -182,7 +199,7 @@ class _Harness {
       availableMethodNames: const {},
       endpoint: 'https://fixture.example',
     );
-    coordinator = NvmeSubsystemPopulatedOuiCoordinator(
+    coordinator = NvmeSubsystemAttachedQidCoordinator(
       session: session,
       api: api,
       hostsApi: api,
@@ -193,21 +210,23 @@ class _Harness {
   }
   final api = _Fake(), lock = ServerOperationLock();
   late final AuthenticatedSession session;
-  late final NvmeSubsystemPopulatedOuiCoordinator coordinator;
+  late final NvmeSubsystemAttachedQidCoordinator coordinator;
   bool current = true;
   DateTime now = DateTime.utc(2026, 9, 28);
   int get writes =>
       api.calls.where((r) => r.method.name == 'nvmet.subsys.update').length;
-  Future<NvmeSubsystemPopulatedOuiResult> execute(
-    NvmeSubsystemPopulatedOuiReview r, {
+  Future<NvmeSubsystemAttachedQidResult> execute(
+    NvmeSubsystemAttachedQidReview r, {
     String? phrase,
     bool reload = true,
     bool limitations = true,
+    bool client = true,
   }) => coordinator.execute(
     r,
     phrase ?? r.confirmation,
     acknowledgeReload: reload,
     acknowledgeLimitations: limitations,
+    acknowledgeClientRisk: client,
   );
 }
 
@@ -219,72 +238,240 @@ class _Active extends Notifier<AuthenticatedSession?> {
 
 final _active = NotifierProvider<_Active, AuthenticatedSession?>(_Active.new);
 
-const _choice = NvmePopulatedOuiChoice('AA:BB:CC');
+const _choice = NvmeAttachedQidChoice(1);
 const _choices = [
-  NvmePopulatedOuiChoice(null),
-  NvmePopulatedOuiChoice('AA:BB:CC'),
-  NvmePopulatedOuiChoice('FF:FF:FF'),
+  NvmeAttachedQidChoice(null),
+  NvmeAttachedQidChoice(1),
+  NvmeAttachedQidChoice(2147483647),
 ];
+Future<void> _tap(WidgetTester tester, String suffix) async {
+  final f = find.byKey(Key('nvme-subsystem-attached-qid-$suffix'));
+  await tester.ensureVisible(f);
+  await tester.tap(f);
+  await tester.pumpAndSettle();
+}
+
+Future<ProviderContainer> _mount(WidgetTester tester, _Harness h) async {
+  final container = ProviderContainer(
+    overrides: [
+      dashboardActiveSessionProvider.overrideWith((ref) => ref.watch(_active)),
+      nvmeSubsystemAttachedQidCoordinatorProvider.overrideWithValue(
+        h.coordinator,
+      ),
+    ],
+  );
+  addTearDown(container.dispose);
+  container.read(_active.notifier).select(h.session);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        theme: TrueRAIDTheme.dark(),
+        home: const Scaffold(
+          body: SingleChildScrollView(child: NvmeSubsystemAttachedQidEditor()),
+        ),
+      ),
+    ),
+  );
+  await tester.enterText(
+    find.byKey(const Key('nvme-subsystem-attached-qid-id')),
+    '2',
+  );
+  await _tap(tester, 'default');
+  await tester.enterText(
+    find.byKey(const Key('nvme-subsystem-attached-qid-limit')),
+    '1',
+  );
+  await tester.pumpAndSettle();
+  return container;
+}
+
 void main() {
-  test('case-only OUI changes are rejected as no-ops', () async {
-    final h = _Harness();
-    h.api.subsystem['ieee_oui'] = 'aa:bb:cc';
-    await expectLater(
-      h.coordinator.prepare(2, choice: _choice),
-      throwsStateError,
-    );
-    expect(h.writes, 0);
-  });
-  test('replacement review invalidates the earlier OUI choice', () async {
+  test('new review supersedes the earlier review', () async {
     final h = _Harness();
     final old = await h.coordinator.prepare(2, choice: _choice);
-    final replacement = await h.coordinator.prepare(
-      2,
-      choice: const NvmePopulatedOuiChoice(null),
-    );
+    final r = await h.coordinator.prepare(2, choice: _choice);
     expect(
       (await h.execute(old)).outcome,
-      NvmeSubsystemPopulatedOuiOutcome.rejected,
+      NvmeSubsystemAttachedQidOutcome.rejected,
     );
-    expect(h.writes, 0);
     expect(
-      (await h.execute(replacement)).outcome,
-      NvmeSubsystemPopulatedOuiOutcome.completed,
+      (await h.execute(r)).outcome,
+      NvmeSubsystemAttachedQidOutcome.completed,
     );
-    expect(h.api.subsystem['ieee_oui'], isNull);
     expect(h.writes, 1);
   });
+  test('oversized inventory rejects review and fresh preflight', () async {
+    void overflow(_Fake a) => a.ports.addAll([
+      for (var id = 100; id < 200; id++)
+        {'id': id, 'addr_trtype': 'TCP', 'enabled': false},
+    ]);
+    final a = _Harness();
+    overflow(a.api);
+    await expectLater(
+      a.coordinator.prepare(2, choice: _choice),
+      throwsStateError,
+    );
+    expect(a.writes, 0);
+    final b = _Harness();
+    final r = await b.coordinator.prepare(2, choice: _choice);
+    overflow(b.api);
+    expect(
+      (await b.execute(r)).outcome,
+      NvmeSubsystemAttachedQidOutcome.rejected,
+    );
+    expect(b.writes, 0);
+  });
+  for (final capability in [
+    'nvmet.subsys.query',
+    'nvmet.port.query',
+    'nvmet.namespace.query',
+    'nvmet.port_subsys.query',
+    'nvmet.host.query',
+    'nvmet.host_subsys.query',
+    'nvmet.subsys.update',
+  ]) {
+    test('missing $capability prevents all requests', () async {
+      final h = _Harness();
+      h.api.adminCatalog = AdminCatalog.fromMetadata(
+        version: '25.10.1',
+        metadata: {
+          for (final name in [
+            'nvmet.subsys.query',
+            'nvmet.port.query',
+            'nvmet.namespace.query',
+            'nvmet.port_subsys.query',
+            'nvmet.host.query',
+            'nvmet.host_subsys.query',
+            'nvmet.subsys.update',
+          ])
+            if (name != capability)
+              name: {
+                'accepts': <Object?>[],
+                'returns': [
+                  {'type': 'object'},
+                ],
+                'job': false,
+                'filterable': false,
+                'no_auth_required': false,
+                'uploadable': false,
+                'downloadable': false,
+                'roles': ['FULL_ADMIN'],
+              },
+        },
+      );
+      expect(h.coordinator.available, false);
+      await expectLater(
+        h.coordinator.prepare(2, choice: _choice),
+        throwsStateError,
+      );
+      expect(h.api.calls, isEmpty);
+    });
+  }
   for (final reason in ['session', 'dispose']) {
     test('$reason after dispatch fences the original session', () async {
       final h = _Harness();
-      final review = await h.coordinator.prepare(2, choice: _choice);
+      final r = await h.coordinator.prepare(2, choice: _choice);
       h.api.onDispatch = () {
         if (reason == 'session') h.current = false;
         if (reason == 'dispose') h.coordinator.dispose();
       };
       expect(
-        (await h.execute(review)).outcome,
-        NvmeSubsystemPopulatedOuiOutcome.unknown,
+        (await h.execute(r)).outcome,
+        NvmeSubsystemAttachedQidOutcome.unknown,
       );
-      expect(h.writes, 1);
       expect(h.coordinator.locked, true);
-      expect(_Harness().coordinator.locked, false);
-      expect(
-        (await h.execute(review)).outcome,
-        NvmeSubsystemPopulatedOuiOutcome.rejected,
-      );
       expect(h.writes, 1);
     });
   }
+  for (final other in ['ana', 'pi_enable', 'ieee_oui']) {
+    for (final phase in ['response', 'readback']) {
+      test(
+        '$phase missing reported $other fences the original session',
+        () async {
+          final h = _Harness();
+          h.api.subsystem.addAll({
+            'ana': null,
+            'pi_enable': null,
+            'ieee_oui': null,
+          });
+          final r = await h.coordinator.prepare(2, choice: _choice);
+          h.api.failure = '$phase missing $other';
+          expect(
+            (await h.execute(r)).outcome,
+            NvmeSubsystemAttachedQidOutcome.unknown,
+          );
+          expect(h.coordinator.locked, true);
+          expect(h.writes, 1);
+        },
+      );
+    }
+  }
+  for (final change in ['ID', 'default', 'limit', 'session', 'cancel']) {
+    testWidgets('$change discards native QID review without writes', (
+      tester,
+    ) async {
+      final h = _Harness();
+      final container = await _mount(tester, h);
+      await _tap(tester, 'review');
+      expect(
+        find.byKey(const Key('nvme-subsystem-attached-qid-phrase')),
+        findsOneWidget,
+      );
+      if (change == 'ID') {
+        await tester.enterText(
+          find.byKey(const Key('nvme-subsystem-attached-qid-id')),
+          '4',
+        );
+      } else if (change == 'default') {
+        await _tap(tester, 'default');
+      } else if (change == 'limit') {
+        await tester.enterText(
+          find.byKey(const Key('nvme-subsystem-attached-qid-limit')),
+          '2',
+        );
+      } else if (change == 'session') {
+        container.read(_active.notifier).select(_Harness().session);
+      } else {
+        await _tap(tester, 'cancel');
+      }
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('nvme-subsystem-attached-qid-phrase')),
+        findsNothing,
+      );
+      expect(h.writes, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  testWidgets('disposed page cannot restore a late QID review', (tester) async {
+    final h = _Harness();
+    await _mount(tester, h);
+    h.api.gate = Completer<void>();
+    final review = find.byKey(const Key('nvme-subsystem-attached-qid-review'));
+    await tester.ensureVisible(review);
+    await tester.tap(review);
+    await tester.pump();
+    await h.api.started.future;
+    await tester.pumpWidget(const SizedBox());
+    h.api.gate!.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('nvme-subsystem-attached-qid-phrase')),
+      findsNothing,
+    );
+    expect(h.writes, 0);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
-    'strict OUI input rejects malformed values without reads and invalidates reviewed input',
+    'strict queue-ID input rejects malformed limits without reads and invalidates reviewed input',
     (tester) async {
       final h = _Harness();
       final container = ProviderContainer(
         overrides: [
           dashboardActiveSessionProvider.overrideWith((ref) => h.session),
-          // Keep review time deterministic, as in coordinator unit tests.
-          nvmeSubsystemPopulatedOuiCoordinatorProvider.overrideWithValue(
+          nvmeSubsystemAttachedQidCoordinatorProvider.overrideWithValue(
             h.coordinator,
           ),
         ],
@@ -297,34 +484,35 @@ void main() {
             theme: TrueRAIDTheme.dark(),
             home: const Scaffold(
               body: SingleChildScrollView(
-                child: NvmeSubsystemPopulatedOuiEditor(),
+                child: NvmeSubsystemAttachedQidEditor(),
               ),
             ),
           ),
         ),
       );
       await tester.enterText(
-        find.byKey(const Key('nvme-subsystem-populated-oui-id')),
+        find.byKey(const Key('nvme-subsystem-attached-qid-id')),
         '2',
       );
       final toggle = find.byKey(
-        const Key('nvme-subsystem-populated-oui-default'),
+        const Key('nvme-subsystem-attached-qid-default'),
       );
       await tester.ensureVisible(toggle);
       await tester.tap(toggle);
       await tester.pumpAndSettle();
-      final limit = find.byKey(const Key('nvme-subsystem-populated-oui-value'));
+      final limit = find.byKey(const Key('nvme-subsystem-attached-qid-limit'));
       for (final invalid in [
         '',
-        'GG:BB:CC',
-        'aa:bb:cc',
-        'AABBCC',
-        'AA-BB-CC',
-        'DEFAULT',
-        'A:BB:CC',
-        'AA:BB:C',
-        'AA: BB:C',
-        'AA:BB:\nC',
+        '0',
+        '-1',
+        '+1',
+        ' 1',
+        '1 ',
+        '01',
+        '1.5',
+        '1e2',
+        '2147483648',
+        '9999999999',
       ]) {
         await tester.ensureVisible(limit);
         await tester.enterText(limit, invalid);
@@ -332,7 +520,7 @@ void main() {
         expect(
           tester
               .widget<OutlinedButton>(
-                find.byKey(const Key('nvme-subsystem-populated-oui-review')),
+                find.byKey(const Key('nvme-subsystem-attached-qid-review')),
               )
               .onPressed,
           isNull,
@@ -340,23 +528,23 @@ void main() {
         );
         expect(h.api.calls, isEmpty);
       }
-      await tester.enterText(limit, 'AA:BB:CC');
+      await tester.enterText(limit, '1');
       await tester.pumpAndSettle();
       final reviewButton = find.byKey(
-        const Key('nvme-subsystem-populated-oui-review'),
+        const Key('nvme-subsystem-attached-qid-review'),
       );
       await tester.ensureVisible(reviewButton);
       await tester.tap(reviewButton);
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const Key('nvme-subsystem-populated-oui-submit')),
+        find.byKey(const Key('nvme-subsystem-attached-qid-submit')),
         findsOneWidget,
       );
       await tester.ensureVisible(limit);
-      await tester.enterText(limit, 'BB:CC:DD');
+      await tester.enterText(limit, '2');
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const Key('nvme-subsystem-populated-oui-submit')),
+        find.byKey(const Key('nvme-subsystem-attached-qid-submit')),
         findsNothing,
       );
       expect(h.writes, 0);
@@ -364,27 +552,18 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
-  for (final invalid in [
-    '',
-    'aa:bb:cc',
-    'AABBCC',
-    'GG:BB:CC',
-    'AA-BB-CC',
-    'DEFAULT',
-    'AA:BB:C',
-    ' AA:BB:CC',
-    'AA:BB:CC ',
-    'AA:BB:CC\n',
-    'x' * 33,
-  ]) {
-    test('invalid requested OUI $invalid rejects before reads', () async {
-      final h = _Harness();
-      await expectLater(
-        h.coordinator.prepare(2, choice: NvmePopulatedOuiChoice(invalid)),
-        throwsStateError,
-      );
-      expect(h.api.calls, isEmpty);
-    });
+  for (final invalid in [-1, 0, 2147483648]) {
+    test(
+      'invalid requested queue-ID limit $invalid rejects before reads',
+      () async {
+        final h = _Harness();
+        await expectLater(
+          h.coordinator.prepare(2, choice: NvmeAttachedQidChoice(invalid)),
+          throwsStateError,
+        );
+        expect(h.api.calls, isEmpty);
+      },
+    );
   }
 
   test(
@@ -399,58 +578,64 @@ void main() {
       expect(() => review.namespaces.clear(), throwsUnsupportedError);
       expect(
         (await h.execute(review)).outcome,
-        NvmeSubsystemPopulatedOuiOutcome.completed,
+        NvmeSubsystemAttachedQidOutcome.completed,
       );
       expect(h.api.other, before);
       expect(h.writes, 1);
     },
   );
-  for (final initial in [null, 'AA:BB:CC', '00:11:22', 'FF:FF:FF']) {
-    for (final choice in _choices) {
-      test(
-        'saved OUI $initial to ${choice.label} only submits ieee_oui',
-        () async {
-          final h = _Harness();
-          h.api.subsystem.addAll({
-            'ieee_oui': initial,
-            'pi_enable': false,
-            'ana': false,
-            'qid_max': 16,
-          });
-          if (initial == choice.wireValue) {
-            await expectLater(
-              h.coordinator.prepare(2, choice: choice),
-              throwsStateError,
-            );
-            expect(h.writes, 0);
-            return;
-          }
-          final before = Map.of(h.api.namespace);
-          final review = await h.coordinator.prepare(2, choice: choice);
-          expect(
-            (await h.execute(review)).outcome,
-            NvmeSubsystemPopulatedOuiOutcome.completed,
+  for (final transport in ['TCP', 'RDMA']) {
+    for (final populated in [true, false]) {
+      for (final initial in [null, 0, 1, 16, 2147483647]) {
+        for (final choice in _choices) {
+          test(
+            'saved QID $transport populated=$populated $initial to ${choice.label} only submits qid_max',
+            () async {
+              final h = _Harness();
+              h.api.ports.single['addr_trtype'] = transport;
+              if (!populated) h.api.namespace['subsys'] = {'id': 4};
+              h.api.subsystem.addAll({
+                'qid_max': initial,
+                'pi_enable': false,
+                'ana': false,
+                'ieee_oui': '00:11:22',
+              });
+              if (initial == choice.wireValue) {
+                await expectLater(
+                  h.coordinator.prepare(2, choice: choice),
+                  throwsStateError,
+                );
+                expect(h.writes, 0);
+                return;
+              }
+              final before = Map.of(h.api.namespace);
+              final review = await h.coordinator.prepare(2, choice: choice);
+              expect(
+                (await h.execute(review)).outcome,
+                NvmeSubsystemAttachedQidOutcome.completed,
+              );
+              expect(
+                h.api.calls
+                    .singleWhere((r) => r.method.name == 'nvmet.subsys.update')
+                    .arguments,
+                [
+                  2,
+                  {'qid_max': choice.wireValue},
+                ],
+              );
+              expect(h.api.subsystem['name'], 'unused');
+              expect(h.api.subsystem['subnqn'], 'nqn.2026-09.example:unused');
+              expect(h.api.subsystem['ana'], false);
+              expect(h.api.namespace, before);
+              expect(
+                (await h.execute(review)).outcome,
+                NvmeSubsystemAttachedQidOutcome.rejected,
+              );
+              expect(h.writes, 1);
+            },
           );
-          expect(
-            h.api.calls
-                .singleWhere((r) => r.method.name == 'nvmet.subsys.update')
-                .arguments,
-            [
-              2,
-              {'ieee_oui': choice.wireValue},
-            ],
-          );
-          expect(h.api.subsystem['name'], 'unused');
-          expect(h.api.subsystem['subnqn'], 'nqn.2026-09.example:unused');
-          expect(h.api.subsystem['ana'], false);
-          expect(h.api.namespace, before);
-          expect(
-            (await h.execute(review)).outcome,
-            NvmeSubsystemPopulatedOuiOutcome.rejected,
-          );
-          expect(h.writes, 1);
-        },
-      );
+        }
+      }
     }
   }
   for (final id in [-1, 0, 999]) {
@@ -464,16 +649,29 @@ void main() {
     });
   }
   final unsafe = <String, void Function(_Fake)>{
+    'missing association': (a) => a.mappings.clear(),
+    'enabled port': (a) => a.ports.single['enabled'] = true,
+    'FC port': (a) => a.ports.single['addr_trtype'] = 'FC',
+    'unknown port flag': (a) => a.ports.single.remove('enabled'),
+    'shared port': (a) => a.mappings.add({
+      'id': 12,
+      'port': {'id': 3},
+      'subsys': {'id': 4},
+    }),
+    'shared subsystem': (a) {
+      a.ports.add({'id': 6, 'addr_trtype': 'TCP', 'enabled': false});
+      a.mappings.add({
+        'id': 12,
+        'port': {'id': 6},
+        'subsys': {'id': 2},
+      });
+    },
     'any host': (a) => a.subsystem['allow_any_host'] = true,
     'unknown NQN': (a) => a.subsystem.remove('subnqn'),
-    'no-op': (a) => a.subsystem['ieee_oui'] = 'AA:BB:CC',
-    'missing OUI': (a) => a.subsystem.remove('ieee_oui'),
-    'noncanonical existing DEFAULT': (a) => a.subsystem['ieee_oui'] = 'DEFAULT',
-    'noncanonical existing compact': (a) => a.subsystem['ieee_oui'] = 'AABBCC',
-    'noncanonical existing separator': (a) =>
-        a.subsystem['ieee_oui'] = 'AA-BB-CC',
+    'no-op': (a) => a.subsystem['qid_max'] = 1,
+    'missing QID': (a) => a.subsystem.remove('qid_max'),
     'zero NSID': (a) => a.namespace['nsid'] = 0,
-    'empty': (a) => a.namespace['subsys'] = {'id': 4},
+    'invalid QID': (a) => a.subsystem['qid_max'] = '1',
     'FILE': (a) => a.namespace['device_type'] = 'FILE',
     'enabled': (a) => a.namespace['enabled'] = true,
     'locked': (a) => a.namespace['locked'] = true,
@@ -511,7 +709,7 @@ void main() {
       entry.value(b.api);
       expect(
         (await b.execute(review)).outcome,
-        NvmeSubsystemPopulatedOuiOutcome.rejected,
+        NvmeSubsystemAttachedQidOutcome.rejected,
       );
       expect(b.writes, 0);
     });
@@ -520,6 +718,7 @@ void main() {
     'phrase',
     'reload',
     'limitations',
+    'client',
     'expired',
     'backwards',
     'session',
@@ -547,38 +746,48 @@ void main() {
           phrase: reason == 'phrase' ? 'wrong' : null,
           reload: reason != 'reload',
           limitations: reason != 'limitations',
+          client: reason != 'client',
         )).outcome,
-        NvmeSubsystemPopulatedOuiOutcome.rejected,
+        NvmeSubsystemAttachedQidOutcome.rejected,
       );
       expect(h.writes, 0);
       if (owner != null) h.lock.release(owner);
       expect(
         (await h.execute(review)).outcome,
-        NvmeSubsystemPopulatedOuiOutcome.rejected,
+        NvmeSubsystemAttachedQidOutcome.rejected,
       );
     });
   }
   for (final failure in [
+    'port enabled',
+    'port transport',
+    'port settings',
+    'mapping removed',
+    'mapping ID',
+    'mapping pair',
+    'namespace locked',
+    'namespace FILE',
+    'readback malformed QID',
     'throw',
     'denied',
     'unknown',
-    'response missing OUI',
-    'response malformed OUI',
-    'readback missing OUI',
+    'response missing QID',
+    'response malformed QID',
+    'readback missing QID',
     'response ID',
     'response NQN',
     'response name',
     'response access',
-    'response ieee_oui',
+    'response qid_max',
     'response pi_enable',
     'response ana',
-    'response qid_max',
+    'response ieee_oui',
     'readback NQN',
     'readback name',
-    'readback ieee_oui',
+    'readback qid_max',
     'readback pi_enable',
     'readback ana',
-    'readback qid_max',
+    'readback ieee_oui',
     'other drift',
     'namespace attached',
     'namespace enabled',
@@ -593,14 +802,14 @@ void main() {
         final review = await h.coordinator.prepare(2, choice: _choice);
         h.api.failure = failure;
         final result = await h.execute(review);
-        expect(result.outcome, NvmeSubsystemPopulatedOuiOutcome.unknown);
+        expect(result.outcome, NvmeSubsystemAttachedQidOutcome.unknown);
         expect(result.message, isNot(contains('private-server-error')));
         expect(h.coordinator.locked, true);
         expect(h.writes, 1);
         await expectLater(
           h.coordinator.prepare(
             2,
-            choice: const NvmePopulatedOuiChoice('FF:FF:FF'),
+            choice: const NvmeAttachedQidChoice(2147483647),
           ),
           throwsStateError,
         );
@@ -614,11 +823,11 @@ void main() {
     b.coordinator.cancel(review);
     expect(
       (await b.execute(review)).outcome,
-      NvmeSubsystemPopulatedOuiOutcome.rejected,
+      NvmeSubsystemAttachedQidOutcome.rejected,
     );
     expect(
       (await a.execute(review)).outcome,
-      NvmeSubsystemPopulatedOuiOutcome.completed,
+      NvmeSubsystemAttachedQidOutcome.completed,
     );
   });
   for (final reason in ['expire', 'session', 'dispose']) {
@@ -632,7 +841,7 @@ void main() {
       if (reason == 'session') h.current = false;
       if (reason == 'dispose') h.coordinator.dispose();
       h.api.gate!.complete();
-      expect((await result).outcome, NvmeSubsystemPopulatedOuiOutcome.rejected);
+      expect((await result).outcome, NvmeSubsystemAttachedQidOutcome.rejected);
       expect(h.writes, 0);
     });
   }
@@ -640,10 +849,10 @@ void main() {
     for (final dark in [true, false]) {
       for (final width in [320.0, 430.0]) {
         testWidgets(
-          'Populated OUI editor ${selected.label} $width dark=$dark 200% with keyboard',
+          'Attached QID editor ${selected.label} $width dark=$dark 200% with keyboard',
           (tester) async {
             final h = _Harness();
-            h.api.subsystem['ieee_oui'] = '00:11:22';
+            h.api.subsystem['qid_max'] = 16;
             tester.view.physicalSize = Size(width, 960);
             tester.view.devicePixelRatio = 1;
             addTearDown(tester.view.resetPhysicalSize);
@@ -653,8 +862,7 @@ void main() {
                 dashboardActiveSessionProvider.overrideWith(
                   (ref) => ref.watch(_active),
                 ),
-                // Keep review time deterministic, as in coordinator unit tests.
-                nvmeSubsystemPopulatedOuiCoordinatorProvider.overrideWithValue(
+                nvmeSubsystemAttachedQidCoordinatorProvider.overrideWithValue(
                   h.coordinator,
                 ),
               ],
@@ -674,7 +882,7 @@ void main() {
                     ),
                     child: const Scaffold(
                       body: SingleChildScrollView(
-                        child: NvmeSubsystemPopulatedOuiEditor(),
+                        child: NvmeSubsystemAttachedQidEditor(),
                       ),
                     ),
                   ),
@@ -690,46 +898,86 @@ void main() {
 
             expect(h.api.calls, isEmpty);
             if (selected.wireValue != null) {
-              await tap('nvme-subsystem-populated-oui-default');
+              await tap('nvme-subsystem-attached-qid-default');
               final limit = find.byKey(
-                const Key('nvme-subsystem-populated-oui-value'),
+                const Key('nvme-subsystem-attached-qid-limit'),
               );
               await tester.ensureVisible(limit);
               await tester.enterText(limit, selected.label);
               await tester.pumpAndSettle();
             }
             await tester.enterText(
-              find.byKey(const Key('nvme-subsystem-populated-oui-id')),
+              find.byKey(const Key('nvme-subsystem-attached-qid-id')),
               '2',
             );
             await tester.pumpAndSettle();
-            await tap('nvme-subsystem-populated-oui-review');
+            await tap('nvme-subsystem-attached-qid-review');
             expect(h.writes, 0);
             expect(
               tester
-                  .widget<FilledButton>(
+                  .widget<SelectableText>(
                     find.byKey(
-                      const Key('nvme-subsystem-populated-oui-submit'),
+                      const Key('nvme-subsystem-attached-qid-confirmation'),
                     ),
+                  )
+                  .data,
+              'SET ATTACHED NVME QID 2 FROM 16 TO ${selected.label} KEEP NQN nqn.2026-09.example:unused KEEP ASSOCIATION 11 PORT 3',
+            );
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.byKey(const Key('nvme-subsystem-attached-qid-submit')),
                   )
                   .onPressed,
               isNull,
             );
-            await tap('nvme-subsystem-populated-oui-reload');
-            await tap('nvme-subsystem-populated-oui-limitations');
+            await tap('nvme-subsystem-attached-qid-reload');
+            await tap('nvme-subsystem-attached-qid-limitations');
             final phrase = find.byKey(
-              const Key('nvme-subsystem-populated-oui-phrase'),
+              const Key('nvme-subsystem-attached-qid-phrase'),
             );
             await tester.ensureVisible(phrase);
             await tester.enterText(
               phrase,
-              'SET POPULATED NVME OUI 2 FROM 00:11:22 TO ${selected.label} KEEP NQN nqn.2026-09.example:unused',
+              'SET ATTACHED NVME QID 2 FROM 16 TO ${selected.label} KEEP NQN nqn.2026-09.example:unused KEEP ASSOCIATION 11 PORT 3',
             );
             await tester.pumpAndSettle();
-            await tap('nvme-subsystem-populated-oui-submit');
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.byKey(const Key('nvme-subsystem-attached-qid-submit')),
+                  )
+                  .onPressed,
+              isNull,
+            );
+            await tap('nvme-subsystem-attached-qid-client');
+            await tap('nvme-subsystem-attached-qid-submit');
             expect(h.writes, 1);
-            expect(h.api.subsystem['ieee_oui'], selected.wireValue);
+            expect(h.api.subsystem['qid_max'], selected.wireValue);
             expect(h.api.subsystem['subnqn'], 'nqn.2026-09.example:unused');
+            if (selected.wireValue == null) {
+              await tap('nvme-subsystem-attached-qid-default');
+              final limit = find.byKey(
+                const Key('nvme-subsystem-attached-qid-limit'),
+              );
+              await tester.ensureVisible(limit);
+              await tester.enterText(limit, '1');
+            } else {
+              await tap('nvme-subsystem-attached-qid-default');
+            }
+            await tester.pumpAndSettle();
+            await tap('nvme-subsystem-attached-qid-review');
+            for (final key in ['reload', 'limitations', 'client']) {
+              expect(
+                tester
+                    .widget<Checkbox>(
+                      find.byKey(Key('nvme-subsystem-attached-qid-$key')),
+                    )
+                    .value,
+                false,
+              );
+            }
+            expect(h.writes, 1);
             expect(tester.takeException(), isNull);
             await tester.pumpWidget(const SizedBox());
           },

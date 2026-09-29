@@ -314,6 +314,10 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         dashboardActiveSessionProvider.overrideWith((ref) => h.session),
+        // Keep review time deterministic, as in coordinator unit tests.
+        nvmePopulatedPortMappingCoordinatorProvider.overrideWithValue(
+          h.coordinator,
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -649,6 +653,10 @@ void main() {
               overrides: [
                 dashboardActiveSessionProvider.overrideWith(
                   (ref) => ref.watch(_active),
+                ),
+                // Keep review time deterministic, as in coordinator unit tests.
+                nvmePopulatedPortMappingCoordinatorProvider.overrideWithValue(
+                  h.coordinator,
                 ),
               ],
             );
