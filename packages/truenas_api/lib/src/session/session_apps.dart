@@ -92,14 +92,22 @@ final class CatalogApp {
     required this.title,
     required this.description,
     List<String> versions = const [],
+    List<String> categories = const [],
+    List<String> tags = const [],
+    this.recommended = false,
     required this.healthy,
     required this.supported,
-  }) : versions = List.unmodifiable(versions);
+  }) : versions = List.unmodifiable(versions),
+       categories = List.unmodifiable(categories),
+       tags = List.unmodifiable(tags);
   final String name;
   final String train;
   final String title;
   final String description;
   final List<String> versions;
+  final List<String> categories;
+  final List<String> tags;
+  final bool recommended;
   final bool healthy;
   final bool supported;
 }
@@ -434,11 +442,23 @@ final class _SessionApps {
             train: train.key as String,
             title: _appsDisplay(row['title'], 256) ?? entry.key as String,
             description: _appsDisplay(row['description'], 4096) ?? '',
+            categories: _appsCatalogLabels(row['categories'], 16),
+            tags: _appsCatalogLabels(row['tags'], 32),
+            recommended: switch (row['recommended']) {
+              null => false,
+              bool value => value,
+              _ => throw const AppsException(
+                AppsExceptionReason.invalidResponse,
+              ),
+            },
             healthy: row['healthy'] == true,
             supported: row['supported'] != false,
           ),
         );
       }
+    }
+    if ({for (final app in result) ...app.categories}.length > 64) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
     }
     result.sort((a, b) {
       final title = a.title.compareTo(b.title);
@@ -1404,6 +1424,22 @@ bool _appsText(Object? value, int max) =>
         .hasMatch(value);
 String? _appsDisplay(Object? value, int max) =>
     _appsText(value, max) ? value as String : null;
+List<String> _appsCatalogLabels(Object? raw, int maximum) {
+  if (raw == null) return const [];
+  if (raw is! List || raw.length > maximum) {
+    throw const AppsException(AppsExceptionReason.invalidResponse);
+  }
+  final labels = <String>[];
+  for (final value in raw) {
+    if (!_appsText(value, 64)) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
+    }
+    final label = value as String;
+    if (!labels.contains(label)) labels.add(label);
+  }
+  return List.unmodifiable(labels);
+}
+
 bool _appsToken(Object? value, int max) =>
     _appsText(value, max) &&
     RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$').hasMatch(value as String);

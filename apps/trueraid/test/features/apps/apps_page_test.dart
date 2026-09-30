@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:trueraid/features/admin/admin_schema_form.dart';
 import 'package:trueraid/features/apps/app_install_page.dart';
+import 'package:trueraid/features/apps/apps_controller.dart';
 import 'package:trueraid/features/apps/apps_page.dart';
 import 'package:trueraid/features/apps/apps_status_chart.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
@@ -103,6 +104,89 @@ void main() {
     expect(
       find.text('No catalog applications match these filters.'),
       findsOneWidget,
+    );
+    expect(h.api.actions, isEmpty);
+  });
+  testWidgets('catalog category train recommendation and tag filters compose', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    h.api.catalogEntries = [
+      h.api.catalog,
+      CatalogApp(
+        name: 'archive',
+        train: 'stable',
+        title: 'Archive tool',
+        description: 'Protect files.',
+        categories: ['Data'],
+        tags: ['backup'],
+        healthy: true,
+        supported: true,
+      ),
+      CatalogApp(
+        name: 'lab',
+        train: 'community',
+        title: 'Lab tool',
+        description: 'Experiment.',
+        categories: ['Media'],
+        tags: ['testing'],
+        healthy: true,
+        supported: true,
+      ),
+    ];
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    expect(find.text('3 catalog applications'), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('apps-category-Media')));
+    expect(find.text('2 catalog applications'), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('apps-train-stable')));
+    expect(find.text('2 catalog applications'), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('apps-category-Media')));
+    expect(find.text('1 catalog applications'), findsOneWidget);
+    await _tap(tester, find.byKey(const Key('apps-recommended-only')));
+    expect(find.text('Sample media server'), findsOneWidget);
+    expect(find.text('Archive tool'), findsNothing);
+    await _tap(tester, find.byKey(const ValueKey('apps-train-community')));
+    expect(
+      find.text('No catalog applications match these filters.'),
+      findsOneWidget,
+    );
+    await _tap(tester, find.byKey(const Key('apps-recommended-only')));
+    expect(find.text('Lab tool'), findsOneWidget);
+    await _tap(tester, find.byKey(const Key('apps-train-all')));
+    await tester.enterText(
+      find.byKey(const ValueKey('apps-search-true')),
+      'backup',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Archive tool'), findsOneWidget);
+    expect(find.text('Sample media server'), findsNothing);
+    expect(h.api.actions, isEmpty);
+  });
+  testWidgets('catalog refresh does not strand a removed category', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    await _tap(tester, find.byKey(const ValueKey('apps-category-Media')));
+    h.api.catalogEntries = [
+      CatalogApp(
+        name: 'archive',
+        train: 'stable',
+        title: 'Archive tool',
+        description: 'Protect files.',
+        categories: ['Data'],
+        healthy: true,
+        supported: true,
+      ),
+    ];
+    h.container.invalidate(appsCatalogProvider);
+    await tester.pumpAndSettle();
+    expect(find.text('Archive tool'), findsOneWidget);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.byKey(const Key('apps-category-all')))
+          .selected,
+      isTrue,
     );
     expect(h.api.actions, isEmpty);
   });
@@ -406,9 +490,13 @@ class _FakeApps implements SessionRepository, AuthenticatedAppsSession {
     train: 'stable',
     title: 'Sample media server',
     description: 'A sample catalog application.',
+    categories: ['Media'],
+    tags: ['streaming'],
+    recommended: true,
     healthy: true,
     supported: true,
   );
+  List<CatalogApp>? catalogEntries;
   late final details = AppVersionDetails(
     app: catalog,
     version: '2.0.0',
@@ -456,7 +544,8 @@ class _FakeApps implements SessionRepository, AuthenticatedAppsSession {
   }
 
   @override
-  Future<List<CatalogApp>> loadAppsCatalog() async => [catalog];
+  Future<List<CatalogApp>> loadAppsCatalog() async =>
+      catalogEntries ?? [catalog];
   @override
   Future<List<String>> loadAppVersions(CatalogApp app) async => ['2.0.0'];
   @override

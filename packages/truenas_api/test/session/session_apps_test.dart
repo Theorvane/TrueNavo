@@ -577,6 +577,11 @@ void main() {
     expect((query[1] as Map)['select'], isNot(contains('config')));
     final catalog = await h.repo.loadAppsCatalog();
     expect(catalog.single.name, 'demo');
+    expect(catalog.single.categories, ['Media', 'Productivity']);
+    expect(catalog.single.tags, ['streaming', 'library']);
+    expect(catalog.single.recommended, isTrue);
+    expect(() => catalog.single.categories.clear(), throwsUnsupportedError);
+    expect(() => catalog.single.tags.clear(), throwsUnsupportedError);
     expect(h.transport.requests.last['params'], [
       {
         'cache': true,
@@ -588,6 +593,54 @@ void main() {
     expect(await h.repo.loadAppVersions(catalog.single), ['1.1.0', '1.0.0']);
     expect(h.transport.writes, isEmpty);
   });
+  test(
+    'catalog classification rejects malformed or excessive metadata',
+    () async {
+      final h = await _connect();
+      for (final invalid in <Object?>[
+        {'categories': 'Media'},
+        {
+          'categories': [null],
+        },
+        {
+          'categories': ['bad\nlabel'],
+        },
+        {'categories': List.filled(17, 'Media')},
+        {'tags': List.filled(33, 'tag')},
+        {'recommended': 'yes'},
+      ]) {
+        h.transport.catalogRowOverride = {
+          'name': 'demo',
+          'title': 'Demo',
+          'description': 'Demo application',
+          'healthy': true,
+          ...(invalid as Map<String, Object?>),
+        };
+        await expectLater(
+          h.repo.loadAppsCatalog(),
+          throwsA(_reason(AppsExceptionReason.invalidResponse)),
+        );
+      }
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test(
+    'legacy missing classification remains an empty public subset',
+    () async {
+      final h = await _connect();
+      h.transport.catalogRowOverride = {
+        'name': 'demo',
+        'title': 'Demo',
+        'description': 'Demo application',
+        'healthy': true,
+      };
+      final app = (await h.repo.loadAppsCatalog()).single;
+      expect(app.categories, isEmpty);
+      expect(app.tags, isEmpty);
+      expect(app.recommended, isFalse);
+      expect(h.transport.writes, isEmpty);
+    },
+  );
   test(
     'catalogue and installed handles are bound to their issuing connection',
     () async {
@@ -1231,6 +1284,7 @@ class _Transport implements RpcTransport {
   String pool = 'tank';
   String status = 'RUNNING';
   Object? usedPorts = <int>[];
+  Map<String, Object?>? catalogRowOverride;
   String? rawConfigNumericToken;
   String? writeFailure;
   String? pollMismatch;
@@ -1296,12 +1350,17 @@ class _Transport implements RpcTransport {
       case 'catalog.apps':
         result = {
           'community': {
-            'demo': {
-              'name': 'demo',
-              'title': 'Demo',
-              'description': 'Demo application',
-              'healthy': true,
-            },
+            'demo':
+                catalogRowOverride ??
+                {
+                  'name': 'demo',
+                  'title': 'Demo',
+                  'description': 'Demo application',
+                  'healthy': true,
+                  'categories': ['Media', 'Productivity'],
+                  'tags': ['streaming', 'library'],
+                  'recommended': true,
+                },
           },
         };
       case 'catalog.get_app_details':

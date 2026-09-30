@@ -14,6 +14,7 @@ Verification uses fake transports only, with no NAS or credential access.
 - [Upgrade summary, migration and configuration merge](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/upgrade.py)
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
 - [Catalogue details](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/catalog/apps_details.py)
+- [25.10 catalogue list response](https://api.truenas.com/v25.10/api_methods_catalog.apps.html)
 - [Job identity and redaction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/job.py)
 
 ## Inventory and installation
@@ -26,6 +27,13 @@ More than 1024 installed apps
 is rejected. Catalogue discovery uses cached `catalog.apps` with explicit train
 options and bounds the response to 32 trains and 2048 apps. Version selection
 uses `catalog.get_app_details`, with at most 256 concrete numeric versions.
+The same catalogue response projects only bounded public categories (16 per app,
+64 distinct overall), tags (32 per app) and the recommended flag. These fields
+remain immutable UI discovery hints; README HTML, locations, screenshots and
+unbounded metadata do not enter the app model. Malformed, oversized or unsafe
+labels fail closed. Missing classification is shown as unclassified, not
+invented. Category, train and recommendation filters and tag search act only
+on this already loaded catalogue; they never authorize installation.
 
 Catalogue, installed-app, version and upgrade-review handles belong to the exact
 authenticated connection that issued them. Reload invalidates earlier relevant

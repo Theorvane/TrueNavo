@@ -1,6 +1,14 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: per-core live CPU drill-down
+## Current continuation: catalogue category and recommendation discovery
+
+The native application catalogue now projects the 25.10 `catalog.apps` response's categories, tags and recommended flag without carrying README HTML, filesystem locations or other large/private fields. Category and tag labels are validated for length and control/bidi characters, with per-app and global category bounds; malformed or excessive classification fails as an unavailable catalogue rather than silently mislabelling cards. Older/missing classification remains an empty subset. The SDK keeps the public lists immutable and preserves existing endpoint-bound catalogue handles, version/install gates and write paths. No new RPC was introduced.
+
+The Discover apps screen combines the existing train filter with server-provided category chips, an optional recommended-only filter and search across public titles, names, descriptions, categories and tags. Cards show their categories/tags and recommendation status. A train switch clears the old category; a catalogue reload that removes a train/category falls back to all instead of stranding the list. Filtering is local discovery, not installation authorization. Fake SDK-wire tests cover public projection, immutable lists, malformed/oversized metadata, missing legacy fields and absence of writes. Fake widget tests cover combined filters, train/category reset, refresh drift and existing 320px/200%-text catalogue-to-install layout. Focused SDK suite passes (79 tests) and app page suite passes (16 tests). SDK/app static analysis is clean; final full SDK regression passes (5,298 tests) and full app regression passes (7,547 tests and one existing skip, four concurrent processes). No live NAS request or write occurred.
+
+TD-058 remains partial: this does not add offline catalogue persistence, event streaming, complete cards or live release acceptance. Contract source: [TrueNAS 25.10 `catalog.apps`](https://api.truenas.com/v25.10/api_methods_catalog.apps.html).
+
+## Previous continuation: per-core live CPU drill-down
 
 The dashboard's Per-core CPU expansion now lets the operator select any reported `cpuN` core and inspect its own usage-percent and signed Celsius temperature history beside the latest numeric values. Core names are ordered by numeric suffix (with safe lexical fallback for unusually large IDs); the chart reads only the exact selected key from each received sample. A missing selected-core value creates a gap instead of borrowing the aggregate or another core. The existing per-core usage bars remain, now in selectable rows. If a later sample drops the selected core, selection resets to the first currently reported core; leaving the dashboard, pausing or changing session still disposes the received history through the existing feed lifecycle.
 

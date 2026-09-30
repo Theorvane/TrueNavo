@@ -20,6 +20,8 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   bool _catalog = false;
   String _search = '';
   String? _train;
+  String? _category;
+  bool _recommendedOnly = false;
 
   @override
   Widget build(BuildContext context) {
@@ -299,11 +301,28 @@ class _AppsPageState extends ConsumerState<AppsPage> {
         data: (catalog) {
           final trains = catalog.map((app) => app.train).toSet().toList()
             ..sort();
+          final selectedTrain = trains.contains(_train) ? _train : null;
+          final categories =
+              catalog
+                  .where(
+                    (app) =>
+                        selectedTrain == null || app.train == selectedTrain,
+                  )
+                  .expand((app) => app.categories)
+                  .toSet()
+                  .toList()
+                ..sort();
+          final selectedCategory = categories.contains(_category)
+              ? _category
+              : null;
           final visible = catalog
               .where(
                 (app) =>
-                    (_train == null || _train == app.train) &&
-                    '${app.title} ${app.name} ${app.description}'
+                    (selectedTrain == null || selectedTrain == app.train) &&
+                    (selectedCategory == null ||
+                        app.categories.contains(selectedCategory)) &&
+                    (!_recommendedOnly || app.recommended) &&
+                    '${app.title} ${app.name} ${app.description} ${app.categories.join(' ')} ${app.tags.join(' ')}'
                         .toLowerCase()
                         .contains(_search),
               )
@@ -316,17 +335,58 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                 runSpacing: 8,
                 children: [
                   ChoiceChip(
+                    key: const Key('apps-train-all'),
                     label: const Text('All trains'),
-                    selected: _train == null,
-                    onSelected: (_) => setState(() => _train = null),
+                    selected: selectedTrain == null,
+                    onSelected: (_) => setState(() {
+                      _train = null;
+                      _category = null;
+                    }),
                   ),
                   for (final train in trains)
                     ChoiceChip(
+                      key: ValueKey('apps-train-$train'),
                       label: Text(train),
-                      selected: _train == train,
-                      onSelected: (_) => setState(() => _train = train),
+                      selected: selectedTrain == train,
+                      onSelected: (_) => setState(() {
+                        _train = train;
+                        _category = null;
+                      }),
                     ),
                 ],
+              ),
+              if (categories.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      key: const Key('apps-category-all'),
+                      label: const Text('All categories'),
+                      selected: selectedCategory == null,
+                      onSelected: (_) => setState(() => _category = null),
+                    ),
+                    for (final category in categories)
+                      ChoiceChip(
+                        key: ValueKey('apps-category-$category'),
+                        label: Text(category),
+                        selected: selectedCategory == category,
+                        onSelected: (_) => setState(() => _category = category),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilterChip(
+                  key: const Key('apps-recommended-only'),
+                  label: const Text('Recommended only'),
+                  selected: _recommendedOnly,
+                  onSelected: (value) =>
+                      setState(() => _recommendedOnly = value),
+                ),
               ),
               const SizedBox(height: 12),
               Text('${visible.length} catalog applications'),
@@ -360,6 +420,14 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                                   maxLines: 4,
                                   overflow: TextOverflow.ellipsis,
                                 ),
+                                if (app.categories.isNotEmpty)
+                                  Text(
+                                    'Categories: ${app.categories.join(', ')}',
+                                  ),
+                                if (app.tags.isNotEmpty)
+                                  Text('Tags: ${app.tags.join(', ')}'),
+                                if (app.recommended)
+                                  const Chip(label: Text('Recommended')),
                                 const SizedBox(height: 12),
                                 if (!app.healthy || !app.supported)
                                   const Text(
