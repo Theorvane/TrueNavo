@@ -4,7 +4,7 @@ part of 'true_nas_session_repository.dart';
 abstract interface class AuthenticatedAppsSession {
   AppsCapabilities get appsCapabilities;
   Future<AppsInventory> loadAppsInventory();
-  Future<List<CatalogApp>> loadAppsCatalog();
+  Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false});
   Future<List<String>> loadAppVersions(CatalogApp app);
   Future<AppVersionDetails> loadAppVersionDetails(
     CatalogApp app,
@@ -330,6 +330,7 @@ final class _SessionApps {
   bool get isBusy => _submitting || _active != null || _uncertain;
   final _installed = <InstalledApp, _AppsEnvironment>{};
   final _catalog = <CatalogApp>{};
+  bool _catalogCachedOnly = false;
   final _versions = <AppVersionDetails, _AppsVersionObservation>{};
   final _upgradeReviews = <AppUpgradeReview, String>{};
   final _configReviews = <AppConfigReview, _AppsConfigObservation>{};
@@ -409,72 +410,77 @@ final class _SessionApps {
     );
   });
 
-  Future<List<CatalogApp>> loadCatalog() => _read(() async {
-    final raw = await _call('catalog.apps', [
-      {
-        'cache': true,
-        'cache_only': false,
-        'retrieve_all_trains': true,
-        'trains': <String>[],
-      },
-    ]);
-    if (raw is! Map || raw.length > 32) {
-      throw const AppsException(AppsExceptionReason.invalidResponse);
-    }
-    final result = <CatalogApp>[];
-    for (final train in raw.entries) {
-      if (!_appsToken(train.key, 64) || train.value is! Map) {
-        throw const AppsException(AppsExceptionReason.invalidResponse);
-      }
-      for (final entry in (train.value as Map).entries) {
-        if (result.length >= 2048 ||
-            !_appsToken(entry.key, 128) ||
-            entry.value is! Map) {
+  Future<List<CatalogApp>> loadCatalog({bool cachedOnly = false}) =>
+      _read(() async {
+        final raw = await _call('catalog.apps', [
+          {
+            'cache': true,
+            'cache_only': cachedOnly,
+            'retrieve_all_trains': true,
+            'trains': <String>[],
+          },
+        ]);
+        if (raw is! Map || raw.length > 32) {
           throw const AppsException(AppsExceptionReason.invalidResponse);
         }
-        final row = entry.value as Map;
-        if (row['name'] != null && row['name'] != entry.key) {
-          throw const AppsException(AppsExceptionReason.invalidResponse);
-        }
-        result.add(
-          CatalogApp(
-            name: entry.key as String,
-            train: train.key as String,
-            title: _appsDisplay(row['title'], 256) ?? entry.key as String,
-            description: _appsDisplay(row['description'], 4096) ?? '',
-            categories: _appsCatalogLabels(row['categories'], 16),
-            tags: _appsCatalogLabels(row['tags'], 32),
-            recommended: switch (row['recommended']) {
-              null => false,
-              bool value => value,
-              _ => throw const AppsException(
-                AppsExceptionReason.invalidResponse,
+        final result = <CatalogApp>[];
+        for (final train in raw.entries) {
+          if (!_appsToken(train.key, 64) || train.value is! Map) {
+            throw const AppsException(AppsExceptionReason.invalidResponse);
+          }
+          for (final entry in (train.value as Map).entries) {
+            if (result.length >= 2048 ||
+                !_appsToken(entry.key, 128) ||
+                entry.value is! Map) {
+              throw const AppsException(AppsExceptionReason.invalidResponse);
+            }
+            final row = entry.value as Map;
+            if (row['name'] != null && row['name'] != entry.key) {
+              throw const AppsException(AppsExceptionReason.invalidResponse);
+            }
+            result.add(
+              CatalogApp(
+                name: entry.key as String,
+                train: train.key as String,
+                title: _appsDisplay(row['title'], 256) ?? entry.key as String,
+                description: _appsDisplay(row['description'], 4096) ?? '',
+                categories: _appsCatalogLabels(row['categories'], 16),
+                tags: _appsCatalogLabels(row['tags'], 32),
+                recommended: switch (row['recommended']) {
+                  null => false,
+                  bool value => value,
+                  _ => throw const AppsException(
+                    AppsExceptionReason.invalidResponse,
+                  ),
+                },
+                healthy: row['healthy'] == true,
+                supported: row['supported'] != false,
               ),
-            },
-            healthy: row['healthy'] == true,
-            supported: row['supported'] != false,
-          ),
-        );
-      }
-    }
-    if ({for (final app in result) ...app.categories}.length > 64) {
-      throw const AppsException(AppsExceptionReason.invalidResponse);
-    }
-    result.sort((a, b) {
-      final title = a.title.compareTo(b.title);
-      return title != 0 ? title : a.train.compareTo(b.train);
-    });
-    _catalog
-      ..clear()
-      ..addAll(result);
-    _versions.clear();
-    _upgradeReviews.clear();
-    return List.unmodifiable(result);
-  });
+            );
+          }
+        }
+        if ({for (final app in result) ...app.categories}.length > 64) {
+          throw const AppsException(AppsExceptionReason.invalidResponse);
+        }
+        result.sort((a, b) {
+          final title = a.title.compareTo(b.title);
+          return title != 0 ? title : a.train.compareTo(b.train);
+        });
+        _catalog
+          ..clear()
+          ..addAll(result);
+        _catalogCachedOnly = cachedOnly;
+        _versions.clear();
+        _upgradeReviews.clear();
+        return List.unmodifiable(result);
+      });
 
   Future<Map<String, Object?>> _catalogDetails(CatalogApp app) async {
     if (!_catalog.contains(app)) {
       throw const AppsException(AppsExceptionReason.staleSnapshot);
+    }
+    if (_catalogCachedOnly) {
+      throw const AppsException(AppsExceptionReason.invalidInput);
     }
     final raw = await _call('catalog.get_app_details', [
       app.name,

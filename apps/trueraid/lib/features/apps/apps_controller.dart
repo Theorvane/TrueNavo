@@ -18,10 +18,13 @@ final appsInventoryProvider = FutureProvider<AppsInventory>((ref) async {
   if (api == null) throw StateError('No authenticated Apps session.');
   return api.loadAppsInventory();
 });
-final appsCatalogProvider = FutureProvider<List<CatalogApp>>((ref) async {
+final appsCatalogProvider = FutureProvider.family<List<CatalogApp>, bool>((
+  ref,
+  cachedOnly,
+) async {
   final api = ref.watch(appsSessionProvider);
   if (api == null) throw StateError('No authenticated Apps session.');
-  return api.loadAppsCatalog();
+  return api.loadAppsCatalog(cachedOnly: cachedOnly);
 });
 final appVersionsProvider = FutureProvider.autoDispose
     .family<List<String>, CatalogApp>((ref, app) async {

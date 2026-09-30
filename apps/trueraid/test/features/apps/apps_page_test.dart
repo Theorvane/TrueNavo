@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -153,6 +155,12 @@ void main() {
     await _tap(tester, find.byKey(const Key('apps-recommended-only')));
     expect(find.text('Lab tool'), findsOneWidget);
     await _tap(tester, find.byKey(const Key('apps-train-all')));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('apps-search-true')),
+      -250,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 50,
+    );
     await tester.enterText(
       find.byKey(const ValueKey('apps-search-true')),
       'backup',
@@ -179,7 +187,7 @@ void main() {
         supported: true,
       ),
     ];
-    h.container.invalidate(appsCatalogProvider);
+    h.container.invalidate(appsCatalogProvider(false));
     await tester.pumpAndSettle();
     expect(find.text('Archive tool'), findsOneWidget);
     expect(
@@ -189,6 +197,82 @@ void main() {
       isTrue,
     );
     expect(h.api.actions, isEmpty);
+  });
+  testWidgets('server-cached list is explicit and never opens installer', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    expect(h.api.catalogReadModes, [false]);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('catalog-open-stable-media')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    await _tap(tester, find.byKey(const Key('apps-cached-catalog-only')));
+    expect(h.api.catalogReadModes, [false, true]);
+    expect(find.text('Server-cached list only'), findsOneWidget);
+    expect(
+      find.textContaining('Requires this server connection'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('catalog-open-stable-media')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(find.textContaining('Switch off server-cached'), findsOneWidget);
+    await _tap(tester, find.byKey(const Key('apps-cached-catalog-only')));
+    expect(h.api.catalogReadModes, [false, true, false]);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('catalog-open-stable-media')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(h.api.actions, isEmpty);
+  });
+  testWidgets('new account cannot see previous catalogue while loading', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    expect(find.text('Sample media server'), findsOneWidget);
+    final next = _FakeApps();
+    final pending = Completer<List<CatalogApp>>();
+    next.pendingCatalog = pending.future;
+    h.active = AuthenticatedSession(
+      profileId: 'other-account',
+      repository: next,
+      availableMethodNames: _methods,
+      version: '25.10.1',
+      endpoint: 'wss://other.example/api/current',
+    );
+    h.container.invalidate(dashboardActiveSessionProvider);
+    await tester.pump();
+    expect(find.text('Sample media server'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsWidgets);
+    pending.complete([
+      CatalogApp(
+        name: 'other',
+        train: 'stable',
+        title: 'Other account application',
+        description: '',
+        healthy: true,
+        supported: true,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('Other account application'), findsOneWidget);
+    expect(find.text('Sample media server'), findsNothing);
   });
   testWidgets(
     'install review preserves ports and paths but never echoes secret',
@@ -497,6 +581,8 @@ class _FakeApps implements SessionRepository, AuthenticatedAppsSession {
     supported: true,
   );
   List<CatalogApp>? catalogEntries;
+  Future<List<CatalogApp>>? pendingCatalog;
+  final catalogReadModes = <bool>[];
   late final details = AppVersionDetails(
     app: catalog,
     version: '2.0.0',
@@ -544,8 +630,11 @@ class _FakeApps implements SessionRepository, AuthenticatedAppsSession {
   }
 
   @override
-  Future<List<CatalogApp>> loadAppsCatalog() async =>
-      catalogEntries ?? [catalog];
+  Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async {
+    catalogReadModes.add(cachedOnly);
+    return await pendingCatalog ?? catalogEntries ?? [catalog];
+  }
+
   @override
   Future<List<String>> loadAppVersions(CatalogApp app) async => ['2.0.0'];
   @override

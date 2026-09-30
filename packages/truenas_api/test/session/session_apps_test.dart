@@ -642,6 +642,42 @@ void main() {
     },
   );
   test(
+    'cached-only catalog list cannot open versions until normal reload',
+    () async {
+      final h = await _connect();
+      final cached = (await h.repo.loadAppsCatalog(cachedOnly: true)).single;
+      expect(h.transport.requests.last['params'], [
+        {
+          'cache': true,
+          'cache_only': true,
+          'retrieve_all_trains': true,
+          'trains': [],
+        },
+      ]);
+      await expectLater(
+        h.repo.loadAppVersions(cached),
+        throwsA(_reason(AppsExceptionReason.invalidInput)),
+      );
+      await expectLater(
+        h.repo.loadAppVersionDetails(cached, '1.1.0'),
+        throwsA(_reason(AppsExceptionReason.invalidInput)),
+      );
+      expect(
+        h.transport.requests.where(
+          (r) => r['method'] == 'catalog.get_app_details',
+        ),
+        isEmpty,
+      );
+      final normal = (await h.repo.loadAppsCatalog()).single;
+      await expectLater(
+        h.repo.loadAppVersions(cached),
+        throwsA(_reason(AppsExceptionReason.staleSnapshot)),
+      );
+      expect(await h.repo.loadAppVersions(normal), ['1.1.0', '1.0.0']);
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test(
     'catalogue and installed handles are bound to their issuing connection',
     () async {
       final first = await _connect();

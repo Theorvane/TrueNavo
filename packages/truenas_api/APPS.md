@@ -34,6 +34,13 @@ unbounded metadata do not enter the app model. Malformed, oversized or unsafe
 labels fail closed. Missing classification is shown as unclassified, not
 invented. Category, train and recommendation filters and tag search act only
 on this already loaded catalogue; they never authorize installation.
+An explicit server-cached-only catalogue list uses `catalog.apps` with
+`cache:true` and `cache_only:true`; the normal path retains `cache_only:false`.
+The cached-only list cannot open version details or issue an installation
+handle. Switching back requires a fresh normal catalogue read, invalidating
+cached-only handles. This still requires an authenticated TrueNAS connection;
+it is not an app-local offline copy or a promise that later operations avoid
+network access.
 
 Catalogue, installed-app, version and upgrade-review handles belong to the exact
 authenticated connection that issued them. Reload invalidates earlier relevant

@@ -871,7 +871,8 @@ final class _PreviewRepository
     dockerStatus: 'RUNNING',
   );
   @override
-  Future<List<CatalogApp>> loadAppsCatalog() async => _previewAppsCatalog;
+  Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
+      _previewAppsCatalog;
   @override
   Future<List<String>> loadAppVersions(CatalogApp app) async => app.versions;
   @override

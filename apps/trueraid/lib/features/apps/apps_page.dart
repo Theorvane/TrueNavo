@@ -18,6 +18,7 @@ class AppsPage extends ConsumerStatefulWidget {
 
 class _AppsPageState extends ConsumerState<AppsPage> {
   bool _catalog = false;
+  bool _cachedOnly = false;
   String _search = '';
   String? _train;
   String? _category;
@@ -40,7 +41,9 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                 ? null
                 : () {
                     ref.invalidate(appsInventoryProvider);
-                    if (_catalog) ref.invalidate(appsCatalogProvider);
+                    if (_catalog) {
+                      ref.invalidate(appsCatalogProvider(_cachedOnly));
+                    }
                   },
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -119,9 +122,26 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                         setState(() => _search = text.trim().toLowerCase()),
                   ),
                   const SizedBox(height: 20),
-                  if (_catalog)
-                    _catalogView(session!)
-                  else
+                  if (_catalog) ...[
+                    SwitchListTile.adaptive(
+                      key: const Key('apps-cached-catalog-only'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Server-cached list only'),
+                      subtitle: const Text(
+                        'Requires this server connection. Only the catalogue list is read from its existing cache; version details and installation are unavailable in this mode.',
+                      ),
+                      value: _cachedOnly,
+                      onChanged: (value) {
+                        ref.invalidate(appsCatalogProvider(value));
+                        setState(() {
+                          _cachedOnly = value;
+                          _train = null;
+                          _category = null;
+                        });
+                      },
+                    ),
+                    _catalogView(session!),
+                  ] else
                     _installedView(session!),
                 ],
               ],
@@ -135,6 +155,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   Widget _installedView(AuthenticatedSession session) => ref
       .watch(appsInventoryProvider)
       .when(
+        skipLoadingOnRefresh: false,
         loading: () => const LinearProgressIndicator(),
         error: (_, _) => _retry(
           'Application inventory unavailable',
@@ -291,12 +312,13 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   }
 
   Widget _catalogView(AuthenticatedSession session) => ref
-      .watch(appsCatalogProvider)
+      .watch(appsCatalogProvider(_cachedOnly))
       .when(
+        skipLoadingOnRefresh: false,
         loading: () => const LinearProgressIndicator(),
         error: (_, _) => _retry(
           'Catalog unavailable',
-          () => ref.invalidate(appsCatalogProvider),
+          () => ref.invalidate(appsCatalogProvider(_cachedOnly)),
         ),
         data: (catalog) {
           final trains = catalog.map((app) => app.train).toSet().toList()
@@ -433,12 +455,17 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                                   const Text(
                                     'This catalog entry is not currently installable.',
                                   ),
+                                if (_cachedOnly)
+                                  const Text(
+                                    'Switch off server-cached list only to inspect versions or install.',
+                                  ),
                                 FilledButton.tonalIcon(
                                   key: ValueKey(
                                     'catalog-open-${app.train}-${app.name}',
                                   ),
                                   onPressed:
-                                      app.healthy &&
+                                      !_cachedOnly &&
+                                          app.healthy &&
                                           app.supported &&
                                           session.availableMethodNames.contains(
                                             'app.create',
@@ -528,7 +555,8 @@ class _AppsPageState extends ConsumerState<AppsPage> {
 
   Future<void> _upgrade(AuthenticatedSession session, InstalledApp app) async {
     try {
-      final catalog = await ref.read(appsCatalogProvider.future);
+      ref.invalidate(appsCatalogProvider(false));
+      final catalog = await ref.read(appsCatalogProvider(false).future);
       if (!mounted ||
           !identical(session, ref.read(dashboardActiveSessionProvider))) {
         return;
