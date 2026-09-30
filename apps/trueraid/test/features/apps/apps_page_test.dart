@@ -121,6 +121,32 @@ void main() {
     );
     expect(h.api.outdatedReads, 0);
   });
+  testWidgets('image pull requires typed confirmation and disables redeploy', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const ValueKey('app-outdated-images-media')));
+    await _tap(tester, find.byKey(const ValueKey('app-pull-images-media')));
+    expect(find.text('Redeploy after pull: false'), findsOneWidget);
+    expect(h.api.actions, isEmpty);
+    await tester.enterText(find.byKey(const Key('app-confirm-name')), 'media');
+    await _tap(tester, find.byKey(const Key('app-confirm-submit')));
+    expect(h.api.actions, ['pull-images']);
+    expect(h.api.pulled!.expectedImages, ['example/media:latest']);
+    expect(h.api.pulled!.confirmedName, 'media');
+  });
+  testWidgets('image pull action is hidden without write permission', (
+    tester,
+  ) async {
+    final h = await _pump(
+      tester,
+      methods: _methods.difference({'app.pull_images'}),
+    );
+    await _tap(tester, find.byKey(const ValueKey('app-outdated-images-media')));
+    expect(find.text('example/media:latest'), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-pull-images-media')), findsNothing);
+    expect(h.api.actions, isEmpty);
+  });
   testWidgets('start and stop have independent method permission gates', (
     tester,
   ) async {
@@ -718,6 +744,7 @@ const _methods = {
   'app.upgrade',
   'app.upgrade_summary',
   'app.outdated_docker_images',
+  'app.pull_images',
   'catalog.trains',
   'catalog.config',
   'catalog.update',
@@ -792,6 +819,7 @@ class _FakeApps
   AppInstallRequest? created;
   AppUpgradeRequest? upgraded;
   AppUninstallRequest? deleted;
+  AppImagePullRequest? pulled;
   final installed = const InstalledApp(
     id: 'media',
     name: 'media',
@@ -884,6 +912,13 @@ class _FakeApps
   Future<List<String>> loadOutdatedAppImages(InstalledApp app) async {
     outdatedReads++;
     return const ['example/media:latest'];
+  }
+
+  @override
+  Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async {
+    actions.add('pull-images');
+    pulled = request;
+    return const AppOperationResult(outcome: AppOperationOutcome.verified);
   }
 
   @override

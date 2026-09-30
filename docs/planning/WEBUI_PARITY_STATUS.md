@@ -1,6 +1,32 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: on-demand outdated image names
+## Current continuation: reviewed image pull without redeploy
+
+The installed-app outdated-image panel now offers an explicit
+`app.pull_images` job when `APPS_WRITE` exposes the method. The operator must
+review the server endpoint, app name, image count, network/disk effect and
+the fact that `redeploy:false` leaves running containers unchanged, then type
+the exact app name. The SDK requires a current installed-app handle, a stable
+ready app environment, a nonempty bounded list of expected image names and
+an unchanged fresh server list before submitting only
+`app.pull_images(name, {redeploy:false})`. The shared Apps operation lock
+tracks the returned job ID across navigation. Polling checks the job's
+method, identity and explicit no-redeploy option, then verifies the original
+app identity/state after server-reported success. A failed, ambiguous or
+mismatched job remains uncertain because some images may already have been
+downloaded; there is no automatic retry. This does not prove the new images
+are running. A separate reviewed redeploy is needed to apply them.
+
+Fake-wire and widget tests cover exact arguments, changed image lists, wrong
+confirmation, job identity/option mismatches, partial failure, typed review
+and no unintended writes. The official
+[25.10 `app.pull_images` contract](https://api.truenas.com/v25.10/api_methods_app.pull_images.html)
+specifies the job and its default redeploy behavior. SDK analysis and all
+5,337 SDK tests pass; Flutter analysis and 7,562 Flutter tests pass with one
+existing skip. Live release acceptance remains pending; no live NAS request
+or write was made.
+
+## Previous continuation: on-demand outdated image names
 
 An installed app with the server's image-update flag can now explicitly
 check `app.outdated_docker_images` when that read method is available. The

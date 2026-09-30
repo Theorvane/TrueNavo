@@ -1335,6 +1335,9 @@ final class TrueNasSessionRepository
   Future<List<String>> loadOutdatedAppImages(InstalledApp app) async =>
       _authenticatedApps.loadOutdatedImages(app);
   @override
+  Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async =>
+      _authenticatedApps.pullImages(request);
+  @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
       _authenticatedApps.loadCatalog(cachedOnly: cachedOnly);
   @override

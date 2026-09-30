@@ -888,6 +888,9 @@ final class _PreviewRepository
     'example/media:latest',
   ];
   @override
+  Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async =>
+      const AppOperationResult(outcome: AppOperationOutcome.rejected);
+  @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
       _previewAppsCatalog;
   @override

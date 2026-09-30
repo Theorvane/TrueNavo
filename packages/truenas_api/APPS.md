@@ -12,6 +12,7 @@ Verification uses fake transports only, with no NAS or credential access.
 - [25.10 application API models](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/api/v25_10_0/app.py)
 - [25.10 installed app query fields](https://api.truenas.com/v25.10/api_methods_app.query.html)
 - [25.10 outdated application images](https://api.truenas.com/v25.10/api_methods_app.outdated_docker_images.html)
+- [25.10 application image pull job](https://api.truenas.com/v25.10/api_methods_app.pull_images.html)
 - [Application inventory, creation and deletion](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/crud.py)
 - [Upgrade summary, migration and configuration merge](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/upgrade.py)
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
@@ -37,6 +38,14 @@ When an installed app reports image updates, the user can explicitly check
 identity, version and update flag with a configuration-free query, then
 returns at most 64 unique safe image names. The list is session-bound,
 immutable and never starts a pull.
+An explicit, typed-name-reviewed image pull uses the current app handle,
+rechecks app/environment and the expected outdated-image set, and submits
+only `app.pull_images(name, {redeploy: false})`. Its owned job is checked for
+identity and no-redeploy arguments. Server-reported success verifies that
+the job finished with the app still present in its original state; it does
+not claim the running containers use the new images. Failure or ambiguity
+fences further Apps writes because downloads can be partial. Applying the
+images requires a separate reviewed redeploy.
 Notes and portal URLs are never included in ordinary inventory. Expanding one
 installed app makes an exact-ID `app.query` that selects identity, version,
 notes, portals and active workloads with configuration/schema retrieval disabled. It requires

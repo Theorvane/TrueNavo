@@ -311,6 +311,16 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                         if (images.isEmpty)
                           const Text('No outdated images currently reported.'),
                         for (final name in images) SelectableText(name),
+                        if (images.isNotEmpty &&
+                            !locked &&
+                            const {'RUNNING', 'STOPPED'}.contains(app.state) &&
+                            allowed('app.pull_images'))
+                          OutlinedButton.icon(
+                            key: ValueKey('app-pull-images-${app.name}'),
+                            onPressed: () => _pullImages(session, app, images),
+                            icon: const Icon(Icons.download_outlined),
+                            label: const Text('Pull images without redeploy'),
+                          ),
                       ],
                     ),
                   ),
@@ -840,6 +850,38 @@ class _AppsPageState extends ConsumerState<AppsPage> {
       await ref
           .read(appsControllerProvider.notifier)
           .changeState(session, app, action);
+    }
+  }
+
+  Future<void> _pullImages(
+    AuthenticatedSession session,
+    InstalledApp app,
+    List<String> images,
+  ) async {
+    final confirmed = await confirmAppOperation(
+      context,
+      title: 'Pull application images',
+      endpoint: session.endpoint!,
+      target: app.name,
+      warning: 'This downloads newer container images and may use network and disk space. It will not redeploy or restart the running application. A separate redeploy is needed to use the new images. No automatic retry will be made.',
+      reviewLines: [
+        'Application: ${app.name}',
+        'Outdated images: ${images.length}',
+        'Redeploy after pull: false',
+      ],
+      expectedSession: session,
+    );
+    if (confirmed && mounted) {
+      await ref
+          .read(appsControllerProvider.notifier)
+          .pullImages(
+            session,
+            AppImagePullRequest(
+              app: app,
+              expectedImages: images,
+              confirmedName: app.name,
+            ),
+          );
     }
   }
 

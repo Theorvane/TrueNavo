@@ -17,6 +17,7 @@ const _methods = {
   'core.get_jobs',
   'app.used_ports',
   'app.outdated_docker_images',
+  'app.pull_images',
   'app.create',
   'app.start',
   'app.stop',
@@ -936,6 +937,113 @@ void main() {
       expect(h.transport.requests.length, before);
     },
   );
+  test(
+    'image pull submits only no-redeploy job and verifies identity',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final names = await h.repo.loadOutdatedAppImages(app);
+      final result = await h.repo.pullAppImages(
+        AppImagePullRequest(
+          app: app,
+          expectedImages: names,
+          confirmedName: app.name,
+        ),
+      );
+      expect(result.outcome, AppOperationOutcome.submitted);
+      expect(h.transport.writes.single['method'], 'app.pull_images');
+      expect(h.transport.writes.single['params'], [
+        'demo',
+        {'redeploy': false},
+      ]);
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.verified,
+      );
+    },
+  );
+  test('image pull rejects changed list and wrong confirmation', () async {
+    final h = await _connect();
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    final names = await h.repo.loadOutdatedAppImages(app);
+    await expectLater(
+      h.repo.pullAppImages(
+        AppImagePullRequest(
+          app: app,
+          expectedImages: names,
+          confirmedName: 'wrong',
+        ),
+      ),
+      throwsA(_reason(AppsExceptionReason.invalidInput)),
+    );
+    h.transport.outdatedImages = ['different/image:latest'];
+    expect(
+      (await h.repo.pullAppImages(
+        AppImagePullRequest(
+          app: app,
+          expectedImages: names,
+          confirmedName: app.name,
+        ),
+      )).outcome,
+      AppOperationOutcome.rejected,
+    );
+    expect(h.transport.writes, isEmpty);
+  });
+  test(
+    'failed image pull is uncertain because download may be partial',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final names = await h.repo.loadOutdatedAppImages(app);
+      final result = await h.repo.pullAppImages(
+        AppImagePullRequest(
+          app: app,
+          expectedImages: names,
+          confirmedName: app.name,
+        ),
+      );
+      h.transport.jobState = 'FAILED';
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.unknown,
+      );
+    },
+  );
+  test('image pull rejects a job that claims redeploy was enabled', () async {
+    final h = await _connect();
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    final names = await h.repo.loadOutdatedAppImages(app);
+    final result = await h.repo.pullAppImages(
+      AppImagePullRequest(
+        app: app,
+        expectedImages: names,
+        confirmedName: app.name,
+      ),
+    );
+    h.transport.pollMismatch = 'pull-redeploy';
+    expect(
+      (await h.repo.pollAppJob(result.job!)).outcome,
+      AppOperationOutcome.unknown,
+    );
+  });
+  test('image pull keeps a stopped app stopped', () async {
+    final h = await _connect();
+    h.transport.rows.single['state'] = 'STOPPED';
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    final names = await h.repo.loadOutdatedAppImages(app);
+    final result = await h.repo.pullAppImages(
+      AppImagePullRequest(
+        app: app,
+        expectedImages: names,
+        confirmedName: app.name,
+      ),
+    );
+    expect(
+      (await h.repo.pollAppJob(result.job!)).outcome,
+      AppOperationOutcome.verified,
+    );
+    expect(h.transport.rows.single['state'], 'STOPPED');
+  });
   var invalidImageCase = 0;
   for (final invalidImages in [
     ['duplicate:1', 'duplicate:1'],
@@ -1841,6 +1949,7 @@ class _Transport implements RpcTransport {
       'app.upgrade',
       'app.delete',
       'app.update',
+      'app.pull_images',
       'catalog.update',
       'catalog.sync',
     }.contains(r['method']),
@@ -1969,6 +2078,7 @@ class _Transport implements RpcTransport {
       case 'app.upgrade':
       case 'app.delete':
       case 'app.update':
+      case 'app.pull_images':
         if (writeFailure == 'timeout') return;
         if (writeFailure == 'remote') {
           inbound.add(
@@ -1999,6 +2109,9 @@ class _Transport implements RpcTransport {
           } else {
             arguments[0] = 'other-app';
           }
+        }
+        if (pollMismatch == 'pull-redeploy') {
+          arguments[1] = {'redeploy': true};
         }
         result = pollMismatch == 'empty-job'
             ? []
@@ -2061,7 +2174,8 @@ class _Transport implements RpcTransport {
               'changed-server-secret';
         }
       }
-      if (submitted!['method'] != 'app.update' || row['state'] != 'STOPPED') {
+      if (submitted!['method'] != 'app.pull_images' &&
+          (submitted!['method'] != 'app.update' || row['state'] != 'STOPPED')) {
         row['state'] = submitted!['method'] == 'app.stop'
             ? 'STOPPED'
             : 'RUNNING';

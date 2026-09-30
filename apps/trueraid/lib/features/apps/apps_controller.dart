@@ -174,6 +174,10 @@ class AppsController extends Notifier<AppsState> {
     InstalledApp app,
     AppLifecycleAction action,
   ) => _perform(session, app.name, (api) => api.changeAppState(app, action));
+  Future<void> pullImages(
+    AuthenticatedSession session,
+    AppImagePullRequest request,
+  ) => _perform(session, request.app.name, (api) => api.pullAppImages(request));
 
   Future<void> updatePreferredTrains(
     AuthenticatedSession session,

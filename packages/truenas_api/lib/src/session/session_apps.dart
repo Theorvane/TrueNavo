@@ -6,6 +6,7 @@ abstract interface class AuthenticatedAppsSession {
   Future<AppsInventory> loadAppsInventory();
   Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app);
   Future<List<String>> loadOutdatedAppImages(InstalledApp app);
+  Future<AppOperationResult> pullAppImages(AppImagePullRequest request);
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false});
   Future<List<String>> loadAppVersions(CatalogApp app);
   Future<AppVersionDetails> loadAppVersionDetails(
@@ -136,6 +137,17 @@ final class InstalledAppWorkloads {
   final int portMappings;
   final int volumes;
   final int images;
+}
+
+final class AppImagePullRequest {
+  AppImagePullRequest({
+    required this.app,
+    required List<String> expectedImages,
+    required this.confirmedName,
+  }) : expectedImages = List.unmodifiable(expectedImages);
+  final InstalledApp app;
+  final List<String> expectedImages;
+  final String confirmedName;
 }
 
 final class CatalogApp {
@@ -540,7 +552,10 @@ final class _SessionApps {
         );
       });
 
-  Future<List<String>> loadOutdatedImages(InstalledApp app) => _read(() async {
+  Future<List<String>> loadOutdatedImages(InstalledApp app) =>
+      _read(() => _outdatedImages(app));
+
+  Future<List<String>> _outdatedImages(InstalledApp app) async {
     _guard('app.outdated_docker_images');
     if (!_installed.containsKey(app)) {
       throw const AppsException(AppsExceptionReason.staleSnapshot);
@@ -577,7 +592,7 @@ final class _SessionApps {
       images.add(value);
     }
     return List.unmodifiable(images);
-  });
+  }
 
   Future<List<CatalogApp>> loadCatalog({bool cachedOnly = false}) =>
       _read(() async {
@@ -1203,6 +1218,53 @@ final class _SessionApps {
     }
   }
 
+  Future<AppOperationResult> pullImages(AppImagePullRequest request) async {
+    final app = request.app;
+    if (!_installed.containsKey(app)) {
+      throw const AppsException(AppsExceptionReason.staleSnapshot);
+    }
+    final names = request.expectedImages;
+    if (request.confirmedName != app.name ||
+        !app.imageUpdatesAvailable ||
+        !const {'RUNNING', 'STOPPED'}.contains(app.state) ||
+        names.isEmpty ||
+        names.length > 64 ||
+        names.any((name) => !_appsText(name, 512)) ||
+        names.toSet().length != names.length) {
+      throw const AppsException(AppsExceptionReason.invalidInput);
+    }
+    _begin(request, 'app.pull_images');
+    try {
+      if (!await _freshApp(app)) return _rejected;
+      final currentNames = await _outdatedImages(app);
+      if (currentNames.length != names.length ||
+          !currentNames.toSet().containsAll(names) ||
+          !await _freshApp(app)) {
+        return _rejected;
+      }
+      return await _submit(
+        'app.pull_images',
+        app.id,
+        [
+          app.id,
+          {'redeploy': false},
+        ],
+        _AppsJobObservation(
+          pool: _installed[app]!.pool!,
+          version: app.version,
+          catalogApp: app.catalogApp,
+          train: app.train,
+          customApp: app.customApp,
+          state: app.state,
+        ),
+      );
+    } on Object {
+      return _rejected;
+    } finally {
+      _submitting = false;
+    }
+  }
+
   void _configEligible(InstalledApp app) {
     if (!_installed.containsKey(app)) {
       throw const AppsException(AppsExceptionReason.staleSnapshot);
@@ -1623,9 +1685,12 @@ final class _SessionApps {
         );
       }
       if (row['state'] == 'FAILED' || row['state'] == 'ABORTED') {
-        // app.update persists configuration before rendering/recreating its
-        // containers. A failed job can therefore have partially applied it.
-        if (job.operation == 'app.update') return _unknown(job);
+        // app.update may persist configuration before failing; app.pull_images
+        // may have downloaded some images. Neither is safe to retry blindly.
+        if (job.operation == 'app.update' ||
+            job.operation == 'app.pull_images') {
+          return _unknown(job);
+        }
         _installed.clear();
         _active = null;
         return observation.terminal = AppOperationResult(
@@ -1793,6 +1858,12 @@ bool _appsJobArgumentsMatch(
     final options = arguments[1] as Map;
     return options['app_version'] == observation.version &&
         options['snapshot_hostpaths'] == false;
+  }
+  if (job.operation == 'app.pull_images') {
+    return arguments.length == 2 &&
+        arguments[1] is Map &&
+        (arguments[1] as Map).length == 1 &&
+        (arguments[1] as Map)['redeploy'] == false;
   }
   if (job.operation == 'app.delete') {
     if (arguments.length != 2 || arguments[1] is! Map) return false;
