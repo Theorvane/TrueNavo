@@ -8,6 +8,8 @@ import 'package:truenas_api/truenas_api.dart';
 
 import 'live_metrics_controller.dart';
 
+final _coreNamePattern = RegExp(r'^cpu[0-9]+$');
+
 /// Mounting subscribes once. Leaving the route/app or hiding this dashboard
 /// widget cancels the event source; returning starts a fresh window.
 class DashboardLiveMetrics extends ConsumerStatefulWidget {
@@ -204,35 +206,7 @@ class LiveMetricsCharts extends StatelessWidget {
             allowNegative: true,
           ),
         ),
-        Material(
-          type: MaterialType.transparency,
-          child: ExpansionTile(
-            title: const Text('Per-core CPU'),
-            tilePadding: EdgeInsets.zero,
-            children: [
-              for (final entry in latest.cpu.entries.where(
-                (e) => e.key != 'cpu',
-              ))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        '${entry.key} · ${_value(entry.value.usage, '%')} · ${_value(entry.value.temperature, '°C')}',
-                      ),
-                      if (entry.value.usage != null)
-                        LinearProgressIndicator(
-                          value: entry.value.usage! / 100,
-                          semanticsLabel: '${entry.key} usage',
-                          semanticsValue: _value(entry.value.usage, '%'),
-                        ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
+        _PerCoreCpu(samples: samples),
         const Divider(height: 32),
         Text('Physical memory', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
@@ -470,6 +444,112 @@ class LiveMetricsCharts extends StatelessWidget {
   }
 }
 
+class _PerCoreCpu extends StatefulWidget {
+  const _PerCoreCpu({required this.samples});
+  final List<RealtimeSample> samples;
+  @override
+  State<_PerCoreCpu> createState() => _PerCoreCpuState();
+}
+
+class _PerCoreCpuState extends State<_PerCoreCpu> {
+  String? _selectedCore;
+
+  List<String> get _cores {
+    final names = widget.samples.last.cpu.keys
+        .where(_coreNamePattern.hasMatch)
+        .toList();
+    names.sort((a, b) {
+      final left = int.tryParse(a.substring(3));
+      final right = int.tryParse(b.substring(3));
+      final byNumber = left == null || right == null
+          ? a.compareTo(b)
+          : left.compareTo(right);
+      return byNumber == 0 ? a.compareTo(b) : byNumber;
+    });
+    return names;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PerCoreCpu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_selectedCore != null && !_cores.contains(_selectedCore)) {
+      _selectedCore = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cores = _cores;
+    final selected = _selectedCore ?? cores.firstOrNull;
+    final latest = selected == null ? null : widget.samples.last.cpu[selected];
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      type: MaterialType.transparency,
+      child: ExpansionTile(
+        key: const Key('live-per-core-cpu'),
+        title: const Text('Per-core CPU'),
+        tilePadding: EdgeInsets.zero,
+        children: [
+          if (selected == null)
+            const Text('No per-core measurements reported.')
+          else ...[
+            Text('Select a reported core to inspect its received history.'),
+            _ChartSection(
+              title: '$selected usage trend',
+              value: _value(latest?.usage, '%'),
+              child: LiveSparkline(
+                key: ValueKey('live-core-usage-$selected'),
+                samples: widget.samples,
+                select: (sample) => sample.cpu[selected]?.usage,
+                color: colors.primary,
+                label: '$selected CPU usage percent',
+                maximum: 100,
+                formatValue: (value) => '${_compact(value)}%',
+              ),
+            ),
+            _ChartSection(
+              title: '$selected temperature trend',
+              value: _value(latest?.temperature, '°C'),
+              child: LiveSparkline(
+                key: ValueKey('live-core-temperature-$selected'),
+                samples: widget.samples,
+                select: (sample) => sample.cpu[selected]?.temperature,
+                color: colors.secondary,
+                label: '$selected CPU temperature degrees Celsius',
+                formatValue: (value) => '${_compact(value)} °C',
+                allowNegative: true,
+              ),
+            ),
+            for (final core in cores)
+              ListTile(
+                key: ValueKey('live-core-select-$core'),
+                contentPadding: EdgeInsets.zero,
+                selected: core == selected,
+                title: Text(core),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Usage ${_value(widget.samples.last.cpu[core]?.usage, '%')} · Temperature ${_value(widget.samples.last.cpu[core]?.temperature, '°C')}',
+                    ),
+                    if (widget.samples.last.cpu[core]?.usage case final usage?)
+                      LinearProgressIndicator(
+                        value: usage / 100,
+                        semanticsLabel: '$core usage',
+                        semanticsValue: _value(usage, '%'),
+                      ),
+                  ],
+                ),
+                trailing: core == selected ? const Icon(Icons.check) : null,
+                onTap: () => setState(() => _selectedCore = core),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Report a percentage only when both quantities form the same valid sample.
 /// ARC is deliberately not subtracted: reclaimable cache can be available.
 double? memoryAvailablePercent(RealtimeSample sample) {
@@ -490,9 +570,8 @@ double? memoryAvailablePercent(RealtimeSample sample) {
 /// synthetic core or turn missing core sensors into zero.
 double? hottestReportedCoreTemperature(RealtimeSample sample) {
   double? hottest;
-  final coreName = RegExp(r'^cpu[0-9]+$');
   for (final entry in sample.cpu.entries) {
-    if (!coreName.hasMatch(entry.key)) {
+    if (!_coreNamePattern.hasMatch(entry.key)) {
       continue;
     }
     final temperature = entry.value.temperature;

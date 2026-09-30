@@ -1,6 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: signed CPU temperature histories
+## Current continuation: per-core live CPU drill-down
+
+The dashboard's Per-core CPU expansion now lets the operator select any reported `cpuN` core and inspect its own usage-percent and signed Celsius temperature history beside the latest numeric values. Core names are ordered by numeric suffix (with safe lexical fallback for unusually large IDs); the chart reads only the exact selected key from each received sample. A missing selected-core value creates a gap instead of borrowing the aggregate or another core. The existing per-core usage bars remain, now in selectable rows. If a later sample drops the selected core, selection resets to the first currently reported core; leaving the dashboard, pausing or changing session still disposes the received history through the existing feed lifecycle.
+
+This is local exploration of the existing bounded 60-sample `reporting.realtime` feed, not an additional server query or configuration operation. Fake widget tests exercise numeric ordering, selection, exact usage and negative-temperature series, an intermediate missing-core gap, disappearing-core reset and 320px/200%-text scroll layout. The focused live-dashboard suite passes (28 tests), app static analysis is clean and the final full app regression passes (7,545 tests and one existing skip, four concurrent processes). TD-015 remains partial; there was no live NAS request or write.
+
+## Previous continuation: signed CPU temperature histories
 
 The dashboard live-performance panel now has separate aggregate CPU temperature and hottest-reported-core trend charts, including exact latest values. The hottest-core value is derived only from explicitly reported `cpu0`, `cpu1`, etc. sensor readings in each received sample; the aggregate `cpu` temperature is never substituted as a core, and missing core readings are not turned into zero. Both charts use Celsius and preserve negative valid readings with a signed dynamic vertical scale. A generic sparkline signed-range option leaves existing nonnegative usage, byte-rate, IOPS and percentage scales unchanged. Missing values and receipt-time gaps still split paths without interpolation.
 

@@ -362,6 +362,118 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets(
+    'per-core drill-down selects exact series and resets missing core',
+    (tester) async {
+      RealtimeSample cores(int second, Map<String, RealtimeCpu> cpu) =>
+          RealtimeSample(
+            receivedAt: time.add(Duration(seconds: second)),
+            cpu: cpu,
+            interfaces: const {},
+          );
+      final first = cores(0, {
+        'cpu': const RealtimeCpu(usage: 80, temperature: 60),
+        'cpu10': const RealtimeCpu(usage: 70, temperature: -5),
+        'cpu2': const RealtimeCpu(usage: 20, temperature: 25),
+      });
+      final second = cores(2, {
+        'cpu': const RealtimeCpu(usage: 90, temperature: 65),
+        'cpu10': const RealtimeCpu(usage: 75, temperature: -4),
+        'cpu2': const RealtimeCpu(usage: 30, temperature: 26),
+      });
+      final missing = cores(1, {
+        'cpu': const RealtimeCpu(usage: 85),
+        'cpu2': const RealtimeCpu(usage: 25),
+      });
+      Widget view(List<RealtimeSample> samples) => MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: LiveMetricsCharts(samples: samples),
+          ),
+        ),
+      );
+      await tester.pumpWidget(view([first, missing, second]));
+      await tester.ensureVisible(find.byKey(const Key('live-per-core-cpu')));
+      await tester.tap(find.text('Per-core CPU'));
+      await tester.pumpAndSettle();
+      expect(find.text('cpu2 usage trend'), findsOneWidget);
+      expect(find.text('cpu2 temperature trend'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('live-core-select-cpu10')),
+      );
+      await tester.tap(find.byKey(const Key('live-core-select-cpu10')));
+      await tester.pump();
+      expect(find.text('cpu10 usage trend'), findsOneWidget);
+      expect(find.text('cpu10 temperature trend'), findsOneWidget);
+      final usage = tester.widget<LiveSparkline>(
+        find.byKey(const Key('live-core-usage-cpu10')),
+      );
+      final temperature = tester.widget<LiveSparkline>(
+        find.byKey(const Key('live-core-temperature-cpu10')),
+      );
+      expect(usage.select(first), 70);
+      expect(usage.select(missing), isNull);
+      expect(usage.select(second), 75);
+      expect(temperature.select(first), -5);
+      expect(temperature.select(missing), isNull);
+      expect(temperature.select(second), -4);
+      expect(temperature.allowNegative, isTrue);
+      expect(
+        liveMetricSegments([
+          first,
+          missing,
+          second,
+        ], usage.select).map((segment) => segment.length),
+        [1, 1],
+      );
+
+      final third = cores(4, {
+        'cpu': const RealtimeCpu(usage: 95),
+        'cpu2': const RealtimeCpu(),
+      });
+      await tester.pumpWidget(view([first, missing, second, third]));
+      await tester.pump();
+      expect(find.text('cpu2 usage trend'), findsOneWidget);
+      expect(find.text('cpu2 temperature trend'), findsOneWidget);
+      expect(
+        tester
+            .widget<LiveSparkline>(
+              find.byKey(const Key('live-core-usage-cpu2')),
+            )
+            .select(third),
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('per-core drill-down is scrollable at 320px and 200% text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 960);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: TrueRAIDTheme.dark(),
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: Scaffold(
+            body: SingleChildScrollView(
+              child: LiveMetricsCharts(samples: [sample(0), sample(2)]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.ensureVisible(find.byKey(const Key('live-per-core-cpu')));
+    await tester.tap(find.text('Per-core CPU'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('live-core-select-cpu0')));
+    expect(find.text('cpu0 usage trend'), findsOneWidget);
+    expect(find.text('cpu0 temperature trend'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   for (final brightness in Brightness.values) {
     testWidgets('charts fit 320px at 2x text ${brightness.name}', (
       tester,
