@@ -108,6 +108,7 @@ final class TrueNasSessionRepository
         AuthenticatedDatasetPropertiesSession,
         AuthenticatedSnapshotsSession,
         AuthenticatedAppsSession,
+        AuthenticatedCatalogOverviewSession,
         AuthenticatedActivitySession,
         AuthenticatedAccountsSession,
         AuthenticatedVirtualMachinesSession,
@@ -1330,6 +1331,9 @@ final class TrueNasSessionRepository
   @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
       _authenticatedApps.loadCatalog(cachedOnly: cachedOnly);
+  @override
+  Future<CatalogOverview> loadCatalogOverview() async =>
+      _authenticatedApps.loadCatalogOverview();
   @override
   Future<List<String>> loadAppVersions(CatalogApp app) async =>
       _authenticatedApps.versions(app);

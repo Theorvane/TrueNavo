@@ -26,6 +26,22 @@ abstract interface class AuthenticatedAppsSession {
   Future<AppOperationResult> pollAppJob(AppJob job);
 }
 
+/// Optional, read-only catalogue settings for servers exposing both methods.
+abstract interface class AuthenticatedCatalogOverviewSession {
+  Future<CatalogOverview> loadCatalogOverview();
+}
+
+final class CatalogOverview {
+  CatalogOverview({
+    required List<String> availableTrains,
+    required List<String> preferredTrains,
+  }) : availableTrains = List.unmodifiable(availableTrains),
+       preferredTrains = List.unmodifiable(preferredTrains);
+
+  final List<String> availableTrains;
+  final List<String> preferredTrains;
+}
+
 final class AppsCapabilities {
   const AppsCapabilities({
     required this.connected,
@@ -474,6 +490,21 @@ final class _SessionApps {
         _upgradeReviews.clear();
         return List.unmodifiable(result);
       });
+
+  Future<CatalogOverview> loadCatalogOverview() => _read(() async {
+    _guard('catalog.trains');
+    _guard('catalog.config');
+    final rawTrains = await _call('catalog.trains', []);
+    final rawConfig = await _call('catalog.config', []);
+    if (rawTrains is! List ||
+        rawConfig is! Map ||
+        rawConfig['preferred_trains'] is! List) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
+    }
+    final trains = _catalogTrainList(rawTrains);
+    final preferred = _catalogTrainList(rawConfig['preferred_trains'] as List);
+    return CatalogOverview(availableTrains: trains, preferredTrains: preferred);
+  });
 
   Future<Map<String, Object?>> _catalogDetails(CatalogApp app) async {
     if (!_catalog.contains(app)) {
@@ -1430,6 +1461,20 @@ bool _appsText(Object? value, int max) =>
         .hasMatch(value);
 String? _appsDisplay(Object? value, int max) =>
     _appsText(value, max) ? value as String : null;
+List<String> _catalogTrainList(List raw) {
+  if (raw.length > 32) {
+    throw const AppsException(AppsExceptionReason.invalidResponse);
+  }
+  final trains = <String>[];
+  for (final value in raw) {
+    if (!_appsToken(value, 64) || trains.contains(value)) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
+    }
+    trains.add(value as String);
+  }
+  return List.unmodifiable(trains);
+}
+
 List<String> _appsCatalogLabels(Object? raw, int maximum) {
   if (raw == null) return const [];
   if (raw is! List || raw.length > maximum) {

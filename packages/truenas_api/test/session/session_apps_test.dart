@@ -8,6 +8,8 @@ const _methods = {
   'app.query',
   'catalog.apps',
   'catalog.get_app_details',
+  'catalog.config',
+  'catalog.trains',
   'docker.status',
   'docker.config',
   'core.get_jobs',
@@ -560,6 +562,62 @@ void main() {
     await expectLater(
       h.repo.loadAppsInventory(),
       throwsA(_reason(AppsExceptionReason.unavailableMethod)),
+    );
+  });
+  test(
+    'catalog overview reads bounded server trains and preferred settings only',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      expect(overview.availableTrains, ['community', 'stable']);
+      expect(overview.preferredTrains, ['stable']);
+      expect(
+        () => overview.availableTrains.add('other'),
+        throwsUnsupportedError,
+      );
+      expect(() => overview.preferredTrains.clear(), throwsUnsupportedError);
+      expect(
+        h.transport.requests
+            .where((r) => r['method'] == 'catalog.trains')
+            .single['params'],
+        [],
+      );
+      expect(
+        h.transport.requests
+            .where((r) => r['method'] == 'catalog.config')
+            .single['params'],
+        [],
+      );
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test(
+    'malformed catalog overview fails closed without returning settings',
+    () async {
+      final h = await _connect();
+      h.transport.catalogTrains = ['community', 'community'];
+      await expectLater(
+        h.repo.loadCatalogOverview(),
+        throwsA(_reason(AppsExceptionReason.invalidResponse)),
+      );
+      h.transport.catalogTrains = ['community', 'stable'];
+      h.transport.preferredTrains = ['\u202Eunsafe'];
+      await expectLater(
+        h.repo.loadCatalogOverview(),
+        throwsA(_reason(AppsExceptionReason.invalidResponse)),
+      );
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test('missing catalog overview method issues no partial request', () async {
+    final h = await _connect(methods: _methods.difference({'catalog.config'}));
+    await expectLater(
+      h.repo.loadCatalogOverview(),
+      throwsA(_reason(AppsExceptionReason.unavailableMethod)),
+    );
+    expect(
+      h.transport.requests.where((r) => r['method'] == 'catalog.trains'),
+      isEmpty,
     );
   });
   test('inventory and catalogue reads are bounded and never retrieve configuration', () async {
@@ -1321,6 +1379,8 @@ class _Transport implements RpcTransport {
   String status = 'RUNNING';
   Object? usedPorts = <int>[];
   Map<String, Object?>? catalogRowOverride;
+  List<String> catalogTrains = ['community', 'stable'];
+  List<String> preferredTrains = ['stable'];
   String? rawConfigNumericToken;
   String? writeFailure;
   String? pollMismatch;
@@ -1398,6 +1458,15 @@ class _Transport implements RpcTransport {
                   'recommended': true,
                 },
           },
+        };
+      case 'catalog.trains':
+        result = catalogTrains;
+      case 'catalog.config':
+        result = {
+          'id': 'official',
+          'label': 'TRUENAS',
+          'preferred_trains': preferredTrains,
+          'location': '/mnt/catalog',
         };
       case 'catalog.get_app_details':
         result = {'name': 'demo', 'versions': details};

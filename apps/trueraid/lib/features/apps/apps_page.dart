@@ -43,6 +43,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                     ref.invalidate(appsInventoryProvider);
                     if (_catalog) {
                       ref.invalidate(appsCatalogProvider(_cachedOnly));
+                      ref.invalidate(catalogOverviewProvider);
                     }
                   },
             icon: const Icon(Icons.refresh_rounded),
@@ -321,8 +322,19 @@ class _AppsPageState extends ConsumerState<AppsPage> {
           () => ref.invalidate(appsCatalogProvider(_cachedOnly)),
         ),
         data: (catalog) {
-          final trains = catalog.map((app) => app.train).toSet().toList()
-            ..sort();
+          final overviewAvailable =
+              session.repository is AuthenticatedCatalogOverviewSession &&
+              session.availableMethodNames.containsAll({
+                'catalog.trains',
+                'catalog.config',
+              });
+          final overview = overviewAvailable
+              ? ref.watch(catalogOverviewProvider).asData?.value
+              : null;
+          final trains = {
+            ...catalog.map((app) => app.train),
+            ...?overview?.availableTrains,
+          }.toList()..sort();
           final selectedTrain = trains.contains(_train) ? _train : null;
           final categories =
               catalog
@@ -352,6 +364,22 @@ class _AppsPageState extends ConsumerState<AppsPage> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (overviewAvailable) ...[
+                ref
+                    .watch(catalogOverviewProvider)
+                    .when(
+                      skipLoadingOnRefresh: false,
+                      loading: () => const LinearProgressIndicator(),
+                      error: (_, _) => const Text(
+                        'Catalog train settings could not be read. The application list remains available.',
+                      ),
+                      data: (value) => Text(
+                        'Server trains: ${value.availableTrains.isEmpty ? 'none' : value.availableTrains.join(', ')} · Preferred: ${value.preferredTrains.isEmpty ? 'none' : value.preferredTrains.join(', ')}',
+                        key: const Key('catalog-train-overview'),
+                      ),
+                    ),
+                const SizedBox(height: 12),
+              ],
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -368,7 +396,11 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                   for (final train in trains)
                     ChoiceChip(
                       key: ValueKey('apps-train-$train'),
-                      label: Text(train),
+                      label: Text(
+                        overview?.preferredTrains.contains(train) == true
+                            ? '$train · preferred'
+                            : train,
+                      ),
                       selected: selectedTrain == train,
                       onSelected: (_) => setState(() {
                         _train = train;

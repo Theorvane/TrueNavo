@@ -1,5 +1,29 @@
 # TrueNAS WebUI parity: implementation ledger
 
+## Current continuation: server catalogue train overview
+
+The Discover apps screen now reads `catalog.trains` and `catalog.config` when
+both methods are exposed, and shows the server's available and preferred train
+names. A train with no app in the current catalogue list still appears as a
+filter option; selecting it yields an empty list rather than claiming it is
+unavailable. The overview uses a separate optional typed read interface, so
+an account lacking either method retains normal catalogue browsing. The SDK
+bounds both lists to 32 unique safe tokens, returns immutable names only,
+withholds the catalogue location, and rejects malformed responses. A settings
+read failure does not discard the application list. Refresh rereads both.
+
+Fake-wire tests cover exact no-argument reads, immutable projection, duplicate
+and unsafe labels, missing-method preflight and no writes. The widget test
+covers preferred/empty train display without any write. Focused SDK and widget
+suites pass (83 and 19 tests); SDK/app static analysis is clean. The final
+full SDK regression passes (5,302 tests) and full app regression passes
+(7,550 tests and one existing skip, four concurrent processes). The official
+[25.10 catalogue config](https://api.truenas.com/v25.10/api_methods_catalog.config.html)
+and [train list](https://api.truenas.com/v25.10/api_methods_catalog.trains.html)
+contracts define these separate reads. `catalog.update` and `catalog.sync`
+remain unimplemented, as do live release acceptance and complete WebUI parity.
+No live NAS request or write was made.
+
 ## Current continuation: explicit server-cached catalogue browsing
 
 The Discover apps screen now offers an explicit **Server-cached list only** switch. Its catalogue list request sends `catalog.apps` with `cache:true, cache_only:true`; the normal list retains `cache_only:false`. The UI states that a TrueNAS connection is still required and that this is not app-local offline storage. In cached-only mode, version-detail/install buttons are disabled. The SDK independently rejects version and installer-detail reads for cached-only handles; it does not call `catalog.get_app_details` in that state. Returning to normal mode forces a fresh catalogue list, invalidating old cached-only handles before details can open. The installed-app upgrade path also requests a fresh normal catalogue rather than inheriting cached-only list state. No server configuration request was added.

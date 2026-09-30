@@ -109,6 +109,24 @@ void main() {
     );
     expect(h.api.actions, isEmpty);
   });
+  testWidgets(
+    'catalog shows server trains and preferred settings without a write',
+    (tester) async {
+      final h = await _pump(tester);
+      await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+      expect(
+        find.text('Server trains: stable, community · Preferred: stable'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('apps-train-community')),
+        findsOneWidget,
+      );
+      expect(find.text('stable · preferred'), findsOneWidget);
+      expect(h.api.overviewReads, 1);
+      expect(h.api.actions, isEmpty);
+    },
+  );
   testWidgets('catalog category train recommendation and tag filters compose', (
     tester,
   ) async {
@@ -499,6 +517,8 @@ const _methods = {
   'app.delete',
   'app.upgrade',
   'app.upgrade_summary',
+  'catalog.trains',
+  'catalog.config',
 };
 Future<_Harness> _pump(
   WidgetTester tester, {
@@ -553,9 +573,14 @@ class _Harness {
   late final ProviderContainer container;
 }
 
-class _FakeApps implements SessionRepository, AuthenticatedAppsSession {
+class _FakeApps
+    implements
+        SessionRepository,
+        AuthenticatedAppsSession,
+        AuthenticatedCatalogOverviewSession {
   final actions = <String>[];
   var reads = 0;
+  var overviewReads = 0;
   AppInstallRequest? created;
   AppUpgradeRequest? upgraded;
   AppUninstallRequest? deleted;
@@ -633,6 +658,15 @@ class _FakeApps implements SessionRepository, AuthenticatedAppsSession {
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async {
     catalogReadModes.add(cachedOnly);
     return await pendingCatalog ?? catalogEntries ?? [catalog];
+  }
+
+  @override
+  Future<CatalogOverview> loadCatalogOverview() async {
+    overviewReads++;
+    return CatalogOverview(
+      availableTrains: ['stable', 'community'],
+      preferredTrains: ['stable'],
+    );
   }
 
   @override

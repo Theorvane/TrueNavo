@@ -15,6 +15,8 @@ Verification uses fake transports only, with no NAS or credential access.
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
 - [Catalogue details](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/catalog/apps_details.py)
 - [25.10 catalogue list response](https://api.truenas.com/v25.10/api_methods_catalog.apps.html)
+- [25.10 catalogue configuration](https://api.truenas.com/v25.10/api_methods_catalog.config.html)
+- [25.10 available catalogue trains](https://api.truenas.com/v25.10/api_methods_catalog.trains.html)
 - [Job identity and redaction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/job.py)
 
 ## Inventory and installation
@@ -41,6 +43,14 @@ handle. Switching back requires a fresh normal catalogue read, invalidating
 cached-only handles. This still requires an authenticated TrueNAS connection;
 it is not an app-local offline copy or a promise that later operations avoid
 network access.
+
+Where both read permissions are present, the separate catalogue overview reads
+`catalog.trains` and `catalog.config` without exposing the catalogue location.
+It projects only bounded, unique, validated available/preferred train names;
+malformed settings fail closed and never replace the existing app list. These
+are server settings, not app-local filter preferences. The UI can show an
+available train with no currently returned app. It does not call
+`catalog.update` or `catalog.sync`.
 
 Catalogue, installed-app, version and upgrade-review handles belong to the exact
 authenticated connection that issued them. Reload invalidates earlier relevant

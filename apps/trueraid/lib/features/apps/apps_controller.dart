@@ -26,6 +26,13 @@ final appsCatalogProvider = FutureProvider.family<List<CatalogApp>, bool>((
   if (api == null) throw StateError('No authenticated Apps session.');
   return api.loadAppsCatalog(cachedOnly: cachedOnly);
 });
+final catalogOverviewProvider = FutureProvider<CatalogOverview>((ref) async {
+  final api = ref.watch(dashboardActiveSessionProvider)?.repository;
+  if (api is! AuthenticatedCatalogOverviewSession) {
+    throw StateError('Catalog settings are unavailable.');
+  }
+  return (api as AuthenticatedCatalogOverviewSession).loadCatalogOverview();
+});
 final appVersionsProvider = FutureProvider.autoDispose
     .family<List<String>, CatalogApp>((ref, app) async {
       final api = ref.watch(appsSessionProvider);
