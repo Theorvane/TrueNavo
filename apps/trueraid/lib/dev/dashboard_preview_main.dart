@@ -876,6 +876,12 @@ final class _PreviewRepository
         app: app,
         notes: 'Synthetic preview application. No server was contacted.',
         portals: const {},
+        workloads: const InstalledAppWorkloads(
+          runningContainers: 1,
+          portMappings: 1,
+          volumes: 1,
+          images: 1,
+        ),
       );
   @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>

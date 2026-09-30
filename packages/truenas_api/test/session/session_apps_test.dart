@@ -851,6 +851,10 @@ void main() {
       expect(details.app, same(app));
       expect(details.notes, 'Operator note\nSecond line');
       expect(details.portals, {'Web UI': 'https://nas.example:3000/ui'});
+      expect(details.workloads.runningContainers, 2);
+      expect(details.workloads.portMappings, 1);
+      expect(details.workloads.volumes, 1);
+      expect(details.workloads.images, 2);
       expect(() => details.portals.clear(), throwsUnsupportedError);
       expect(h.transport.requests.last['method'], 'app.query');
       expect(h.transport.requests.last['params'], [
@@ -859,7 +863,14 @@ void main() {
         ],
         {
           'limit': 2,
-          'select': ['id', 'name', 'version', 'notes', 'portals'],
+          'select': [
+            'id',
+            'name',
+            'version',
+            'notes',
+            'portals',
+            'active_workloads',
+          ],
           'extra': {'retrieve_config': false, 'include_app_schema': false},
         },
       ]);
@@ -881,6 +892,37 @@ void main() {
       );
       expect(h.transport.writes, isEmpty);
     });
+  }
+  var workloadCase = 0;
+  for (final badWorkloads in [
+    {'containers': -1, 'used_ports': [], 'volumes': [], 'images': []},
+    {
+      'containers': 1,
+      'used_ports': ['not a port mapping'],
+      'volumes': [],
+      'images': [],
+    },
+    {
+      'containers': 1,
+      'used_ports': [],
+      'volumes': List.filled(2049, <String, Object?>{}),
+      'images': [],
+    },
+  ]) {
+    final caseNumber = ++workloadCase;
+    test(
+      'malformed workload summary $caseNumber is withheld without writes',
+      () async {
+        final h = await _connect();
+        final app = (await h.repo.loadAppsInventory()).apps.single;
+        h.transport.appWorkloads = badWorkloads;
+        await expectLater(
+          h.repo.loadInstalledAppDetails(app),
+          throwsA(_reason(AppsExceptionReason.invalidResponse)),
+        );
+        expect(h.transport.writes, isEmpty);
+      },
+    );
   }
   test(
     'oversized installed notes and stale inventory handle fail closed',
@@ -1682,6 +1724,12 @@ class _Transport implements RpcTransport {
   Object? appPortals = <String, Object?>{
     'Web UI': 'https://nas.example:3000/ui',
   };
+  Object? appWorkloads = <String, Object?>{
+    'containers': 2,
+    'used_ports': [<String, Object?>{}],
+    'volumes': [<String, Object?>{}],
+    'images': ['demo:1.0.0', 'sidecar:2.0.0'],
+  };
   List<String> catalogTrains = ['community', 'stable'];
   List<String> preferredTrains = ['stable'];
   bool catalogUpdateTimeout = false;
@@ -1818,6 +1866,7 @@ class _Transport implements RpcTransport {
                   ...row as Map,
                   'notes': appNotes,
                   'portals': appPortals,
+                  'active_workloads': appWorkloads,
                 },
               )
               .toList();

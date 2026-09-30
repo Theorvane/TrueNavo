@@ -32,12 +32,15 @@ Inventory also projects the nullable latest application version and a separate
 Docker-image update flag. The two signals remain independent and are display
 only; they do not start an upgrade or image pull.
 Notes and portal URLs are never included in ordinary inventory. Expanding one
-installed app makes an exact-ID `app.query` that selects only identity, version,
-notes and portals with configuration/schema retrieval disabled. It requires
+installed app makes an exact-ID `app.query` that selects identity, version,
+notes, portals and active workloads with configuration/schema retrieval disabled. It requires
 the current inventory handle, bounds notes to 4096 characters and portals to
 eight label/URL pairs, and rejects malformed or unsafe control/bidi text,
 non-HTTP(S) URLs and embedded URL credentials. The immutable projection is
 session-bound and discarded when the detail view closes or account changes.
+The workload projection retains only bounded running-container, port-mapping,
+volume and image counts; mount paths, image references and container details
+are never retained or displayed.
 Portal addresses are selectable text only; the app does not automatically
 visit or fetch them. This is not full WebUI portal launching or notes editing.
 More than 1024 installed apps

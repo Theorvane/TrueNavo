@@ -53,6 +53,10 @@ void main() {
       expect(h.api.detailsReads, 1);
       expect(find.text('Operator note'), findsOneWidget);
       expect(find.text('https://nas.example:3000/ui'), findsOneWidget);
+      expect(find.text('Running containers: 2'), findsOneWidget);
+      expect(find.text('Port mappings: 1'), findsOneWidget);
+      expect(find.text('Volumes: 1'), findsOneWidget);
+      expect(find.text('Images: 2'), findsOneWidget);
       expect(h.api.actions, isEmpty);
       await _tap(tester, find.byKey(const ValueKey('app-details-media')));
       expect(find.text('Operator note'), findsNothing);
@@ -829,6 +833,12 @@ class _FakeApps
       app: app,
       notes: displayNotes,
       portals: {'Web UI': 'https://nas.example:3000/ui'},
+      workloads: const InstalledAppWorkloads(
+        runningContainers: 2,
+        portMappings: 1,
+        volumes: 1,
+        images: 2,
+      ),
     );
   }
 

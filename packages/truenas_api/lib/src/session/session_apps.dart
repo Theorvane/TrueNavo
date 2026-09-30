@@ -116,10 +116,25 @@ final class InstalledAppDetails {
     required this.app,
     required this.notes,
     required Map<String, String> portals,
+    required this.workloads,
   }) : portals = Map.unmodifiable(portals);
   final InstalledApp app;
   final String? notes;
   final Map<String, String> portals;
+  final InstalledAppWorkloads workloads;
+}
+
+final class InstalledAppWorkloads {
+  const InstalledAppWorkloads({
+    required this.runningContainers,
+    required this.portMappings,
+    required this.volumes,
+    required this.images,
+  });
+  final int runningContainers;
+  final int portMappings;
+  final int volumes;
+  final int images;
 }
 
 final class CatalogApp {
@@ -463,7 +478,14 @@ final class _SessionApps {
           ],
           {
             'limit': 2,
-            'select': ['id', 'name', 'version', 'notes', 'portals'],
+            'select': [
+              'id',
+              'name',
+              'version',
+              'notes',
+              'portals',
+              'active_workloads',
+            ],
             'extra': {'retrieve_config': false, 'include_app_schema': false},
           },
         ]);
@@ -491,10 +513,29 @@ final class _SessionApps {
           }
           portals[entry.key as String] = entry.value as String;
         }
+        final rawWorkloads = row['active_workloads'];
+        if (rawWorkloads is! Map ||
+            rawWorkloads['containers'] is! int ||
+            (rawWorkloads['containers'] as int) < 0 ||
+            (rawWorkloads['containers'] as int) > 1024 ||
+            !_appsBoundedList(rawWorkloads['used_ports'], 2048) ||
+            !_appsBoundedList(rawWorkloads['volumes'], 2048) ||
+            !_appsBoundedList(rawWorkloads['images'], 512) ||
+            !(rawWorkloads['used_ports'] as List).every((v) => v is Map) ||
+            !(rawWorkloads['volumes'] as List).every((v) => v is Map) ||
+            !(rawWorkloads['images'] as List).every((v) => _appsText(v, 512))) {
+          throw const AppsException(AppsExceptionReason.invalidResponse);
+        }
         return InstalledAppDetails(
           app: app,
           notes: notes as String?,
           portals: portals,
+          workloads: InstalledAppWorkloads(
+            runningContainers: rawWorkloads['containers'] as int,
+            portMappings: (rawWorkloads['used_ports'] as List).length,
+            volumes: (rawWorkloads['volumes'] as List).length,
+            images: (rawWorkloads['images'] as List).length,
+          ),
         );
       });
 
@@ -1738,6 +1779,8 @@ bool _appsNotes(Object? value) =>
     !RegExp(
       r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]',
     ).hasMatch(value);
+bool _appsBoundedList(Object? value, int max) =>
+    value is List && value.length <= max;
 bool _appsPortalUrl(Object? value) {
   if (!_appsText(value, 2048)) return false;
   final uri = Uri.tryParse(value as String);

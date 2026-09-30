@@ -1,6 +1,23 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: separate application and image update signals
+## Current continuation: bounded installed-app workload summary
+
+An explicit expansion of an installed app now also requests that app's
+`active_workloads` projection. The SDK validates bounded running-container,
+port-mapping, volume and image lists, then retains only four counts. Raw
+mount paths, image references and container details are neither stored nor
+shown. The screen presents these counts beside the previously added notes
+and portal addresses; the ordinary installed-app inventory still excludes
+workload detail. Session and stale-inventory guards remain in force. This is
+a point-in-time summary, not a resource-utilization chart or live container
+control. Fake-wire and widget tests cover exact projection, count display,
+malformed-response rejection and no writes. The official
+[25.10 `app.query` contract](https://api.truenas.com/v25.10/api_methods_app.query.html)
+defines `active_workloads`. SDK analysis and all 5,327 SDK tests pass;
+Flutter analysis and 7,558 Flutter tests pass with one existing skip. Live
+acceptance remains pending; no live NAS request or write was made.
+
+## Previous continuation: separate application and image update signals
 
 The installed Apps list now projects the server's `latest_version` and
 `image_updates_available` fields alongside `upgrade_available`, with no
@@ -21,7 +38,7 @@ request or write was made.
 The installed-app card now expands to read the selected app's server-provided
 notes and portal addresses. Ordinary `app.query` inventory still projects no
 notes, portals, configuration or schema. An explicit expansion requests one
-exact app ID with only identity/version/notes/portals selected and
+exact app ID with identity/version/notes/portals selected and
 configuration/schema retrieval disabled. The SDK requires the current
 inventory handle, bounds notes and portal count/length, accepts only HTTP(S)
 portal URLs without embedded credentials, and fails closed on malformed,

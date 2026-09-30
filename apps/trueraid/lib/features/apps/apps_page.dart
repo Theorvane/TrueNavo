@@ -284,8 +284,8 @@ class _AppsPageState extends ConsumerState<AppsPage> {
             ),
             label: Text(
               identical(_expandedInstalledApp, app)
-                  ? 'Hide notes & portals'
-                  : 'Show notes & portals',
+                  ? 'Hide app details'
+                  : 'Show app details',
             ),
           ),
           if (identical(_expandedInstalledApp, app))
@@ -304,6 +304,22 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                   data: (details) => Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const Text('Active workloads'),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 4,
+                        children: [
+                          Text(
+                            'Running containers: ${details.workloads.runningContainers}',
+                          ),
+                          Text(
+                            'Port mappings: ${details.workloads.portMappings}',
+                          ),
+                          Text('Volumes: ${details.workloads.volumes}'),
+                          Text('Images: ${details.workloads.images}'),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
                       const Text('Server-provided notes'),
                       SelectableText(
                         details.notes?.isNotEmpty == true
