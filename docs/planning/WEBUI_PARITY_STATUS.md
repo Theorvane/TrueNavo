@@ -1,6 +1,14 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: attached subsystem display-name target discovery
+## Current continuation: richer live performance trends
+
+The dashboard live-performance panel now plots seven additional trends from its existing bounded `reporting.realtime` event window: physical-memory available percentage, ZFS ARC cache bytes, aggregate disk read/write IOPS, average disk busy percentage, and separate ZFS ARC data/metadata demand-hit percentages. Their latest values and units remain visible beside each chart, and the exact-measurements panel includes each new value. Available-memory percentage is computed only from a valid same-sample physical total and available count; ARC is not subtracted because reclaimable cache can be counted as available. Demand-hit rates remain two independent request classes, not slices of one whole.
+
+All charts retain the existing 60-received-sample limit, client receipt-time axis, gap splitting on missing values or receipt gaps over six seconds, visible scale and semantics. Pausing, backgrounding, route departure, account/session changes and source failure still clear or stop the feed; there is no new RPC or polling. Invalid/missing denominator samples render unavailable/gaps rather than an invented zero. Tests cover valid/invalid memory fractions, missing IOPS/hit segments and 320px dark/light 200%-text layouts. The focused dashboard suite passes (23 tests); app static analysis is clean and the final full app regression passes (7,540 tests and one existing skip, four concurrent processes). No live NAS request or write was made.
+
+This advances only the TD-015 dashboard subset. Historical read-only evidence is unchanged; these synthetic checks do not establish live release or management acceptance. Streaming load history, further sensors, per-widget configuration and full WebUI parity remain pending.
+
+## Previous continuation: attached subsystem display-name target discovery
 
 The attached subsystem rename editor now explicitly loads eligible targets and offers an ID-sorted native selector with manual database-ID fallback. The selected hint displays current name, preserved NQN, exact association/disabled TCP/RDMA port, and an immutable ID-sorted namespace-ID/NSID resident list, including explicit empty-subsystem reporting. Discovery reuses the unchanged conservative rename admission: restricted subsystem, one disabled unshared TCP/RDMA association, no host grants, and only disabled unlocked ZVOL residents with valid unique NSIDs. Unsupported topology returns an explicit empty list; malformed/oversized/unresolved or failed inventory gives a distinct sanitized error. Only existing bounded public queries and protected host-reference reads are used; discovery sends no configuration requests.
 

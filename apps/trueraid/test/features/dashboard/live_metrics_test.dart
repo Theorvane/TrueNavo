@@ -204,6 +204,67 @@ void main() {
     ], (s) => s.cpu['cpu']?.usage);
     expect(segments.single.every((p) => p.dx.isFinite && p.dy == 1), isTrue);
   });
+  test('available-memory trend uses same-sample validated denominator', () {
+    expect(memoryAvailablePercent(sample(0)), 60);
+    RealtimeSample memory(int second, double? total, double? available) =>
+        RealtimeSample(
+          receivedAt: time.add(Duration(seconds: second)),
+          cpu: const {},
+          interfaces: const {},
+          memoryTotalBytes: total,
+          memoryAvailableBytes: available,
+        );
+    expect(memoryAvailablePercent(memory(0, 0, 0)), isNull);
+    expect(memoryAvailablePercent(memory(0, 100, 101)), isNull);
+    expect(memoryAvailablePercent(memory(0, 100, -1)), isNull);
+    expect(memoryAvailablePercent(memory(0, 100, double.nan)), isNull);
+    expect(memoryAvailablePercent(memory(0, 100, double.infinity)), isNull);
+    final points = [
+      memory(0, 100, 25),
+      memory(2, 100, 50),
+      memory(4, 0, 0),
+      memory(6, 100, 75),
+      memory(20, 100, 100),
+    ];
+    final segments = liveMetricSegments(
+      points,
+      memoryAvailablePercent,
+      maximum: 100,
+    );
+    expect(segments.map((s) => s.length), [2, 1, 1]);
+    expect(segments.first.first.dy, .75);
+    expect(segments.last.single.dy, 0);
+  });
+  test('new rate and hit trends retain missing measurement gaps', () {
+    RealtimeSample metrics(int second, {double? iops, double? hit}) =>
+        RealtimeSample(
+          receivedAt: time.add(Duration(seconds: second)),
+          cpu: const {},
+          interfaces: const {},
+          diskReadOpsPerSecond: iops,
+          arcDataHitPercent: hit,
+        );
+    final points = [
+      metrics(0, iops: 10, hit: 90),
+      metrics(2, iops: null, hit: null),
+      metrics(4, iops: 30, hit: 95),
+    ];
+    expect(
+      liveMetricSegments(
+        points,
+        (s) => s.diskReadOpsPerSecond,
+      ).map((s) => s.length),
+      [1, 1],
+    );
+    expect(
+      liveMetricSegments(
+        points,
+        (s) => s.arcDataHitPercent,
+        maximum: 100,
+      ).map((s) => s.length),
+      [1, 1],
+    );
+  });
   for (final brightness in Brightness.values) {
     testWidgets('charts fit 320px at 2x text ${brightness.name}', (
       tester,
@@ -235,7 +296,14 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.text('Physical memory'), findsOneWidget);
-      expect(find.text('0.0% — 100%'), findsOneWidget);
+      expect(find.text('Available memory trend'), findsOneWidget);
+      expect(find.text('ARC cache trend'), findsOneWidget);
+      expect(find.text('Disk read operations'), findsOneWidget);
+      expect(find.text('Disk write operations'), findsOneWidget);
+      expect(find.text('Average disk busy'), findsOneWidget);
+      expect(find.text('Data hit trend'), findsOneWidget);
+      expect(find.text('Metadata hit trend'), findsOneWidget);
+      expect(find.text('0.0% — 100%'), findsNWidgets(5));
       expect(find.text('0 B/s — 1.0 KiB/s'), findsOneWidget);
       expect(
         find.textContaining('Available includes reclaimable'),

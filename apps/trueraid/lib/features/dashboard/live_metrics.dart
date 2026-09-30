@@ -256,6 +256,29 @@ class LiveMetricsCharts extends StatelessWidget {
         const Text(
           'Available includes reclaimable memory. ARC is shown separately, not added to the doughnut.',
         ),
+        _ChartSection(
+          title: 'Available memory trend',
+          value: _value(memoryAvailablePercent(latest), '%'),
+          child: LiveSparkline(
+            samples: samples,
+            select: memoryAvailablePercent,
+            color: colors.tertiary,
+            maximum: 100,
+            formatValue: (value) => '${_compact(value)}%',
+            label: 'Physical memory available percent',
+          ),
+        ),
+        _ChartSection(
+          title: 'ARC cache trend',
+          value: _bytes(latest.arcSizeBytes),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.arcSizeBytes,
+            color: colors.secondary,
+            formatValue: _bytes,
+            label: 'ZFS ARC cache bytes',
+          ),
+        ),
         const Divider(height: 32),
         _ChartSection(
           title: 'Disk throughput · all disks',
@@ -281,6 +304,38 @@ class LiveMetricsCharts extends StatelessWidget {
         ),
         Text(
           'Read ${_value(latest.diskReadOpsPerSecond, 'IOPS')} · Write ${_value(latest.diskWriteOpsPerSecond, 'IOPS')} · Average busy ${_value(latest.diskBusyPercent, '%')}',
+        ),
+        _ChartSection(
+          title: 'Disk read operations',
+          value: _value(latest.diskReadOpsPerSecond, 'IOPS'),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.diskReadOpsPerSecond,
+            color: colors.primary,
+            label: 'Aggregate disk read operations per second',
+          ),
+        ),
+        _ChartSection(
+          title: 'Disk write operations',
+          value: _value(latest.diskWriteOpsPerSecond, 'IOPS'),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.diskWriteOpsPerSecond,
+            color: colors.tertiary,
+            label: 'Aggregate disk write operations per second',
+          ),
+        ),
+        _ChartSection(
+          title: 'Average disk busy',
+          value: _value(latest.diskBusyPercent, '%'),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.diskBusyPercent,
+            color: colors.secondary,
+            maximum: 100,
+            formatValue: (value) => '${_compact(value)}%',
+            label: 'Average disk busy percent',
+          ),
         ),
         const Divider(height: 32),
         Text(
@@ -332,6 +387,30 @@ class LiveMetricsCharts extends StatelessWidget {
         const Text(
           'Separate request classes; these percentages are not slices of one total.',
         ),
+        _ChartSection(
+          title: 'Data hit trend',
+          value: _value(latest.arcDataHitPercent, '%'),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.arcDataHitPercent,
+            color: colors.primary,
+            maximum: 100,
+            formatValue: (value) => '${_compact(value)}%',
+            label: 'ZFS ARC data demand hit percent',
+          ),
+        ),
+        _ChartSection(
+          title: 'Metadata hit trend',
+          value: _value(latest.arcMetadataHitPercent, '%'),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.arcMetadataHitPercent,
+            color: colors.tertiary,
+            maximum: 100,
+            formatValue: (value) => '${_compact(value)}%',
+            label: 'ZFS ARC metadata demand hit percent',
+          ),
+        ),
         Material(
           type: MaterialType.transparency,
           child: ExpansionTile(
@@ -344,9 +423,15 @@ class LiveMetricsCharts extends StatelessWidget {
                   'CPU aggregate (%): ${latest.cpu['cpu']?.usage ?? 'unavailable'}',
                   'Physical total (bytes): ${latest.memoryTotalBytes ?? 'unavailable'}',
                   'Physical available (bytes): ${latest.memoryAvailableBytes ?? 'unavailable'}',
+                  'Physical available (%): ${memoryAvailablePercent(latest) ?? 'unavailable'}',
                   'ARC size (bytes): ${latest.arcSizeBytes ?? 'unavailable'}',
                   'Disk read (bytes/s): ${latest.diskReadBytesPerSecond ?? 'unavailable'}',
                   'Disk write (bytes/s): ${latest.diskWriteBytesPerSecond ?? 'unavailable'}',
+                  'Disk read (IOPS): ${latest.diskReadOpsPerSecond ?? 'unavailable'}',
+                  'Disk write (IOPS): ${latest.diskWriteOpsPerSecond ?? 'unavailable'}',
+                  'Average disk busy (%): ${latest.diskBusyPercent ?? 'unavailable'}',
+                  'ZFS ARC data hits (%): ${latest.arcDataHitPercent ?? 'unavailable'}',
+                  'ZFS ARC metadata hits (%): ${latest.arcMetadataHitPercent ?? 'unavailable'}',
                   for (final e in latest.interfaces.entries)
                     '${e.key} receive/send (bytes/s): ${e.value.receivedBytesPerSecond ?? 'unavailable'} / ${e.value.sentBytesPerSecond ?? 'unavailable'}',
                 ].join('\n'),
@@ -357,6 +442,22 @@ class LiveMetricsCharts extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Report a percentage only when both quantities form the same valid sample.
+/// ARC is deliberately not subtracted: reclaimable cache can be available.
+double? memoryAvailablePercent(RealtimeSample sample) {
+  final total = sample.memoryTotalBytes;
+  final available = sample.memoryAvailableBytes;
+  if (sample.memoryUnavailableBytes == null ||
+      total == null ||
+      available == null ||
+      !total.isFinite ||
+      !available.isFinite ||
+      available < 0) {
+    return null;
+  }
+  return available / total * 100;
 }
 
 class _ChartSection extends StatelessWidget {
