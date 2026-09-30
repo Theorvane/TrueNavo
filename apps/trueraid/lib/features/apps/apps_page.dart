@@ -23,12 +23,18 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   String? _train;
   String? _category;
   bool _recommendedOnly = false;
+  InstalledApp? _expandedInstalledApp;
+  AuthenticatedSession? _detailsSession;
   CatalogOverview? _preferredSource;
   List<String>? _preferredDraft;
 
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(dashboardActiveSessionProvider);
+    if (!identical(_detailsSession, session)) {
+      _detailsSession = session;
+      _expandedInstalledApp = null;
+    }
     final capability = ref.watch(appsSessionProvider)?.appsCapabilities;
     final operation = ref.watch(appsControllerProvider);
     final td = context.tdTheme;
@@ -242,6 +248,59 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                 : TdStatus.warning,
             label: app.state,
           ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: ValueKey('app-details-${app.name}'),
+            onPressed: () => setState(() {
+              _expandedInstalledApp = identical(_expandedInstalledApp, app)
+                  ? null
+                  : app;
+            }),
+            icon: Icon(
+              identical(_expandedInstalledApp, app)
+                  ? Icons.expand_less
+                  : Icons.expand_more,
+            ),
+            label: Text(
+              identical(_expandedInstalledApp, app)
+                  ? 'Hide notes & portals'
+                  : 'Show notes & portals',
+            ),
+          ),
+          if (identical(_expandedInstalledApp, app))
+            ref
+                .watch(installedAppDetailsProvider((session, app)))
+                .when(
+                  skipLoadingOnRefresh: false,
+                  loading: () => const LinearProgressIndicator(),
+                  error: (_, _) => OutlinedButton(
+                    key: ValueKey('app-details-retry-${app.name}'),
+                    onPressed: () => ref.invalidate(
+                      installedAppDetailsProvider((session, app)),
+                    ),
+                    child: const Text('Retry details read'),
+                  ),
+                  data: (details) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Server-provided notes'),
+                      SelectableText(
+                        details.notes?.isNotEmpty == true
+                            ? details.notes!
+                            : 'No notes',
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Portals · copy an address to open it yourself',
+                      ),
+                      if (details.portals.isEmpty) const Text('No portals'),
+                      for (final entry in details.portals.entries) ...[
+                        Text(entry.key),
+                        SelectableText(entry.value),
+                      ],
+                    ],
+                  ),
+                ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,

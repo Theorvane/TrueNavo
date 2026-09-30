@@ -871,6 +871,13 @@ final class _PreviewRepository
     dockerStatus: 'RUNNING',
   );
   @override
+  Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app) async =>
+      InstalledAppDetails(
+        app: app,
+        notes: 'Synthetic preview application. No server was contacted.',
+        portals: const {},
+      );
+  @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
       _previewAppsCatalog;
   @override

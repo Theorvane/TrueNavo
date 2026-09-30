@@ -840,6 +840,64 @@ void main() {
       expect(h.transport.writes.length, 2);
     },
   );
+  test(
+    'installed notes and portals are read only on exact selected app',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final details = await h.repo.loadInstalledAppDetails(app);
+      expect(details.app, same(app));
+      expect(details.notes, 'Operator note\nSecond line');
+      expect(details.portals, {'Web UI': 'https://nas.example:3000/ui'});
+      expect(() => details.portals.clear(), throwsUnsupportedError);
+      expect(h.transport.requests.last['method'], 'app.query');
+      expect(h.transport.requests.last['params'], [
+        [
+          ['id', '=', 'demo'],
+        ],
+        {
+          'limit': 2,
+          'select': ['id', 'name', 'version', 'notes', 'portals'],
+          'extra': {'retrieve_config': false, 'include_app_schema': false},
+        },
+      ]);
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  for (final badPortal in [
+    'javascript:alert(1)',
+    'https://name:secret@host/ui',
+    'http://host/\nnext',
+  ]) {
+    test('unsafe installed portal is withheld: $badPortal', () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      h.transport.appPortals = {'Web UI': badPortal};
+      await expectLater(
+        h.repo.loadInstalledAppDetails(app),
+        throwsA(_reason(AppsExceptionReason.invalidResponse)),
+      );
+      expect(h.transport.writes, isEmpty);
+    });
+  }
+  test(
+    'oversized installed notes and stale inventory handle fail closed',
+    () async {
+      final h = await _connect();
+      final oldApp = (await h.repo.loadAppsInventory()).apps.single;
+      h.transport.appNotes = 'x' * 4097;
+      await expectLater(
+        h.repo.loadInstalledAppDetails(oldApp),
+        throwsA(_reason(AppsExceptionReason.invalidResponse)),
+      );
+      h.transport.appNotes = null;
+      await h.repo.loadAppsInventory();
+      await expectLater(
+        h.repo.loadInstalledAppDetails(oldApp),
+        throwsA(_reason(AppsExceptionReason.staleSnapshot)),
+      );
+    },
+  );
   test('inventory and catalogue reads are bounded and never retrieve configuration', () async {
     final h = await _connect();
     final inventory = await h.repo.loadAppsInventory();
@@ -1599,6 +1657,10 @@ class _Transport implements RpcTransport {
   String status = 'RUNNING';
   Object? usedPorts = <int>[];
   Map<String, Object?>? catalogRowOverride;
+  Object? appNotes = 'Operator note\nSecond line';
+  Object? appPortals = <String, Object?>{
+    'Web UI': 'https://nas.example:3000/ui',
+  };
   List<String> catalogTrains = ['community', 'stable'];
   List<String> preferredTrains = ['stable'];
   bool catalogUpdateTimeout = false;
@@ -1728,6 +1790,17 @@ class _Transport implements RpcTransport {
                   .where((row) => row['id'] == (filter.single as List).last)
                   .toList();
         final options = (r['params'] as List)[1] as Map;
+        if ((options['select'] as List).contains('notes')) {
+          result = (result as List)
+              .map(
+                (row) => {
+                  ...row as Map,
+                  'notes': appNotes,
+                  'portals': appPortals,
+                },
+              )
+              .toList();
+        }
         if ((options['extra'] as Map)['include_app_schema'] == true) {
           result = (result as List)
               .map((row) => {...row as Map, 'version_details': configDetails})

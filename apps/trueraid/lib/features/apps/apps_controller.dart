@@ -18,6 +18,22 @@ final appsInventoryProvider = FutureProvider<AppsInventory>((ref) async {
   if (api == null) throw StateError('No authenticated Apps session.');
   return api.loadAppsInventory();
 });
+final installedAppDetailsProvider = FutureProvider.autoDispose
+    .family<InstalledAppDetails, (AuthenticatedSession, InstalledApp)>((
+      ref,
+      selection,
+    ) async {
+      if (!identical(ref.watch(dashboardActiveSessionProvider), selection.$1)) {
+        throw StateError('The selected Apps session changed.');
+      }
+      final api = selection.$1.repository;
+      if (api is! AuthenticatedAppsSession) {
+        throw StateError('No authenticated Apps session.');
+      }
+      return (api as AuthenticatedAppsSession).loadInstalledAppDetails(
+        selection.$2,
+      );
+    });
 final appsCatalogProvider = FutureProvider.family<List<CatalogApp>, bool>((
   ref,
   cachedOnly,

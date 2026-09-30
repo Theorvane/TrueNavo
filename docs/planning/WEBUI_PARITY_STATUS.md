@@ -1,6 +1,29 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: reviewed catalogue synchronization
+## Current continuation: on-demand installed app notes and portals
+
+The installed-app card now expands to read the selected app's server-provided
+notes and portal addresses. Ordinary `app.query` inventory still projects no
+notes, portals, configuration or schema. An explicit expansion requests one
+exact app ID with only identity/version/notes/portals selected and
+configuration/schema retrieval disabled. The SDK requires the current
+inventory handle, bounds notes and portal count/length, accepts only HTTP(S)
+portal URLs without embedded credentials, and fails closed on malformed,
+oversized or control/bidi-bearing content. Notes render as plain selectable
+text and portal URLs are selectable, not auto-opened. Details are ephemeral
+and bound to the exact authenticated session; account changes hide old notes
+and cannot cause a detail read for the new account without a new expansion.
+
+Fake-wire and widget tests cover the exact projection, no writes, immutable
+portal data, unsafe URLs, oversized notes, stale handles, explicit reveal and
+account isolation. The official [25.10 `app.query` contract](https://api.truenas.com/v25.10/api_methods_app.query.html)
+defines these fields. SDK analysis and all 5,322 SDK tests pass; Flutter analysis
+and 7,558 Flutter tests pass with one existing skip. Portal launching, notes
+editing, complete app event updates and live release acceptance remain pending.
+TD-060 stays partial; no
+live NAS request or write was made.
+
+## Previous continuation: reviewed catalogue synchronization
 
 The Discover apps screen now offers an explicit upstream catalogue sync only
 when the authenticated server exposes `catalog.sync`, an overview read has

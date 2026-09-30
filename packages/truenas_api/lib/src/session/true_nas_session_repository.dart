@@ -1329,6 +1329,9 @@ final class TrueNasSessionRepository
   Future<AppsInventory> loadAppsInventory() async =>
       _authenticatedApps.loadInventory();
   @override
+  Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app) async =>
+      _authenticatedApps.loadInstalledDetails(app);
+  @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
       _authenticatedApps.loadCatalog(cachedOnly: cachedOnly);
   @override

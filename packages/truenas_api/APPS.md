@@ -10,6 +10,7 @@ Verification uses fake transports only, with no NAS or credential access.
 ## Pinned source contracts
 
 - [25.10 application API models](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/api/v25_10_0/app.py)
+- [25.10 installed app query fields](https://api.truenas.com/v25.10/api_methods_app.query.html)
 - [Application inventory, creation and deletion](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/crud.py)
 - [Upgrade summary, migration and configuration merge](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/upgrade.py)
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
@@ -27,6 +28,15 @@ Verification uses fake transports only, with no NAS or credential access.
 state, version, custom-app status and upgrade availability. It explicitly disables
 configuration and application schema retrieval in ordinary inventory. The
 dedicated configuration review uses the restricted reads described below.
+Notes and portal URLs are never included in ordinary inventory. Expanding one
+installed app makes an exact-ID `app.query` that selects only identity, version,
+notes and portals with configuration/schema retrieval disabled. It requires
+the current inventory handle, bounds notes to 4096 characters and portals to
+eight label/URL pairs, and rejects malformed or unsafe control/bidi text,
+non-HTTP(S) URLs and embedded URL credentials. The immutable projection is
+session-bound and discarded when the detail view closes or account changes.
+Portal addresses are selectable text only; the app does not automatically
+visit or fetch them. This is not full WebUI portal launching or notes editing.
 More than 1024 installed apps
 is rejected. Catalogue discovery uses cached `catalog.apps` with explicit train
 options and bounds the response to 32 trains and 2048 apps. Version selection

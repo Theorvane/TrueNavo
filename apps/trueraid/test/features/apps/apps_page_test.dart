@@ -42,6 +42,43 @@ void main() {
     expect(h.api.actions, isEmpty);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'installed notes and portals load only after explicit expansion',
+    (tester) async {
+      final h = await _pump(tester);
+      expect(h.api.detailsReads, 0);
+      await _tap(tester, find.byKey(const ValueKey('app-details-media')));
+      expect(h.api.detailsReads, 1);
+      expect(find.text('Operator note'), findsOneWidget);
+      expect(find.text('https://nas.example:3000/ui'), findsOneWidget);
+      expect(h.api.actions, isEmpty);
+      await _tap(tester, find.byKey(const ValueKey('app-details-media')));
+      expect(find.text('Operator note'), findsNothing);
+    },
+  );
+  testWidgets('account change hides old notes and needs a new expansion', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const ValueKey('app-details-media')));
+    expect(find.text('Operator note'), findsOneWidget);
+    final next = _FakeApps()..displayNotes = 'Other account note';
+    h.active = AuthenticatedSession(
+      profileId: 'other-account',
+      repository: next,
+      availableMethodNames: _methods,
+      version: '25.10.1',
+      endpoint: 'wss://other.example/api/current',
+    );
+    h.container.invalidate(dashboardActiveSessionProvider);
+    await tester.pumpAndSettle();
+    expect(find.text('Operator note'), findsNothing);
+    expect(find.text('Other account note'), findsNothing);
+    expect(next.detailsReads, 0);
+    await _tap(tester, find.byKey(const ValueKey('app-details-media')));
+    expect(find.text('Other account note'), findsOneWidget);
+    expect(next.detailsReads, 1);
+  });
   testWidgets('start and stop have independent method permission gates', (
     tester,
   ) async {
@@ -703,6 +740,8 @@ class _FakeApps
         AuthenticatedCatalogOverviewSession {
   final actions = <String>[];
   var reads = 0;
+  var detailsReads = 0;
+  String displayNotes = 'Operator note';
   var overviewReads = 0;
   var syncPolls = 0;
   List<String> preferredTrains = ['stable'];
@@ -776,6 +815,16 @@ class _FakeApps
       apps: [installed],
       pool: 'tank',
       dockerStatus: 'RUNNING',
+    );
+  }
+
+  @override
+  Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app) async {
+    detailsReads++;
+    return InstalledAppDetails(
+      app: app,
+      notes: displayNotes,
+      portals: {'Web UI': 'https://nas.example:3000/ui'},
     );
   }
 

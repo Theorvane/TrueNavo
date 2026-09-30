@@ -4,6 +4,7 @@ part of 'true_nas_session_repository.dart';
 abstract interface class AuthenticatedAppsSession {
   AppsCapabilities get appsCapabilities;
   Future<AppsInventory> loadAppsInventory();
+  Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app);
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false});
   Future<List<String>> loadAppVersions(CatalogApp app);
   Future<AppVersionDetails> loadAppVersionDetails(
@@ -104,6 +105,17 @@ final class InstalledApp {
   final String? train;
   final bool customApp;
   final bool upgradeAvailable;
+}
+
+final class InstalledAppDetails {
+  InstalledAppDetails({
+    required this.app,
+    required this.notes,
+    required Map<String, String> portals,
+  }) : portals = Map.unmodifiable(portals);
+  final InstalledApp app;
+  final String? notes;
+  final Map<String, String> portals;
 }
 
 final class CatalogApp {
@@ -435,6 +447,52 @@ final class _SessionApps {
       blockedReason: environment.ready ? null : 'Configure an application pool and wait for the application service to be running in TrueNAS.',
     );
   });
+
+  Future<InstalledAppDetails> loadInstalledDetails(InstalledApp app) =>
+      _read(() async {
+        if (!_installed.containsKey(app)) {
+          throw const AppsException(AppsExceptionReason.staleSnapshot);
+        }
+        final raw = await _call('app.query', [
+          [
+            ['id', '=', app.id],
+          ],
+          {
+            'limit': 2,
+            'select': ['id', 'name', 'version', 'notes', 'portals'],
+            'extra': {'retrieve_config': false, 'include_app_schema': false},
+          },
+        ]);
+        if (raw is! List || raw.length != 1 || raw.single is! Map) {
+          throw const AppsException(AppsExceptionReason.invalidResponse);
+        }
+        final row = raw.single as Map;
+        if (row['id'] != app.id ||
+            row['name'] != app.name ||
+            row['version'] != app.version) {
+          throw const AppsException(AppsExceptionReason.staleSnapshot);
+        }
+        final notes = row['notes'];
+        if (notes != null && !_appsNotes(notes)) {
+          throw const AppsException(AppsExceptionReason.invalidResponse);
+        }
+        final rawPortals = row['portals'];
+        if (rawPortals is! Map || rawPortals.length > 8) {
+          throw const AppsException(AppsExceptionReason.invalidResponse);
+        }
+        final portals = <String, String>{};
+        for (final entry in rawPortals.entries) {
+          if (!_appsText(entry.key, 64) || !_appsPortalUrl(entry.value)) {
+            throw const AppsException(AppsExceptionReason.invalidResponse);
+          }
+          portals[entry.key as String] = entry.value as String;
+        }
+        return InstalledAppDetails(
+          app: app,
+          notes: notes as String?,
+          portals: portals,
+        );
+      });
 
   Future<List<CatalogApp>> loadCatalog({bool cachedOnly = false}) =>
       _read(() async {
@@ -1663,6 +1721,22 @@ bool _appsText(Object? value, int max) =>
     value.length <= max &&
     !RegExp(r'[\x00-\x1f\x7f\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]')
         .hasMatch(value);
+bool _appsNotes(Object? value) =>
+    value is String &&
+    value.length <= 4096 &&
+    !RegExp(
+      r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]',
+    ).hasMatch(value);
+bool _appsPortalUrl(Object? value) {
+  if (!_appsText(value, 2048)) return false;
+  final uri = Uri.tryParse(value as String);
+  return uri != null &&
+      (uri.scheme == 'http' || uri.scheme == 'https') &&
+      uri.hasAuthority &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty;
+}
+
 String? _appsDisplay(Object? value, int max) =>
     _appsText(value, max) ? value as String : null;
 List<String> _catalogTrainList(List raw) {
