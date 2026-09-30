@@ -394,6 +394,24 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                 const SizedBox(height: 12),
               ],
               if (overview != null &&
+                  session.availableMethodNames.contains('catalog.sync')) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    key: const Key('catalog-sync'),
+                    onPressed:
+                        _cachedOnly || ref.watch(appsControllerProvider).locked
+                        ? null
+                        : () => _syncCatalog(session, overview),
+                    icon: const Icon(Icons.sync_rounded),
+                    label: const Text('Sync catalog from upstream'),
+                  ),
+                ),
+                if (_cachedOnly)
+                  const Text('Catalog sync requires normal browsing mode.'),
+                const SizedBox(height: 12),
+              ],
+              if (overview != null &&
                   session.availableMethodNames.contains('catalog.update')) ...[
                 const Text('Preferred catalog trains'),
                 const SizedBox(height: 8),
@@ -638,6 +656,25 @@ class _AppsPageState extends ConsumerState<AppsPage> {
     }
   }
 
+  Future<void> _syncCatalog(
+    AuthenticatedSession session,
+    CatalogOverview overview,
+  ) async {
+    final confirmed = await confirmAppOperation(
+      context,
+      title: 'Sync application catalog',
+      endpoint: session.endpoint!,
+      target: 'catalog sync',
+      warning: 'The server will fetch upstream catalog changes. This can take time and may change available apps or trains. No automatic retry will be made.',
+      expectedSession: session,
+    );
+    if (confirmed && mounted) {
+      await ref
+          .read(appsControllerProvider.notifier)
+          .syncCatalog(session, overview);
+    }
+  }
+
   Future<void> _lifecycle(
     AuthenticatedSession session,
     InstalledApp app,
@@ -742,9 +779,13 @@ class AppsOperationBanner extends ConsumerWidget {
         title: state.unknown
             ? 'Outcome unknown'
             : state.busy || state.pending
-            ? state.target == 'catalog preferences'
+            ? state.target == 'catalog sync'
+                  ? 'Catalog sync in progress'
+                  : state.target == 'catalog preferences'
                   ? 'Catalog settings update in progress'
                   : 'Application operation in progress'
+            : state.target == 'catalog sync'
+            ? 'Catalog sync result'
             : state.target == 'catalog preferences'
             ? 'Catalog settings result'
             : 'Application operation result',
@@ -753,7 +794,20 @@ class AppsOperationBanner extends ConsumerWidget {
           children: [
             if (state.connectionCurrent && state.target != null)
               Text('${state.server}\n${state.target}'),
-            if (state.result != null) Text(state.result!.userMessage),
+            if (state.result != null)
+              Text(
+                state.target == 'catalog sync'
+                    ? switch (state.result!.outcome) {
+                        AppOperationOutcome.submitted => 'The server accepted the sync job. Its result still needs verification.',
+                        AppOperationOutcome.running =>
+                          'The catalog sync job is still running.',
+                        AppOperationOutcome.verified => 'The server completed the catalog sync job and fresh catalog settings were read.',
+                        AppOperationOutcome.failed => 'The server reported that catalog sync failed or was aborted. Reload before another change.',
+                        AppOperationOutcome.rejected => 'The catalog changed before sync could start. Reload and review again.',
+                        AppOperationOutcome.unknown => 'The sync outcome could not be confirmed. Do not repeat it; inspect TrueNAS and reconnect.',
+                      }
+                    : state.result!.userMessage,
+              ),
             if (state.busy || state.pending) ...[
               const SizedBox(height: 12),
               LinearProgressIndicator(

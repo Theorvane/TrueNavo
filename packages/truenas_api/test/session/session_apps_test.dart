@@ -11,6 +11,7 @@ const _methods = {
   'catalog.config',
   'catalog.trains',
   'catalog.update',
+  'catalog.sync',
   'docker.status',
   'docker.config',
   'core.get_jobs',
@@ -715,6 +716,130 @@ void main() {
       },
     );
   }
+  test(
+    'catalog sync submits no arguments and verifies its owned successful job',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      final result = await h.repo.syncCatalog(overview);
+      expect(result.outcome, AppOperationOutcome.submitted);
+      expect(result.job!.operation, 'catalog.sync');
+      expect(h.transport.writes.single['params'], []);
+      h.transport.jobState = 'RUNNING';
+      h.transport.progress = 47;
+      final running = await h.repo.pollAppJob(result.job!);
+      expect(running.outcome, AppOperationOutcome.running);
+      expect(running.progressPercent, 47);
+      h.transport.jobState = 'SUCCESS';
+      h.transport.catalogTrains = ['community', 'stable', 'testing'];
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.verified,
+      );
+      expect(
+        (await h.repo.loadCatalogOverview()).availableTrains,
+        contains('testing'),
+      );
+      expect(
+        (await h.repo.syncCatalog(overview)).outcome,
+        AppOperationOutcome.rejected,
+      );
+      expect(h.transport.writes.length, 1);
+    },
+  );
+  test(
+    'catalog sync stale overview and missing permission never dispatch',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      h.transport.preferredTrains = ['community'];
+      expect(
+        (await h.repo.syncCatalog(overview)).outcome,
+        AppOperationOutcome.rejected,
+      );
+      expect(h.transport.writes, isEmpty);
+      final denied = await _connect(
+        methods: _methods.difference({'catalog.sync'}),
+      );
+      final deniedOverview = await denied.repo.loadCatalogOverview();
+      await expectLater(
+        denied.repo.syncCatalog(deniedOverview),
+        throwsA(_reason(AppsExceptionReason.unavailableMethod)),
+      );
+      expect(denied.transport.writes, isEmpty);
+    },
+  );
+  test('catalog sync timeout fences any replay on the same session', () async {
+    final h = await _connect();
+    final overview = await h.repo.loadCatalogOverview();
+    h.transport.writeFailure = 'timeout';
+    expect(
+      (await h.repo.syncCatalog(overview)).outcome,
+      AppOperationOutcome.unknown,
+    );
+    expect(h.transport.writes.length, 1);
+    final fresh = await h.repo.loadCatalogOverview();
+    await expectLater(
+      h.repo.syncCatalog(fresh),
+      throwsA(_reason(AppsExceptionReason.busy)),
+    );
+    expect(h.transport.writes.length, 1);
+  });
+  for (final mismatch in [
+    'job-id',
+    'job-method',
+    'job-arguments',
+    'empty-job',
+  ]) {
+    test('catalog sync $mismatch is unknown and not retried', () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      final result = await h.repo.syncCatalog(overview);
+      h.transport.pollMismatch = mismatch;
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.unknown,
+      );
+      expect(h.transport.writes.length, 1);
+    });
+  }
+  test(
+    'catalog sync success without valid fresh settings stays unknown',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      final result = await h.repo.syncCatalog(overview);
+      h.transport.catalogTrains = ['community', 'community'];
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.unknown,
+      );
+      expect(h.transport.writes.length, 1);
+    },
+  );
+  test(
+    'failed catalog sync job releases mutation ownership but clears reviews',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      final result = await h.repo.syncCatalog(overview);
+      h.transport.jobState = 'FAILED';
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.failed,
+      );
+      expect(
+        (await h.repo.syncCatalog(overview)).outcome,
+        AppOperationOutcome.rejected,
+      );
+      final fresh = await h.repo.loadCatalogOverview();
+      expect(
+        (await h.repo.syncCatalog(fresh)).outcome,
+        AppOperationOutcome.submitted,
+      );
+      expect(h.transport.writes.length, 2);
+    },
+  );
   test('inventory and catalogue reads are bounded and never retrieve configuration', () async {
     final h = await _connect();
     final inventory = await h.repo.loadAppsInventory();
@@ -1509,6 +1634,7 @@ class _Transport implements RpcTransport {
       'app.delete',
       'app.update',
       'catalog.update',
+      'catalog.sync',
     }.contains(r['method']),
   );
   @override
@@ -1585,6 +1711,11 @@ class _Transport implements RpcTransport {
               : preferredTrains,
           'location': '/mnt/catalog',
         };
+      case 'catalog.sync':
+        if (writeFailure == 'timeout') return;
+        submitted = r;
+        jobId = nextJob++;
+        result = jobId;
       case 'catalog.get_app_details':
         result = {'name': 'demo', 'versions': details};
       case 'app.upgrade_summary':
@@ -1640,7 +1771,13 @@ class _Transport implements RpcTransport {
         if (submitted!['method'] == 'app.update' && redactUpdateArgs) {
           arguments[1] = {'values': '********'};
         }
-        if (pollMismatch == 'job-arguments') arguments[0] = 'other-app';
+        if (pollMismatch == 'job-arguments') {
+          if (arguments.isEmpty) {
+            arguments.add('unexpected');
+          } else {
+            arguments[0] = 'other-app';
+          }
+        }
         result = pollMismatch == 'empty-job'
             ? []
             : [
@@ -1676,6 +1813,7 @@ class _Transport implements RpcTransport {
 
   void _complete() {
     final args = submitted!['params'] as List;
+    if (submitted!['method'] == 'catalog.sync') return;
     if (submitted!['method'] == 'app.create') {
       final options = args.single as Map;
       final name = options['app_name'] as String;

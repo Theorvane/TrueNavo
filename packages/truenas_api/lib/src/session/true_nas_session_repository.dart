@@ -1335,6 +1335,9 @@ final class TrueNasSessionRepository
   Future<CatalogOverview> loadCatalogOverview() async =>
       _authenticatedApps.loadCatalogOverview();
   @override
+  Future<AppOperationResult> syncCatalog(CatalogOverview overview) async =>
+      _authenticatedApps.syncCatalog(overview);
+  @override
   Future<AppOperationResult> updateCatalogPreferredTrains(
     CatalogOverview overview,
     List<String> preferredTrains,

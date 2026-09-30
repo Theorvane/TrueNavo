@@ -18,6 +18,7 @@ Verification uses fake transports only, with no NAS or credential access.
 - [25.10 catalogue configuration](https://api.truenas.com/v25.10/api_methods_catalog.config.html)
 - [25.10 available catalogue trains](https://api.truenas.com/v25.10/api_methods_catalog.trains.html)
 - [25.10 catalogue preference update](https://api.truenas.com/v25.10/api_methods_catalog.update.html)
+- [25.10 catalogue sync job](https://api.truenas.com/v25.10/api_methods_catalog.sync.html)
 - [Job identity and redaction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/job.py)
 
 ## Inventory and installation
@@ -50,8 +51,8 @@ Where both read permissions are present, the separate catalogue overview reads
 It projects only bounded, unique, validated available/preferred train names;
 malformed settings fail closed and never replace the existing app list. These
 are server settings, not app-local filter preferences. The UI can show an
-available train with no currently returned app. It does not call
-`catalog.sync`.
+available train with no currently returned app. Browsing never implicitly
+calls `catalog.sync`.
 
 Preferred-train editing requires the separate `catalog.update` permission and
 an exact overview handle from this connection. Only a bounded unique subset of
@@ -65,8 +66,21 @@ settings or trains reject without a write. It verifies the returned identity
 and preference and independently rereads them. Timeout, malformed response or
 readback mismatch after submission is unknown, locks further changes on that
 connection and is never retried automatically. The UI can still read settings
-for inspection. No catalogue sync is included, and this flow is tested only
-against fake transports, never the supplied NAS.
+for inspection. This preference flow is tested only against fake transports,
+never the supplied NAS.
+
+Catalogue synchronization is a separate explicitly confirmed job. It
+requires the exact current overview handle and `catalog.sync` permission,
+rereads catalogue identity and settings before dispatch, and sends no
+arguments. The returned positive job ID belongs to that session. Polling
+uses a bounded `core.get_jobs` projection with `raw_result:false`, verifies
+exact ID, method and empty arguments, and surfaces numeric progress without
+descriptions, results or errors. A successful job is verified only after
+fresh catalogue settings can be read; failed/aborted jobs release the write
+lock and invalidate old catalogue handles. An ambiguous dispatch, mismatched
+job or failed readback becomes unknown and fences mutations without replay.
+The UI disables sync in server-cached-only browsing mode. No live NAS sync
+was run; all sync tests use fake transports.
 
 Catalogue, installed-app, version and upgrade-review handles belong to the exact
 authenticated connection that issued them. Reload invalidates earlier relevant

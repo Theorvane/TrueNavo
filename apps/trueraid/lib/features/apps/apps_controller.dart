@@ -161,6 +161,15 @@ class AppsController extends Notifier<AppsState> {
     }
   }
 
+  Future<void> syncCatalog(
+    AuthenticatedSession session,
+    CatalogOverview overview,
+  ) => _perform(
+    session,
+    'catalog sync',
+    (api) => (api as AuthenticatedCatalogOverviewSession).syncCatalog(overview),
+  );
+
   Future<void> _perform(
     AuthenticatedSession session,
     String target,
@@ -248,6 +257,13 @@ class AppsController extends Notifier<AppsState> {
       _timer?.cancel();
       if (!state.unknown) _release();
       ref.invalidate(appsInventoryProvider);
+      if (state.target == 'catalog sync' &&
+          (result.outcome == AppOperationOutcome.verified ||
+              result.outcome == AppOperationOutcome.failed)) {
+        ref.invalidate(catalogOverviewProvider);
+        ref.invalidate(appsCatalogProvider(false));
+        ref.invalidate(appsCatalogProvider(true));
+      }
     }
   }
 

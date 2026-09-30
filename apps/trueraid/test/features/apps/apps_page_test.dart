@@ -209,6 +209,45 @@ void main() {
     expect(find.byKey(const Key('catalog-preferences-save')), findsNothing);
     expect(h.api.actions, isEmpty);
   });
+  testWidgets(
+    'catalog sync requires exact confirmation and tracks one fake job',
+    (tester) async {
+      final h = await _pump(tester);
+      await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+      await _tap(tester, find.byKey(const Key('catalog-sync')));
+      expect(h.api.actions, isEmpty);
+      expect(
+        find.textContaining('fetch upstream catalog changes'),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const Key('app-confirm-name')),
+        'catalog sync',
+      );
+      await _tap(tester, find.byKey(const Key('app-confirm-submit')));
+      expect(h.api.actions, ['catalog.sync']);
+      expect(h.container.read(appsControllerProvider).pending, isTrue);
+      await h.container.read(appsControllerProvider.notifier).checkJob();
+      await tester.pump();
+      expect(h.api.syncPolls, 1);
+      expect(
+        h.container.read(appsControllerProvider).result?.outcome,
+        AppOperationOutcome.verified,
+      );
+    },
+  );
+  testWidgets('cached-only list cannot trigger catalog sync', (tester) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    await _tap(tester, find.byKey(const Key('apps-cached-catalog-only')));
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const Key('catalog-sync')))
+          .onPressed,
+      isNull,
+    );
+    expect(h.api.actions, isEmpty);
+  });
   testWidgets('catalog category train recommendation and tag filters compose', (
     tester,
   ) async {
@@ -602,6 +641,7 @@ const _methods = {
   'catalog.trains',
   'catalog.config',
   'catalog.update',
+  'catalog.sync',
 };
 Future<_Harness> _pump(
   WidgetTester tester, {
@@ -664,6 +704,7 @@ class _FakeApps
   final actions = <String>[];
   var reads = 0;
   var overviewReads = 0;
+  var syncPolls = 0;
   List<String> preferredTrains = ['stable'];
   AppInstallRequest? created;
   AppUpgradeRequest? upgraded;
@@ -764,6 +805,15 @@ class _FakeApps
   }
 
   @override
+  Future<AppOperationResult> syncCatalog(CatalogOverview overview) async {
+    actions.add('catalog.sync');
+    return const AppOperationResult(
+      outcome: AppOperationOutcome.submitted,
+      job: AppJob(id: 808, appName: 'catalog', operation: 'catalog.sync'),
+    );
+  }
+
+  @override
   Future<List<String>> loadAppVersions(CatalogApp app) async => ['2.0.0'];
   @override
   Future<AppVersionDetails> loadAppVersionDetails(
@@ -806,7 +856,11 @@ class _FakeApps
   }
 
   @override
-  Future<AppOperationResult> pollAppJob(AppJob job) async => _verified;
+  Future<AppOperationResult> pollAppJob(AppJob job) async {
+    if (job.operation == 'catalog.sync') syncPolls++;
+    return _verified;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

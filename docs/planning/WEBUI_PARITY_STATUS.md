@@ -1,6 +1,34 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: reviewed server catalogue preferences
+## Current continuation: reviewed catalogue synchronization
+
+The Discover apps screen now offers an explicit upstream catalogue sync only
+when the authenticated server exposes `catalog.sync`, an overview read has
+completed, and server-cached-only browsing is off. A confirmation identifies
+the endpoint, upstream/network effect and exact `catalog sync` phrase. The
+shared operation lock and route-independent Apps controller retain the
+submitted job across navigation. Automatic polling is bounded to two
+minutes; manual progress checks remain available. The SDK rereads the exact
+current catalogue overview before argument-free submission, owns the
+returned job ID, verifies ID/method/empty arguments through a restricted
+`core.get_jobs` projection with `raw_result:false`, and exposes numeric
+progress but no job description, result, logs or error. A SUCCESS job must
+also permit a fresh bounded catalogue-settings read before being marked
+verified. Terminal success/failure invalidates stale catalogue handles and
+refreshes UI reads. Uncertain dispatch, identity mismatch or inaccessible
+readback fences more mutations and never retries automatically.
+
+The official [25.10 sync contract](https://api.truenas.com/v25.10/api_methods_catalog.sync.html)
+defines an argument-free job with `CATALOG_WRITE`; the [job-query contract](https://api.truenas.com/v25.10/api_methods_core.get_jobs.html)
+documents filtered reads and default result redaction. Fake transports and
+widgets are the only mutation-path tests; no live NAS request or write was
+made. This does not establish live release acceptance, guarantee that every
+upstream app is usable, or complete TrueNAS WebUI parity. Focused SDK/app-page
+suites pass (98 and 25 tests); SDK/app static analysis is clean. The final full
+SDK regression passes (5,317 tests) and full app regression passes (7,556
+tests and one existing skip, four concurrent processes). TD-058 stays partial.
+
+## Previous continuation: reviewed server catalogue preferences
 
 The Discover apps screen now offers server preferred-train editing when
 `catalog.update` is available. Selection is restricted to names from the
@@ -19,7 +47,8 @@ as an unavailable chip that can be removed but not re-added. Save stays disabled
 while any such name remains selected.
 
 All write-path checks use fake transports and widgets; the supplied NAS was
-not contacted. `catalog.sync` and many WebUI functions remain pending. The
+not contacted. That increment did not implement `catalog.sync`, and many
+WebUI functions remain pending. The
 official [25.10 update contract](https://api.truenas.com/v25.10/api_methods_catalog.update.html)
 specifies a `preferred_trains` payload and `CATALOG_WRITE` role. TD-058 remains
 partial, and this is not live release acceptance. Focused SDK/app-page suites

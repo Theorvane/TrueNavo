@@ -29,6 +29,7 @@ abstract interface class AuthenticatedAppsSession {
 /// Optional, read-only catalogue settings for servers exposing both methods.
 abstract interface class AuthenticatedCatalogOverviewSession {
   Future<CatalogOverview> loadCatalogOverview();
+  Future<AppOperationResult> syncCatalog(CatalogOverview overview);
   Future<AppOperationResult> updateCatalogPreferredTrains(
     CatalogOverview overview,
     List<String> preferredTrains,
@@ -359,6 +360,7 @@ final class _SessionApps {
   final _upgradeReviews = <AppUpgradeReview, String>{};
   final _configReviews = <AppConfigReview, _AppsConfigObservation>{};
   final _jobs = <AppJob, _AppsJobObservation>{};
+  final _catalogSyncJobs = <AppJob, AppOperationResult?>{};
   final _submitted = Expando<bool>();
 
   AppsCapabilities get capabilities => AppsCapabilities(
@@ -595,6 +597,115 @@ final class _SessionApps {
       return dispatched ? _unknown() : _rejected;
     } finally {
       _submitting = false;
+    }
+  }
+
+  Future<AppOperationResult> syncCatalog(CatalogOverview overview) async {
+    final observed = _catalogOverviews[overview];
+    if (observed == null) return _rejected;
+    _begin(overview, 'catalog.sync');
+    var dispatched = false;
+    try {
+      final (_, fingerprint, _) = await _readCatalogOverview();
+      if (fingerprint != observed.$1 || !isCurrent() || isOtherBusy()) {
+        return _rejected;
+      }
+      dispatched = true;
+      final raw = await _call('catalog.sync', []);
+      if (raw is! int || raw < 1 || raw > 9007199254740991) {
+        return _unknown();
+      }
+      final job = AppJob(
+        id: raw,
+        appName: 'catalog',
+        operation: 'catalog.sync',
+      );
+      if (_catalogSyncJobs.length >= 64) {
+        _catalogSyncJobs.remove(_catalogSyncJobs.keys.first);
+      }
+      _catalogSyncJobs[job] = null;
+      _active = job;
+      return AppOperationResult(
+        outcome: AppOperationOutcome.submitted,
+        job: job,
+      );
+    } on Object {
+      return dispatched ? _unknown() : _rejected;
+    } finally {
+      _submitting = false;
+    }
+  }
+
+  Future<AppOperationResult> _pollCatalogSync(AppJob job) async {
+    if (!_catalogSyncJobs.containsKey(job) || !isCurrent()) {
+      return const AppOperationResult(outcome: AppOperationOutcome.unknown);
+    }
+    final terminal = _catalogSyncJobs[job];
+    if (terminal != null) return terminal;
+    if (_uncertain) return _unknown(job);
+    if (_polling || _submitting || _reading) {
+      throw const AppsException(AppsExceptionReason.busy);
+    }
+    _polling = true;
+    try {
+      final raw = await _call('core.get_jobs', [
+        [
+          ['id', '=', job.id],
+        ],
+        {
+          'limit': 2,
+          'select': ['id', 'method', 'arguments', 'state', 'progress'],
+          'extra': {'raw_result': false},
+        },
+      ]);
+      if (raw is! List || raw.length != 1 || raw.single is! Map) {
+        return _unknown(job);
+      }
+      final row = raw.single as Map;
+      if (row['id'] != job.id ||
+          row['method'] != 'catalog.sync' ||
+          row['arguments'] is! List ||
+          (row['arguments'] as List).isNotEmpty) {
+        return _unknown(job);
+      }
+      final progress = row['progress'];
+      final percent = progress is Map ? progress['percent'] : null;
+      final safePercent =
+          percent is num && percent.isFinite && percent >= 0 && percent <= 100
+          ? percent.toDouble()
+          : null;
+      if (row['state'] == 'WAITING' || row['state'] == 'RUNNING') {
+        return AppOperationResult(
+          outcome: AppOperationOutcome.running,
+          job: job,
+          progressPercent: safePercent,
+        );
+      }
+      if (row['state'] != 'SUCCESS' &&
+          row['state'] != 'FAILED' &&
+          row['state'] != 'ABORTED') {
+        return _unknown(job);
+      }
+      if (row['state'] == 'SUCCESS') {
+        // Job success is only exposed after a fresh, bounded catalogue read.
+        await _readCatalogOverview();
+      }
+      _catalogOverviews.clear();
+      _catalog.clear();
+      _versions.clear();
+      _upgradeReviews.clear();
+      _active = null;
+      return _catalogSyncJobs[job] = AppOperationResult(
+        outcome: row['state'] == 'SUCCESS'
+            ? AppOperationOutcome.verified
+            : AppOperationOutcome.failed,
+        job: job,
+        progressPercent: row['state'] == 'SUCCESS' ? 100 : safePercent,
+      );
+    } on Object {
+      return _unknown(job);
+    } finally {
+      _polling = false;
     }
   }
 
@@ -1316,6 +1427,7 @@ final class _SessionApps {
   }
 
   Future<AppOperationResult> poll(AppJob job) async {
+    if (job.operation == 'catalog.sync') return _pollCatalogSync(job);
     final observation = _jobs[job];
     if (observation == null || !isCurrent()) {
       return const AppOperationResult(outcome: AppOperationOutcome.unknown);
