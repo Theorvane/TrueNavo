@@ -19,6 +19,7 @@ const _methods = {
   'app.outdated_docker_images',
   'app.pull_images',
   'app.rollback_versions',
+  'app.rollback',
   'app.create',
   'app.start',
   'app.stop',
@@ -963,6 +964,125 @@ void main() {
     );
     expect(h.transport.writes, isEmpty);
   });
+  test(
+    'reviewed rollback submits snapshot and verifies target version',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final versions = await h.repo.loadAppRollbackVersions(app);
+      final result = await h.repo.rollbackApp(
+        AppRollbackRequest(
+          app: app,
+          version: '0.9.0',
+          expectedVersions: versions,
+          confirmedTarget: 'demo rollback 0.9.0',
+        ),
+      );
+      expect(result.outcome, AppOperationOutcome.submitted);
+      expect(h.transport.submitted?['method'], 'app.rollback');
+      expect(h.transport.submitted?['params'], [
+        'demo',
+        {'app_version': '0.9.0', 'rollback_snapshot': true},
+      ]);
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.verified,
+      );
+    },
+  );
+  test(
+    'rollback rejects changed options or versions without another write',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final versions = await h.repo.loadAppRollbackVersions(app);
+      final request = AppRollbackRequest(
+        app: app,
+        version: '0.9.0',
+        expectedVersions: versions,
+        confirmedTarget: 'demo rollback 0.9.0',
+      );
+      h.transport.rollbackVersions = ['0.8.0'];
+      expect(
+        (await h.repo.rollbackApp(request)).outcome,
+        AppOperationOutcome.rejected,
+      );
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test(
+    'rollback requires exact target phrase and server offered version',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final versions = await h.repo.loadAppRollbackVersions(app);
+      await expectLater(
+        h.repo.rollbackApp(
+          AppRollbackRequest(
+            app: app,
+            version: '0.9.0',
+            expectedVersions: versions,
+            confirmedTarget: 'demo',
+          ),
+        ),
+        throwsA(_reason(AppsExceptionReason.invalidInput)),
+      );
+      await expectLater(
+        h.repo.rollbackApp(
+          AppRollbackRequest(
+            app: app,
+            version: '0.7.0',
+            expectedVersions: versions,
+            confirmedTarget: 'demo rollback 0.7.0',
+          ),
+        ),
+        throwsA(_reason(AppsExceptionReason.invalidInput)),
+      );
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test(
+    'rollback job with changed snapshot option is unknown and fenced',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final versions = await h.repo.loadAppRollbackVersions(app);
+      final result = await h.repo.rollbackApp(
+        AppRollbackRequest(
+          app: app,
+          version: '0.9.0',
+          expectedVersions: versions,
+          confirmedTarget: 'demo rollback 0.9.0',
+        ),
+      );
+      h.transport.pollMismatch = 'rollback-snapshot';
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.unknown,
+      );
+    },
+  );
+  test(
+    'failed rollback remains unknown because changes may be partial',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final versions = await h.repo.loadAppRollbackVersions(app);
+      final result = await h.repo.rollbackApp(
+        AppRollbackRequest(
+          app: app,
+          version: '0.9.0',
+          expectedVersions: versions,
+          confirmedTarget: 'demo rollback 0.9.0',
+        ),
+      );
+      h.transport.jobState = 'FAILED';
+      expect(
+        (await h.repo.pollAppJob(result.job!)).outcome,
+        AppOperationOutcome.unknown,
+      );
+    },
+  );
   test('outdated image check rejects stale and malformed responses', () async {
     final h = await _connect();
     final app = (await h.repo.loadAppsInventory()).apps.single;
@@ -2008,6 +2128,7 @@ class _Transport implements RpcTransport {
       'app.delete',
       'app.update',
       'app.pull_images',
+      'app.rollback',
       'catalog.update',
       'catalog.sync',
     }.contains(r['method']),
@@ -2139,6 +2260,7 @@ class _Transport implements RpcTransport {
       case 'app.delete':
       case 'app.update':
       case 'app.pull_images':
+      case 'app.rollback':
         if (writeFailure == 'timeout') return;
         if (writeFailure == 'remote') {
           inbound.add(
@@ -2172,6 +2294,9 @@ class _Transport implements RpcTransport {
         }
         if (pollMismatch == 'pull-redeploy') {
           arguments[1] = {'redeploy': true};
+        }
+        if (pollMismatch == 'rollback-snapshot') {
+          arguments[1] = {'app_version': '0.9.0', 'rollback_snapshot': false};
         }
         result = pollMismatch == 'empty-job'
             ? []
@@ -2224,6 +2349,9 @@ class _Transport implements RpcTransport {
         savedConfig.addAll(
           Map<String, Object?>.from((args[1] as Map)['values'] as Map),
         );
+      }
+      if (submitted!['method'] == 'app.rollback') {
+        row['version'] = (args[1] as Map)['app_version'];
       }
       if (submitted!['method'] == 'app.update') {
         savedConfig.addAll(

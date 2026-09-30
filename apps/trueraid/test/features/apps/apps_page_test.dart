@@ -145,6 +145,40 @@ void main() {
       findsNothing,
     );
   });
+  testWidgets('rollback requires target phrase and snapshot review', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(
+      tester,
+      find.byKey(const ValueKey('app-rollback-versions-media')),
+    );
+    await _tap(tester, find.byKey(const ValueKey('app-rollback-media-0.9.0')));
+    expect(find.text('Pre-rollback snapshot: requested'), findsOneWidget);
+    expect(h.api.actions, isEmpty);
+    await tester.enterText(
+      find.byKey(const Key('app-confirm-name')),
+      'media rollback 0.9.0',
+    );
+    await _tap(tester, find.byKey(const Key('app-confirm-submit')));
+    expect(h.api.actions, ['rollback']);
+    expect(h.api.rolledBack!.version, '0.9.0');
+    expect(h.api.rolledBack!.expectedVersions, ['0.9.0']);
+  });
+  testWidgets('rollback action is hidden without write permission', (
+    tester,
+  ) async {
+    await _pump(tester, methods: _methods.difference({'app.rollback'}));
+    await _tap(
+      tester,
+      find.byKey(const ValueKey('app-rollback-versions-media')),
+    );
+    expect(find.text('0.9.0'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('app-rollback-media-0.9.0')),
+      findsNothing,
+    );
+  });
   testWidgets('outdated image read is hidden without method permission', (
     tester,
   ) async {
@@ -784,6 +818,7 @@ const _methods = {
   'app.outdated_docker_images',
   'app.pull_images',
   'app.rollback_versions',
+  'app.rollback',
   'catalog.trains',
   'catalog.config',
   'catalog.update',
@@ -860,6 +895,7 @@ class _FakeApps
   AppUpgradeRequest? upgraded;
   AppUninstallRequest? deleted;
   AppImagePullRequest? pulled;
+  AppRollbackRequest? rolledBack;
   final installed = const InstalledApp(
     id: 'media',
     name: 'media',
@@ -964,6 +1000,13 @@ class _FakeApps
   Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async {
     actions.add('pull-images');
     pulled = request;
+    return const AppOperationResult(outcome: AppOperationOutcome.verified);
+  }
+
+  @override
+  Future<AppOperationResult> rollbackApp(AppRollbackRequest request) async {
+    actions.add('rollback');
+    rolledBack = request;
     return const AppOperationResult(outcome: AppOperationOutcome.verified);
   }
 

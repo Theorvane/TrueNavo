@@ -1,6 +1,22 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: on-demand app rollback version list
+## Current continuation: reviewed application rollback
+
+Running installed apps can now select a server-offered rollback version after
+an explicit on-demand read. A confirmation review shows the endpoint, app ID,
+current and target versions, interruption/data warning and pre-rollback
+snapshot request; the operator must type `ID rollback VERSION`. The SDK
+rechecks the app and unchanged rollback version set before submitting
+`app.rollback(id, {app_version: version, rollback_snapshot: true})`. Its owned
+job checks exact arguments and verifies the target installed version and
+running state after success. Failed or ambiguous jobs remain unknown and
+fence further Apps mutations; snapshot creation is not a guaranteed backup.
+Only synthetic SDK and widget tests exercised the write path. No live NAS
+request or write was made. SDK analysis and all 5,345 SDK tests pass; Flutter
+analysis and 7,566 Flutter tests pass with one existing skip. Live release
+acceptance remains pending. [Official 25.10 rollback contract](https://api.truenas.com/v25.10/api_methods_app.rollback.html).
+
+## Previous continuation: on-demand app rollback version list
 
 Installed-app cards now expose an explicit read-only check for
 `app.rollback_versions` when the server offers that method. The SDK requires
@@ -8,14 +24,14 @@ a current inventory handle, rereads the exact app ID/name/version without
 configuration or schema, and returns at most 64 unique bounded safe version
 labels. The list is immutable and tied to the authenticated session; the UI
 does not query it until tapped and hides it on account change. Malformed or
-stale replies fail closed. This does not invoke `app.rollback`, select a
-snapshot policy or imply that a rollback is safe. Fake-wire and widget tests
+stale replies fail closed. This read itself does not invoke `app.rollback` or
+imply that a rollback is safe. Fake-wire and widget tests
 cover exact arguments, no writes, malformed/stale replies, explicit reveal
 and account isolation. The official
 [25.10 `app.rollback_versions` contract](https://api.truenas.com/v25.10/api_methods_app.rollback_versions.html)
 defines the read. SDK analysis and all 5,340 SDK tests pass; Flutter analysis
 and 7,564 Flutter tests pass with one existing skip. Actual rollback and live
-release acceptance remain pending; no live NAS request or write was made.
+release acceptance remained pending at that checkpoint; no live NAS request or write was made.
 
 ## Previous continuation: reviewed image pull without redeploy
 

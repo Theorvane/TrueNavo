@@ -7,6 +7,7 @@ abstract interface class AuthenticatedAppsSession {
   Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app);
   Future<List<String>> loadOutdatedAppImages(InstalledApp app);
   Future<List<String>> loadAppRollbackVersions(InstalledApp app);
+  Future<AppOperationResult> rollbackApp(AppRollbackRequest request);
   Future<AppOperationResult> pullAppImages(AppImagePullRequest request);
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false});
   Future<List<String>> loadAppVersions(CatalogApp app);
@@ -149,6 +150,19 @@ final class AppImagePullRequest {
   final InstalledApp app;
   final List<String> expectedImages;
   final String confirmedName;
+}
+
+final class AppRollbackRequest {
+  AppRollbackRequest({
+    required this.app,
+    required this.version,
+    required List<String> expectedVersions,
+    required this.confirmedTarget,
+  }) : expectedVersions = List.unmodifiable(expectedVersions);
+  final InstalledApp app;
+  final String version;
+  final List<String> expectedVersions;
+  final String confirmedTarget;
 }
 
 final class CatalogApp {
@@ -619,20 +633,24 @@ final class _SessionApps {
             (current.single as Map)['version'] != app.version) {
           throw const AppsException(AppsExceptionReason.staleSnapshot);
         }
-        final raw = await _call('app.rollback_versions', [app.name]);
-        if (raw is! List || raw.length > 64) {
-          throw const AppsException(AppsExceptionReason.invalidResponse);
-        }
-        final versions = <String>[];
-        final seen = <String>{};
-        for (final value in raw) {
-          if (!_appsText(value, 64) || !seen.add(value as String)) {
-            throw const AppsException(AppsExceptionReason.invalidResponse);
-          }
-          versions.add(value);
-        }
-        return List.unmodifiable(versions);
+        return _rollbackVersions(app);
       });
+
+  Future<List<String>> _rollbackVersions(InstalledApp app) async {
+    final raw = await _call('app.rollback_versions', [app.id]);
+    if (raw is! List || raw.length > 64) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
+    }
+    final versions = <String>[];
+    final seen = <String>{};
+    for (final value in raw) {
+      if (!_appsText(value, 64) || !seen.add(value as String)) {
+        throw const AppsException(AppsExceptionReason.invalidResponse);
+      }
+      versions.add(value);
+    }
+    return List.unmodifiable(versions);
+  }
 
   Future<List<CatalogApp>> loadCatalog({bool cachedOnly = false}) =>
       _read(() async {
@@ -1305,6 +1323,55 @@ final class _SessionApps {
     }
   }
 
+  Future<AppOperationResult> rollback(AppRollbackRequest request) async {
+    final app = request.app;
+    if (!_installed.containsKey(app)) {
+      throw const AppsException(AppsExceptionReason.staleSnapshot);
+    }
+    final versions = request.expectedVersions;
+    if (request.confirmedTarget != '${app.id} rollback ${request.version}' ||
+        app.state != 'RUNNING' ||
+        !_appsText(request.version, 64) ||
+        request.version == app.version ||
+        versions.isEmpty ||
+        versions.length > 64 ||
+        versions.any((value) => !_appsText(value, 64)) ||
+        versions.toSet().length != versions.length ||
+        !versions.contains(request.version)) {
+      throw const AppsException(AppsExceptionReason.invalidInput);
+    }
+    _begin(request, 'app.rollback');
+    try {
+      if (!await _freshApp(app)) return _rejected;
+      final currentVersions = await _rollbackVersions(app);
+      if (currentVersions.length != versions.length ||
+          !currentVersions.toSet().containsAll(versions) ||
+          !await _freshApp(app)) {
+        return _rejected;
+      }
+      return await _submit(
+        'app.rollback',
+        app.id,
+        [
+          app.id,
+          {'app_version': request.version, 'rollback_snapshot': true},
+        ],
+        _AppsJobObservation(
+          pool: _installed[app]!.pool!,
+          version: request.version,
+          catalogApp: app.catalogApp,
+          train: app.train,
+          customApp: app.customApp,
+          state: 'RUNNING',
+        ),
+      );
+    } on Object {
+      return _rejected;
+    } finally {
+      _submitting = false;
+    }
+  }
+
   void _configEligible(InstalledApp app) {
     if (!_installed.containsKey(app)) {
       throw const AppsException(AppsExceptionReason.staleSnapshot);
@@ -1728,7 +1795,8 @@ final class _SessionApps {
         // app.update may persist configuration before failing; app.pull_images
         // may have downloaded some images. Neither is safe to retry blindly.
         if (job.operation == 'app.update' ||
-            job.operation == 'app.pull_images') {
+            job.operation == 'app.pull_images' ||
+            job.operation == 'app.rollback') {
           return _unknown(job);
         }
         _installed.clear();
@@ -1904,6 +1972,13 @@ bool _appsJobArgumentsMatch(
         arguments[1] is Map &&
         (arguments[1] as Map).length == 1 &&
         (arguments[1] as Map)['redeploy'] == false;
+  }
+  if (job.operation == 'app.rollback') {
+    return arguments.length == 2 &&
+        arguments[1] is Map &&
+        (arguments[1] as Map).length == 2 &&
+        (arguments[1] as Map)['app_version'] == observation.version &&
+        (arguments[1] as Map)['rollback_snapshot'] == true;
   }
   if (job.operation == 'app.delete') {
     if (arguments.length != 2 || arguments[1] is! Map) return false;

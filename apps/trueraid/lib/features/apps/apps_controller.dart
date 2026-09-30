@@ -194,6 +194,10 @@ class AppsController extends Notifier<AppsState> {
     AuthenticatedSession session,
     AppImagePullRequest request,
   ) => _perform(session, request.app.name, (api) => api.pullAppImages(request));
+  Future<void> rollback(
+    AuthenticatedSession session,
+    AppRollbackRequest request,
+  ) => _perform(session, request.app.name, (api) => api.rollbackApp(request));
 
   Future<void> updatePreferredTrains(
     AuthenticatedSession session,

@@ -365,10 +365,28 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                       children: [
                         if (versions.isEmpty)
                           const Text('No rollback versions available.'),
-                        for (final version in versions) SelectableText(version),
-                        if (versions.isNotEmpty)
-                          const Text(
-                            'Read-only list. Rollback is not enabled in this screen.',
+                        for (final version in versions)
+                          Row(
+                            children: [
+                              Expanded(child: SelectableText(version)),
+                              if (allowed('app.rollback') &&
+                                  app.state == 'RUNNING' &&
+                                  version != app.version)
+                                OutlinedButton(
+                                  key: ValueKey(
+                                    'app-rollback-${app.name}-$version',
+                                  ),
+                                  onPressed: locked
+                                      ? null
+                                      : () => _rollback(
+                                          session,
+                                          app,
+                                          version,
+                                          versions,
+                                        ),
+                                  child: const Text('Roll back'),
+                                ),
+                            ],
                           ),
                       ],
                     ),
@@ -929,6 +947,43 @@ class _AppsPageState extends ConsumerState<AppsPage> {
               app: app,
               expectedImages: images,
               confirmedName: app.name,
+            ),
+          );
+    }
+  }
+
+  Future<void> _rollback(
+    AuthenticatedSession session,
+    InstalledApp app,
+    String version,
+    List<String> versions,
+  ) async {
+    final target = '${app.id} rollback $version';
+    final confirmed = await confirmAppOperation(
+      context,
+      title: 'Roll back application',
+      endpoint: session.endpoint!,
+      target: target,
+      warning: 'Rollback can interrupt users and replace application configuration or data. A pre-rollback snapshot will be requested, but this is not a guaranteed backup. No automatic retry will be made.',
+      reviewLines: [
+        'Application: ${app.name}',
+        'Application ID: ${app.id}',
+        'Current version: ${app.version}',
+        'Target version: $version',
+        'Pre-rollback snapshot: requested',
+      ],
+      expectedSession: session,
+    );
+    if (confirmed && mounted) {
+      await ref
+          .read(appsControllerProvider.notifier)
+          .rollback(
+            session,
+            AppRollbackRequest(
+              app: app,
+              version: version,
+              expectedVersions: versions,
+              confirmedTarget: target,
             ),
           );
     }

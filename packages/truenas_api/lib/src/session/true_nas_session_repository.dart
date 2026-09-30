@@ -1338,6 +1338,9 @@ final class TrueNasSessionRepository
   Future<List<String>> loadAppRollbackVersions(InstalledApp app) async =>
       _authenticatedApps.loadRollbackVersions(app);
   @override
+  Future<AppOperationResult> rollbackApp(AppRollbackRequest request) async =>
+      _authenticatedApps.rollback(request);
+  @override
   Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async =>
       _authenticatedApps.pullImages(request);
   @override

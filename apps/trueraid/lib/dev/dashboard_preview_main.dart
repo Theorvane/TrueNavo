@@ -891,6 +891,9 @@ final class _PreviewRepository
   Future<List<String>> loadAppRollbackVersions(InstalledApp app) async =>
       const ['0.9.0'];
   @override
+  Future<AppOperationResult> rollbackApp(AppRollbackRequest request) async =>
+      const AppOperationResult(outcome: AppOperationOutcome.rejected);
+  @override
   Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async =>
       const AppOperationResult(outcome: AppOperationOutcome.rejected);
   @override

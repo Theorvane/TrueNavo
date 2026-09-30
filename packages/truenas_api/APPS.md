@@ -14,6 +14,7 @@ Verification uses fake transports only, with no NAS or credential access.
 - [25.10 outdated application images](https://api.truenas.com/v25.10/api_methods_app.outdated_docker_images.html)
 - [25.10 application image pull job](https://api.truenas.com/v25.10/api_methods_app.pull_images.html)
 - [25.10 application rollback versions](https://api.truenas.com/v25.10/api_methods_app.rollback_versions.html)
+- [25.10 application rollback job](https://api.truenas.com/v25.10/api_methods_app.rollback.html)
 - [Application inventory, creation and deletion](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/crud.py)
 - [Upgrade summary, migration and configuration merge](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/upgrade.py)
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
@@ -49,8 +50,16 @@ fences further Apps writes because downloads can be partial. Applying the
 images requires a separate reviewed redeploy.
 `app.rollback_versions` is a separate on-demand read for a current installed
 app handle. It checks exact identity/version first and exposes only an
-immutable bounded list of safe server-issued version labels. No rollback
-job or snapshot option is submitted.
+immutable bounded list of safe server-issued version labels. A separate
+reviewed rollback is available for running apps only. The operator types the
+application ID and chosen version, and the SDK rechecks the current app,
+environment and unchanged version set before submitting exactly
+`app.rollback(id, {app_version: target, rollback_snapshot: true})`. The owned
+job must retain the target and snapshot option; server-reported success is
+verified against the target installed version and running state. A failed or
+ambiguous job remains unknown and fences another Apps write because partial
+rollback or snapshot effects cannot be excluded. Requesting a snapshot is not
+a guarantee of recoverability. No live rollback has been attempted.
 Notes and portal URLs are never included in ordinary inventory. Expanding one
 installed app makes an exact-ID `app.query` that selects identity, version,
 notes, portals and active workloads with configuration/schema retrieval disabled. It requires
@@ -258,9 +267,10 @@ an unknown result and block further mutations until the session changes. Config
 updates additionally require the private full-configuration proof above. No
 mutation is automatically retried. Shared SDK/UI locks cover other server writes.
 
-The public app identifier is its name. The installed API provides no immutable
+The public app identifier is its ID, which this adapter requires to match the returned name. The installed API provides no immutable
 creation token or atomic compare-and-mutate option. Immediate identity checks
 cannot eliminate an external client's same-name/same-version replacement race.
 Avoid concurrent app changes in other clients. The adapter does not claim an
-atomic identity guarantee. Native rollback, custom YAML and configuration edits
-outside the restricted scalar flow remain unavailable in this increment.
+atomic identity guarantee. Custom YAML and configuration edits outside the
+restricted scalar flow remain unavailable in this increment. Reviewed rollback
+does not remove the external concurrent-change race.
