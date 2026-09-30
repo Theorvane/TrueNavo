@@ -5,6 +5,7 @@ abstract interface class AuthenticatedAppsSession {
   AppsCapabilities get appsCapabilities;
   Future<AppsInventory> loadAppsInventory();
   Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app);
+  Future<List<String>> loadOutdatedAppImages(InstalledApp app);
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false});
   Future<List<String>> loadAppVersions(CatalogApp app);
   Future<AppVersionDetails> loadAppVersionDetails(
@@ -538,6 +539,45 @@ final class _SessionApps {
           ),
         );
       });
+
+  Future<List<String>> loadOutdatedImages(InstalledApp app) => _read(() async {
+    _guard('app.outdated_docker_images');
+    if (!_installed.containsKey(app)) {
+      throw const AppsException(AppsExceptionReason.staleSnapshot);
+    }
+    final current = await _call('app.query', [
+      [
+        ['id', '=', app.id],
+      ],
+      {
+        'limit': 2,
+        'select': ['id', 'name', 'version', 'image_updates_available'],
+        'extra': {'retrieve_config': false, 'include_app_schema': false},
+      },
+    ]);
+    if (current is! List ||
+        current.length != 1 ||
+        current.single is! Map ||
+        (current.single as Map)['id'] != app.id ||
+        (current.single as Map)['name'] != app.name ||
+        (current.single as Map)['version'] != app.version ||
+        (current.single as Map)['image_updates_available'] != true) {
+      throw const AppsException(AppsExceptionReason.staleSnapshot);
+    }
+    final raw = await _call('app.outdated_docker_images', [app.name]);
+    if (raw is! List || raw.length > 64) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
+    }
+    final images = <String>[];
+    final seen = <String>{};
+    for (final value in raw) {
+      if (!_appsText(value, 512) || !seen.add(value as String)) {
+        throw const AppsException(AppsExceptionReason.invalidResponse);
+      }
+      images.add(value);
+    }
+    return List.unmodifiable(images);
+  });
 
   Future<List<CatalogApp>> loadCatalog({bool cachedOnly = false}) =>
       _read(() async {

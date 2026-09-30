@@ -85,6 +85,42 @@ void main() {
     expect(find.text('Other account note'), findsOneWidget);
     expect(next.detailsReads, 1);
   });
+  testWidgets('outdated images are read only on tap and stay account-bound', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    expect(h.api.outdatedReads, 0);
+    await _tap(tester, find.byKey(const ValueKey('app-outdated-images-media')));
+    expect(h.api.outdatedReads, 1);
+    expect(find.text('example/media:latest'), findsOneWidget);
+    final next = _FakeApps();
+    h.active = AuthenticatedSession(
+      profileId: 'other-account',
+      repository: next,
+      availableMethodNames: _methods,
+      version: '25.10.1',
+      endpoint: 'wss://other.example/api/current',
+    );
+    h.container.invalidate(dashboardActiveSessionProvider);
+    await tester.pumpAndSettle();
+    expect(find.text('example/media:latest'), findsNothing);
+    expect(next.outdatedReads, 0);
+    expect(h.api.actions, isEmpty);
+  });
+  testWidgets('outdated image read is hidden without method permission', (
+    tester,
+  ) async {
+    final h = await _pump(
+      tester,
+      methods: _methods.difference({'app.outdated_docker_images'}),
+    );
+    expect(find.text('Container image update available'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('app-outdated-images-media')),
+      findsNothing,
+    );
+    expect(h.api.outdatedReads, 0);
+  });
   testWidgets('start and stop have independent method permission gates', (
     tester,
   ) async {
@@ -681,6 +717,7 @@ const _methods = {
   'app.delete',
   'app.upgrade',
   'app.upgrade_summary',
+  'app.outdated_docker_images',
   'catalog.trains',
   'catalog.config',
   'catalog.update',
@@ -747,6 +784,7 @@ class _FakeApps
   final actions = <String>[];
   var reads = 0;
   var detailsReads = 0;
+  var outdatedReads = 0;
   String displayNotes = 'Operator note';
   var overviewReads = 0;
   var syncPolls = 0;
@@ -840,6 +878,12 @@ class _FakeApps
         images: 2,
       ),
     );
+  }
+
+  @override
+  Future<List<String>> loadOutdatedAppImages(InstalledApp app) async {
+    outdatedReads++;
+    return const ['example/media:latest'];
   }
 
   @override

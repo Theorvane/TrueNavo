@@ -24,6 +24,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   String? _category;
   bool _recommendedOnly = false;
   InstalledApp? _expandedInstalledApp;
+  InstalledApp? _expandedImageApp;
   AuthenticatedSession? _detailsSession;
   CatalogOverview? _preferredSource;
   List<String>? _preferredDraft;
@@ -34,6 +35,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
     if (!identical(_detailsSession, session)) {
       _detailsSession = session;
       _expandedInstalledApp = null;
+      _expandedImageApp = null;
     }
     final capability = ref.watch(appsSessionProvider)?.appsCapabilities;
     final operation = ref.watch(appsControllerProvider);
@@ -268,6 +270,50 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                   ),
               ],
             ),
+          ],
+          if (app.imageUpdatesAvailable &&
+              allowed('app.outdated_docker_images')) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: ValueKey('app-outdated-images-${app.name}'),
+              onPressed: () => setState(() {
+                _expandedImageApp = identical(_expandedImageApp, app)
+                    ? null
+                    : app;
+              }),
+              icon: Icon(
+                identical(_expandedImageApp, app)
+                    ? Icons.expand_less
+                    : Icons.expand_more,
+              ),
+              label: Text(
+                identical(_expandedImageApp, app)
+                    ? 'Hide outdated images'
+                    : 'Check outdated images',
+              ),
+            ),
+            if (identical(_expandedImageApp, app))
+              ref
+                  .watch(outdatedAppImagesProvider((session, app)))
+                  .when(
+                    skipLoadingOnRefresh: false,
+                    loading: () => const LinearProgressIndicator(),
+                    error: (_, _) => OutlinedButton(
+                      key: ValueKey('app-outdated-images-retry-${app.name}'),
+                      onPressed: () => ref.invalidate(
+                        outdatedAppImagesProvider((session, app)),
+                      ),
+                      child: const Text('Retry image check'),
+                    ),
+                    data: (images) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (images.isEmpty)
+                          const Text('No outdated images currently reported.'),
+                        for (final name in images) SelectableText(name),
+                      ],
+                    ),
+                  ),
           ],
           const SizedBox(height: 8),
           TextButton.icon(

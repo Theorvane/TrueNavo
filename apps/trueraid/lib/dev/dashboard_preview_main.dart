@@ -884,6 +884,10 @@ final class _PreviewRepository
         ),
       );
   @override
+  Future<List<String>> loadOutdatedAppImages(InstalledApp app) async => const [
+    'example/media:latest',
+  ];
+  @override
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false}) async =>
       _previewAppsCatalog;
   @override

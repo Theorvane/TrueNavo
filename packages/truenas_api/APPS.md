@@ -11,6 +11,7 @@ Verification uses fake transports only, with no NAS or credential access.
 
 - [25.10 application API models](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/api/v25_10_0/app.py)
 - [25.10 installed app query fields](https://api.truenas.com/v25.10/api_methods_app.query.html)
+- [25.10 outdated application images](https://api.truenas.com/v25.10/api_methods_app.outdated_docker_images.html)
 - [Application inventory, creation and deletion](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/crud.py)
 - [Upgrade summary, migration and configuration merge](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/upgrade.py)
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
@@ -31,6 +32,11 @@ dedicated configuration review uses the restricted reads described below.
 Inventory also projects the nullable latest application version and a separate
 Docker-image update flag. The two signals remain independent and are display
 only; they do not start an upgrade or image pull.
+When an installed app reports image updates, the user can explicitly check
+`app.outdated_docker_images`. The SDK first verifies the exact current app
+identity, version and update flag with a configuration-free query, then
+returns at most 64 unique safe image names. The list is session-bound,
+immutable and never starts a pull.
 Notes and portal URLs are never included in ordinary inventory. Expanding one
 installed app makes an exact-ID `app.query` that selects identity, version,
 notes, portals and active workloads with configuration/schema retrieval disabled. It requires

@@ -16,6 +16,7 @@ const _methods = {
   'docker.config',
   'core.get_jobs',
   'app.used_ports',
+  'app.outdated_docker_images',
   'app.create',
   'app.start',
   'app.stop',
@@ -877,6 +878,81 @@ void main() {
       expect(h.transport.writes, isEmpty);
     },
   );
+  test(
+    'outdated image names require exact selected app and are immutable',
+    () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      final images = await h.repo.loadOutdatedAppImages(app);
+      expect(images, ['example/media:latest']);
+      expect(() => images.clear(), throwsUnsupportedError);
+      expect(
+        h.transport.requests[h.transport.requests.length - 2]['method'],
+        'app.query',
+      );
+      expect(h.transport.requests[h.transport.requests.length - 2]['params'], [
+        [
+          ['id', '=', 'demo'],
+        ],
+        {
+          'limit': 2,
+          'select': ['id', 'name', 'version', 'image_updates_available'],
+          'extra': {'retrieve_config': false, 'include_app_schema': false},
+        },
+      ]);
+      expect(h.transport.requests.last['method'], 'app.outdated_docker_images');
+      expect(h.transport.requests.last['params'], ['demo']);
+      expect(h.transport.writes, isEmpty);
+    },
+  );
+  test('outdated image check rejects stale and malformed responses', () async {
+    final h = await _connect();
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    h.transport.rows.single['image_updates_available'] = false;
+    await expectLater(
+      h.repo.loadOutdatedAppImages(app),
+      throwsA(_reason(AppsExceptionReason.staleSnapshot)),
+    );
+    expect(h.transport.requests.last['method'], 'app.query');
+    h.transport.rows.single['image_updates_available'] = true;
+    h.transport.outdatedImages = ['bad\nname'];
+    await expectLater(
+      h.repo.loadOutdatedAppImages(app),
+      throwsA(_reason(AppsExceptionReason.invalidResponse)),
+    );
+    expect(h.transport.writes, isEmpty);
+  });
+  test(
+    'outdated image check rejects an old inventory handle before RPC',
+    () async {
+      final h = await _connect();
+      final oldApp = (await h.repo.loadAppsInventory()).apps.single;
+      await h.repo.loadAppsInventory();
+      final before = h.transport.requests.length;
+      await expectLater(
+        h.repo.loadOutdatedAppImages(oldApp),
+        throwsA(_reason(AppsExceptionReason.staleSnapshot)),
+      );
+      expect(h.transport.requests.length, before);
+    },
+  );
+  var invalidImageCase = 0;
+  for (final invalidImages in [
+    ['duplicate:1', 'duplicate:1'],
+    List<String>.filled(65, 'image:1'),
+  ]) {
+    final caseNumber = ++invalidImageCase;
+    test('outdated image list rejects invalid case $caseNumber', () async {
+      final h = await _connect();
+      final app = (await h.repo.loadAppsInventory()).apps.single;
+      h.transport.outdatedImages = invalidImages;
+      await expectLater(
+        h.repo.loadOutdatedAppImages(app),
+        throwsA(_reason(AppsExceptionReason.invalidResponse)),
+      );
+      expect(h.transport.writes, isEmpty);
+    });
+  }
   for (final badPortal in [
     'javascript:alert(1)',
     'https://name:secret@host/ui',
@@ -1730,6 +1806,7 @@ class _Transport implements RpcTransport {
     'volumes': [<String, Object?>{}],
     'images': ['demo:1.0.0', 'sidecar:2.0.0'],
   };
+  Object? outdatedImages = ['example/media:latest'];
   List<String> catalogTrains = ['community', 'stable'];
   List<String> preferredTrains = ['stable'];
   bool catalogUpdateTimeout = false;
@@ -1851,6 +1928,8 @@ class _Transport implements RpcTransport {
         result = {'name': 'demo', 'versions': details};
       case 'app.upgrade_summary':
         result = upgradeSummary;
+      case 'app.outdated_docker_images':
+        result = outdatedImages;
       case 'app.query':
         final filter = (r['params'] as List).first as List;
         result = filter.isEmpty

@@ -34,6 +34,22 @@ final installedAppDetailsProvider = FutureProvider.autoDispose
         selection.$2,
       );
     });
+final outdatedAppImagesProvider = FutureProvider.autoDispose
+    .family<List<String>, (AuthenticatedSession, InstalledApp)>((
+      ref,
+      selection,
+    ) async {
+      if (!identical(ref.watch(dashboardActiveSessionProvider), selection.$1)) {
+        throw StateError('The selected Apps session changed.');
+      }
+      final api = selection.$1.repository;
+      if (api is! AuthenticatedAppsSession) {
+        throw StateError('No authenticated Apps session.');
+      }
+      return (api as AuthenticatedAppsSession).loadOutdatedAppImages(
+        selection.$2,
+      );
+    });
 final appsCatalogProvider = FutureProvider.family<List<CatalogApp>, bool>((
   ref,
   cachedOnly,

@@ -1,6 +1,23 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: bounded installed-app workload summary
+## Current continuation: on-demand outdated image names
+
+An installed app with the server's image-update flag can now explicitly
+check `app.outdated_docker_images` when that read method is available. The
+SDK requires a current inventory handle, rereads the exact app ID and version
+without configuration/schema, verifies that the update flag still holds, and
+only then requests the image-name list. It rejects malformed, duplicate,
+oversized or control/bidi-bearing names and returns an immutable bounded
+list. The UI keeps the list collapsed until tapped and clears it on account
+switch; it does not pull images or visit any URL. Fake-wire and widget tests
+cover the exact request, no writes, stale flags, malformed names, explicit
+reveal and account isolation. The official
+[25.10 `app.outdated_docker_images` contract](https://api.truenas.com/v25.10/api_methods_app.outdated_docker_images.html)
+defines the read. SDK analysis and all 5,332 SDK tests pass; Flutter analysis
+and 7,560 Flutter tests pass with one existing skip. Image pulls and live
+release acceptance remain pending; no live NAS request or write was made.
+
+## Previous continuation: bounded installed-app workload summary
 
 An explicit expansion of an installed app now also requests that app's
 `active_workloads` projection. The SDK validates bounded running-container,
