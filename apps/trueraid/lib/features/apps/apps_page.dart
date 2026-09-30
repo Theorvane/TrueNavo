@@ -248,6 +248,27 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                 : TdStatus.warning,
             label: app.state,
           ),
+          if (app.upgradeAvailable || app.imageUpdatesAvailable) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (app.upgradeAvailable)
+                  TdStatusBadge(
+                    status: TdStatus.warning,
+                    label: app.latestVersion == null
+                        ? 'App update available'
+                        : 'App update: ${app.latestVersion}',
+                  ),
+                if (app.imageUpdatesAvailable)
+                  const TdStatusBadge(
+                    status: TdStatus.warning,
+                    label: 'Container image update available',
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 8),
           TextButton.icon(
             key: ValueKey('app-details-${app.name}'),

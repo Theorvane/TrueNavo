@@ -37,6 +37,8 @@ Map<String, Object?> _row({
   'version': version,
   'custom_app': false,
   'upgrade_available': true,
+  'latest_version': '1.1.0',
+  'image_updates_available': true,
   'metadata': {'name': 'demo', 'train': 'community'},
 };
 Map<String, Object?> _details(String version) => {
@@ -898,11 +900,24 @@ void main() {
       );
     },
   );
+  for (final badField in ['latest_version', 'image_updates_available']) {
+    test('invalid $badField inventory value fails closed', () async {
+      final h = await _connect();
+      h.transport.rows.single[badField] = 42;
+      await expectLater(
+        h.repo.loadAppsInventory(),
+        throwsA(_reason(AppsExceptionReason.invalidResponse)),
+      );
+      expect(h.transport.writes, isEmpty);
+    });
+  }
   test('inventory and catalogue reads are bounded and never retrieve configuration', () async {
     final h = await _connect();
     final inventory = await h.repo.loadAppsInventory();
     expect(inventory.ready, isTrue);
     expect(inventory.apps.single.catalogApp, 'demo');
+    expect(inventory.apps.single.latestVersion, '1.1.0');
+    expect(inventory.apps.single.imageUpdatesAvailable, isTrue);
     expect(() => inventory.apps.clear(), throwsUnsupportedError);
     final query = h.transport.requests.last['params'] as List;
     expect((query[1] as Map)['limit'], 1025);
@@ -911,6 +926,10 @@ void main() {
       'include_app_schema': false,
     });
     expect((query[1] as Map)['select'], isNot(contains('config')));
+    expect(
+      (query[1] as Map)['select'],
+      containsAll(['latest_version', 'image_updates_available']),
+    );
     final catalog = await h.repo.loadAppsCatalog();
     expect(catalog.single.name, 'demo');
     expect(catalog.single.categories, ['Media', 'Productivity']);
@@ -1455,6 +1474,8 @@ void main() {
           'custom_app',
           'metadata',
           'upgrade_available',
+          'latest_version',
+          'image_updates_available',
         ],
         'extra': {'retrieve_config': false, 'include_app_schema': false},
       },

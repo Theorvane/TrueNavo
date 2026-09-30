@@ -96,6 +96,8 @@ final class InstalledApp {
     required this.train,
     required this.customApp,
     this.upgradeAvailable = false,
+    this.latestVersion,
+    this.imageUpdatesAvailable = false,
   });
   final String id;
   final String name;
@@ -105,6 +107,8 @@ final class InstalledApp {
   final String? train;
   final bool customApp;
   final bool upgradeAvailable;
+  final String? latestVersion;
+  final bool imageUpdatesAvailable;
 }
 
 final class InstalledAppDetails {
@@ -891,6 +895,8 @@ final class _SessionApps {
           'custom_app',
           'metadata',
           'upgrade_available',
+          'latest_version',
+          'image_updates_available',
         ],
         'extra': {'retrieve_config': false, 'include_app_schema': false},
       },
@@ -908,6 +914,9 @@ final class _SessionApps {
           !_appsVersion(value['version']) ||
           value['custom_app'] is! bool ||
           value['upgrade_available'] is! bool ||
+          (value['latest_version'] != null &&
+              !_appsVersion(value['latest_version'])) ||
+          value['image_updates_available'] is! bool ||
           !const {
             'RUNNING',
             'STOPPED',
@@ -938,6 +947,8 @@ final class _SessionApps {
           train: !custom ? (metadata as Map)['train'] as String : null,
           customApp: custom,
           upgradeAvailable: value['upgrade_available'] as bool,
+          latestVersion: value['latest_version'] as String?,
+          imageUpdatesAvailable: value['image_updates_available'] as bool,
         ),
       );
     }

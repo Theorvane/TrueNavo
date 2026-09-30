@@ -39,6 +39,8 @@ void main() {
     expect(h.api.reads, 1);
     expect(find.text('Running · 1'), findsOneWidget);
     expect(find.text('Stopped · 0'), findsOneWidget);
+    expect(find.text('App update: 1.1.0'), findsOneWidget);
+    expect(find.text('Container image update available'), findsOneWidget);
     expect(h.api.actions, isEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -757,6 +759,8 @@ class _FakeApps
     train: 'stable',
     customApp: false,
     upgradeAvailable: true,
+    latestVersion: '1.1.0',
+    imageUpdatesAvailable: true,
   );
   final catalog = CatalogApp(
     name: 'media',

@@ -28,6 +28,9 @@ Verification uses fake transports only, with no NAS or credential access.
 state, version, custom-app status and upgrade availability. It explicitly disables
 configuration and application schema retrieval in ordinary inventory. The
 dedicated configuration review uses the restricted reads described below.
+Inventory also projects the nullable latest application version and a separate
+Docker-image update flag. The two signals remain independent and are display
+only; they do not start an upgrade or image pull.
 Notes and portal URLs are never included in ordinary inventory. Expanding one
 installed app makes an exact-ID `app.query` that selects only identity, version,
 notes and portals with configuration/schema retrieval disabled. It requires

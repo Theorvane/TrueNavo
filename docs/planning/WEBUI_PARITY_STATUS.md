@@ -1,6 +1,22 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: on-demand installed app notes and portals
+## Current continuation: separate application and image update signals
+
+The installed Apps list now projects the server's `latest_version` and
+`image_updates_available` fields alongside `upgrade_available`, with no
+configuration or schema retrieval. It shows the newer application version
+when supplied and an independent container-image update badge. The latter
+does not imply an app-version upgrade, and neither indicator starts a pull or
+upgrade. Unexpected types fail the inventory read rather than producing an
+incorrect update status. Fake-wire and widget tests cover projection,
+validation, both badges and absence of writes. The official
+[25.10 `app.query` contract](https://api.truenas.com/v25.10/api_methods_app.query.html)
+defines the independent fields. SDK analysis and all 5,324 SDK tests pass;
+Flutter analysis and 7,558 Flutter tests pass with one existing skip. Full
+image-pull management and live release acceptance remain pending; no live NAS
+request or write was made.
+
+## Previous continuation: on-demand installed app notes and portals
 
 The installed-app card now expands to read the selected app's server-provided
 notes and portal addresses. Ordinary `app.query` inventory still projects no
