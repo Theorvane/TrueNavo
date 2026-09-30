@@ -29,6 +29,10 @@ abstract interface class AuthenticatedAppsSession {
 /// Optional, read-only catalogue settings for servers exposing both methods.
 abstract interface class AuthenticatedCatalogOverviewSession {
   Future<CatalogOverview> loadCatalogOverview();
+  Future<AppOperationResult> updateCatalogPreferredTrains(
+    CatalogOverview overview,
+    List<String> preferredTrains,
+  );
 }
 
 final class CatalogOverview {
@@ -264,7 +268,10 @@ final class AppOperationResult {
     AppOperationOutcome.submitted => 'The server accepted the application job. Its result still needs verification.',
     AppOperationOutcome.running =>
       'The application operation is still running or settling on the server.',
-    AppOperationOutcome.verified => 'The server completed the job and the requested application state was verified.',
+    AppOperationOutcome.verified =>
+      job == null
+          ? 'The server settings change was confirmed by a fresh read.'
+          : 'The server completed the job and the requested application state was verified.',
     AppOperationOutcome.failed => 'The server reported that the application job failed or was aborted. Reload its current state before another change.',
     AppOperationOutcome.rejected => 'The application, catalogue, form or application pool changed. Reload and review again.',
     AppOperationOutcome.unknown => 'The outcome could not be confirmed. Do not repeat the operation. Check TrueNAS, then reconnect before making another change.',
@@ -346,6 +353,7 @@ final class _SessionApps {
   bool get isBusy => _submitting || _active != null || _uncertain;
   final _installed = <InstalledApp, _AppsEnvironment>{};
   final _catalog = <CatalogApp>{};
+  final _catalogOverviews = <CatalogOverview, (String, String)>{};
   bool _catalogCachedOnly = false;
   final _versions = <AppVersionDetails, _AppsVersionObservation>{};
   final _upgradeReviews = <AppUpgradeReview, String>{};
@@ -492,19 +500,103 @@ final class _SessionApps {
       });
 
   Future<CatalogOverview> loadCatalogOverview() => _read(() async {
+    final (overview, fingerprint, identity) = await _readCatalogOverview();
+    _catalogOverviews.clear();
+    _catalogOverviews[overview] = (fingerprint, identity);
+    return overview;
+  });
+
+  Future<(CatalogOverview, String, String)> _readCatalogOverview() async {
     _guard('catalog.trains');
     _guard('catalog.config');
     final rawTrains = await _call('catalog.trains', []);
     final rawConfig = await _call('catalog.config', []);
     if (rawTrains is! List ||
         rawConfig is! Map ||
+        !_appsToken(rawConfig['id'], 64) ||
+        !_appsToken(rawConfig['label'], 64) ||
+        !_appsText(rawConfig['location'], 2048) ||
         rawConfig['preferred_trains'] is! List) {
       throw const AppsException(AppsExceptionReason.invalidResponse);
     }
     final trains = _catalogTrainList(rawTrains);
     final preferred = _catalogTrainList(rawConfig['preferred_trains'] as List);
-    return CatalogOverview(availableTrains: trains, preferredTrains: preferred);
-  });
+    return (
+      CatalogOverview(availableTrains: trains, preferredTrains: preferred),
+      _appsFingerprint([
+        rawConfig['id'],
+        rawConfig['label'],
+        rawConfig['location'],
+        trains,
+        preferred,
+      ]),
+      _appsFingerprint([
+        rawConfig['id'],
+        rawConfig['label'],
+        rawConfig['location'],
+      ]),
+    );
+  }
+
+  Future<AppOperationResult> updatePreferredTrains(
+    CatalogOverview overview,
+    List<String> desired,
+  ) async {
+    final observed = _catalogOverviews[overview];
+    if (observed == null ||
+        desired.length > 32 ||
+        desired.toSet().length != desired.length ||
+        desired.any((train) => !overview.availableTrains.contains(train)) ||
+        _appsFingerprint(desired) ==
+            _appsFingerprint(overview.preferredTrains)) {
+      return _rejected;
+    }
+    _begin(overview, 'catalog.update');
+    var dispatched = false;
+    try {
+      final (fresh, fingerprint, _) = await _readCatalogOverview();
+      if (fingerprint != observed.$1 ||
+          desired.any((train) => !fresh.availableTrains.contains(train))) {
+        return _rejected;
+      }
+      // A timeout or transport error after this point may still have applied
+      // the update. Never replay it on this connection.
+      dispatched = true;
+      final raw = await _call('catalog.update', [
+        {'preferred_trains': List<String>.of(desired)},
+      ]);
+      if (raw is! Map ||
+          !_appsToken(raw['id'], 64) ||
+          !_appsToken(raw['label'], 64) ||
+          !_appsText(raw['location'], 2048) ||
+          raw['preferred_trains'] is! List ||
+          _appsFingerprint([raw['id'], raw['label'], raw['location']]) !=
+              observed.$2 ||
+          !_sameStrings(
+            _catalogTrainList(raw['preferred_trains'] as List),
+            desired,
+          )) {
+        return _unknown();
+      }
+      final (readback, _, readbackIdentity) = await _readCatalogOverview();
+      if (!_sameStrings(readback.preferredTrains, desired) ||
+          !_sameStrings(readback.availableTrains, fresh.availableTrains) ||
+          readbackIdentity != observed.$2) {
+        return _unknown();
+      }
+      _catalogOverviews.clear();
+      _catalog.clear();
+      _versions.clear();
+      _upgradeReviews.clear();
+      return const AppOperationResult(outcome: AppOperationOutcome.verified);
+    } on AppsException {
+      return dispatched ? _unknown() : _rejected;
+    } on Object {
+      return dispatched ? _unknown() : _rejected;
+    } finally {
+      _submitting = false;
+    }
+  }
 
   Future<Map<String, Object?>> _catalogDetails(CatalogApp app) async {
     if (!_catalog.contains(app)) {
@@ -1474,6 +1566,10 @@ List<String> _catalogTrainList(List raw) {
   }
   return List.unmodifiable(trains);
 }
+
+bool _sameStrings(List<String> a, List<String> b) =>
+    a.length == b.length &&
+    List.generate(a.length, (i) => a[i] == b[i]).every((same) => same);
 
 List<String> _appsCatalogLabels(Object? raw, int maximum) {
   if (raw == null) return const [];

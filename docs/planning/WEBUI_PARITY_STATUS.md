@@ -1,6 +1,34 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: server catalogue train overview
+## Current continuation: reviewed server catalogue preferences
+
+The Discover apps screen now offers server preferred-train editing when
+`catalog.update` is available. Selection is restricted to names from the
+server's `catalog.trains` response. An explicit review shows endpoint and
+current/requested lists and requires typing `catalog preferences`. The shared
+server-operation lock prevents overlap with app management. The SDK accepts
+only an exact connection-owned overview handle, rereads catalogue identity,
+available trains and preferences before dispatch, sends only the
+`preferred_trains` field, and verifies both the response and a fresh
+`catalog.config` readback. A stale review or no-op sends no write. After a
+possible dispatch, timeout, malformed response or readback drift is marked
+unknown and fences further mutations on that connection; read-only
+inspection remains possible and no automatic retry occurs.
+An old preferred train absent from the current available list remains visible
+as an unavailable chip that can be removed but not re-added. Save stays disabled
+while any such name remains selected.
+
+All write-path checks use fake transports and widgets; the supplied NAS was
+not contacted. `catalog.sync` and many WebUI functions remain pending. The
+official [25.10 update contract](https://api.truenas.com/v25.10/api_methods_catalog.update.html)
+specifies a `preferred_trains` payload and `CATALOG_WRITE` role. TD-058 remains
+partial, and this is not live release acceptance. Focused SDK/app-page suites
+pass (89 and 23 tests), and SDK/app static analysis is clean. The full SDK
+regression passes (5,308 tests); the final full app regression after the
+unavailable-train UI correction passes (7,554 tests and one existing skip,
+four concurrent processes).
+
+## Previous continuation: server catalogue train overview
 
 The Discover apps screen now reads `catalog.trains` and `catalog.config` when
 both methods are exposed, and shows the server's available and preferred train
@@ -20,8 +48,9 @@ full SDK regression passes (5,302 tests) and full app regression passes
 (7,550 tests and one existing skip, four concurrent processes). The official
 [25.10 catalogue config](https://api.truenas.com/v25.10/api_methods_catalog.config.html)
 and [train list](https://api.truenas.com/v25.10/api_methods_catalog.trains.html)
-contracts define these separate reads. `catalog.update` and `catalog.sync`
-remain unimplemented, as do live release acceptance and complete WebUI parity.
+contracts define these separate reads. That increment did not implement
+`catalog.update` or `catalog.sync`; live release acceptance and complete WebUI
+parity remain pending.
 No live NAS request or write was made.
 
 ## Current continuation: explicit server-cached catalogue browsing

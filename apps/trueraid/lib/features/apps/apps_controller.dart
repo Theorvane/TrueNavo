@@ -143,6 +143,24 @@ class AppsController extends Notifier<AppsState> {
     AppLifecycleAction action,
   ) => _perform(session, app.name, (api) => api.changeAppState(app, action));
 
+  Future<void> updatePreferredTrains(
+    AuthenticatedSession session,
+    CatalogOverview overview,
+    List<String> desired,
+  ) async {
+    await _perform(
+      session,
+      'catalog preferences',
+      (api) => (api as AuthenticatedCatalogOverviewSession)
+          .updateCatalogPreferredTrains(overview, desired),
+    );
+    if (state.result?.outcome == AppOperationOutcome.verified) {
+      ref.invalidate(catalogOverviewProvider);
+      ref.invalidate(appsCatalogProvider(false));
+      ref.invalidate(appsCatalogProvider(true));
+    }
+  }
+
   Future<void> _perform(
     AuthenticatedSession session,
     String target,

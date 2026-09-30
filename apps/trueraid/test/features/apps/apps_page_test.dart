@@ -127,6 +127,88 @@ void main() {
       expect(h.api.actions, isEmpty);
     },
   );
+  testWidgets('catalog preference needs confirmation before a fake update', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    await _tap(
+      tester,
+      find.byKey(const ValueKey('catalog-preference-community')),
+    );
+    await _tap(tester, find.byKey(const Key('catalog-preferences-save')));
+    expect(h.api.actions, isEmpty);
+    expect(find.textContaining('Requested: stable, community'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('app-confirm-name')),
+      'catalog preferences',
+    );
+    await _tap(tester, find.byKey(const Key('app-confirm-submit')));
+    expect(h.api.actions, ['catalog.update']);
+    expect(h.api.preferredTrains, ['stable', 'community']);
+  });
+  testWidgets('catalog preference cancel sends no update', (tester) async {
+    final h = await _pump(tester);
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    await _tap(
+      tester,
+      find.byKey(const ValueKey('catalog-preference-community')),
+    );
+    await _tap(tester, find.byKey(const Key('catalog-preferences-save')));
+    await _tap(tester, find.text('Cancel'));
+    expect(h.api.actions, isEmpty);
+  });
+  testWidgets('unavailable preferred train can be removed but not re-added', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    h.api.preferredTrains = ['stable', 'retired'];
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    expect(find.text('retired · unavailable'), findsOneWidget);
+    expect(
+      find.text('Remove unavailable preferred trains before saving.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const Key('catalog-preferences-save')),
+          )
+          .onPressed,
+      isNull,
+    );
+    await _tap(
+      tester,
+      find.byKey(const ValueKey('catalog-preference-retired')),
+    );
+    expect(
+      tester
+          .widget<FilterChip>(
+            find.byKey(const ValueKey('catalog-preference-retired')),
+          )
+          .onSelected,
+      isNull,
+    );
+    await _tap(tester, find.byKey(const Key('catalog-preferences-save')));
+    await tester.enterText(
+      find.byKey(const Key('app-confirm-name')),
+      'catalog preferences',
+    );
+    await _tap(tester, find.byKey(const Key('app-confirm-submit')));
+    expect(h.api.preferredTrains, ['stable']);
+    expect(h.api.actions, ['catalog.update']);
+  });
+  testWidgets('catalog update without method permission has no editor', (
+    tester,
+  ) async {
+    final h = await _pump(
+      tester,
+      methods: _methods.difference({'catalog.update'}),
+    );
+    await _tap(tester, find.byKey(const Key('apps-catalog-tab')));
+    expect(find.byKey(const Key('catalog-preferences-save')), findsNothing);
+    expect(h.api.actions, isEmpty);
+  });
   testWidgets('catalog category train recommendation and tag filters compose', (
     tester,
   ) async {
@@ -519,6 +601,7 @@ const _methods = {
   'app.upgrade_summary',
   'catalog.trains',
   'catalog.config',
+  'catalog.update',
 };
 Future<_Harness> _pump(
   WidgetTester tester, {
@@ -581,6 +664,7 @@ class _FakeApps
   final actions = <String>[];
   var reads = 0;
   var overviewReads = 0;
+  List<String> preferredTrains = ['stable'];
   AppInstallRequest? created;
   AppUpgradeRequest? upgraded;
   AppUninstallRequest? deleted;
@@ -665,8 +749,18 @@ class _FakeApps
     overviewReads++;
     return CatalogOverview(
       availableTrains: ['stable', 'community'],
-      preferredTrains: ['stable'],
+      preferredTrains: preferredTrains,
     );
+  }
+
+  @override
+  Future<AppOperationResult> updateCatalogPreferredTrains(
+    CatalogOverview overview,
+    List<String> desired,
+  ) async {
+    actions.add('catalog.update');
+    preferredTrains = List<String>.of(desired);
+    return _verified;
   }
 
   @override

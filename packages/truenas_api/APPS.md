@@ -17,6 +17,7 @@ Verification uses fake transports only, with no NAS or credential access.
 - [25.10 catalogue list response](https://api.truenas.com/v25.10/api_methods_catalog.apps.html)
 - [25.10 catalogue configuration](https://api.truenas.com/v25.10/api_methods_catalog.config.html)
 - [25.10 available catalogue trains](https://api.truenas.com/v25.10/api_methods_catalog.trains.html)
+- [25.10 catalogue preference update](https://api.truenas.com/v25.10/api_methods_catalog.update.html)
 - [Job identity and redaction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/job.py)
 
 ## Inventory and installation
@@ -50,7 +51,22 @@ It projects only bounded, unique, validated available/preferred train names;
 malformed settings fail closed and never replace the existing app list. These
 are server settings, not app-local filter preferences. The UI can show an
 available train with no currently returned app. It does not call
-`catalog.update` or `catalog.sync`.
+`catalog.sync`.
+
+Preferred-train editing requires the separate `catalog.update` permission and
+an exact overview handle from this connection. Only a bounded unique subset of
+server-listed trains can be requested. Previously preferred trains that are no
+longer available remain visible as removable chips, but cannot be reselected;
+saving is disabled until they are removed. The app shows the old/new lists and
+endpoint, requires typing `catalog preferences`, then acquires the shared
+operation lock. The SDK rereads both settings and available trains before
+submitting exactly `[{"preferred_trains":[...]}]`; changed catalogue identity,
+settings or trains reject without a write. It verifies the returned identity
+and preference and independently rereads them. Timeout, malformed response or
+readback mismatch after submission is unknown, locks further changes on that
+connection and is never retried automatically. The UI can still read settings
+for inspection. No catalogue sync is included, and this flow is tested only
+against fake transports, never the supplied NAS.
 
 Catalogue, installed-app, version and upgrade-review handles belong to the exact
 authenticated connection that issued them. Reload invalidates earlier relevant

@@ -10,6 +10,7 @@ const _methods = {
   'catalog.get_app_details',
   'catalog.config',
   'catalog.trains',
+  'catalog.update',
   'docker.status',
   'docker.config',
   'core.get_jobs',
@@ -620,6 +621,100 @@ void main() {
       isEmpty,
     );
   });
+  test(
+    'preferred trains update uses exact reviewed list and verifies readback',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      final result = await h.repo.updateCatalogPreferredTrains(overview, [
+        'community',
+      ]);
+      expect(result.outcome, AppOperationOutcome.verified);
+      expect(h.transport.writes.single['method'], 'catalog.update');
+      expect(h.transport.writes.single['params'], [
+        {
+          'preferred_trains': ['community'],
+        },
+      ]);
+      expect(h.transport.preferredTrains, ['community']);
+      expect((await h.repo.loadCatalogOverview()).preferredTrains, [
+        'community',
+      ]);
+      expect(
+        (await h.repo.updateCatalogPreferredTrains(overview, [
+          'stable',
+        ])).outcome,
+        AppOperationOutcome.rejected,
+      );
+    },
+  );
+  test('stale catalog preference review rejects without a write', () async {
+    final h = await _connect();
+    final overview = await h.repo.loadCatalogOverview();
+    h.transport.preferredTrains = ['community'];
+    final result = await h.repo.updateCatalogPreferredTrains(overview, [
+      'stable',
+      'community',
+    ]);
+    expect(result.outcome, AppOperationOutcome.rejected);
+    expect(h.transport.writes, isEmpty);
+  });
+  test('invalid catalog preference target and no-op never write', () async {
+    final h = await _connect();
+    final overview = await h.repo.loadCatalogOverview();
+    expect(
+      (await h.repo.updateCatalogPreferredTrains(overview, [
+        'missing',
+      ])).outcome,
+      AppOperationOutcome.rejected,
+    );
+    expect(
+      (await h.repo.updateCatalogPreferredTrains(overview, ['stable'])).outcome,
+      AppOperationOutcome.rejected,
+    );
+    expect(h.transport.writes, isEmpty);
+  });
+  test(
+    'uncertain catalog update is not replayed on the same session',
+    () async {
+      final h = await _connect();
+      final overview = await h.repo.loadCatalogOverview();
+      h.transport.catalogUpdateTimeout = true;
+      expect(
+        (await h.repo.updateCatalogPreferredTrains(overview, [
+          'community',
+        ])).outcome,
+        AppOperationOutcome.unknown,
+      );
+      expect(h.transport.writes.length, 1);
+      await expectLater(
+        h.repo.updateCatalogPreferredTrains(overview, ['community']),
+        throwsA(_reason(AppsExceptionReason.busy)),
+      );
+      expect(h.transport.writes.length, 1);
+    },
+  );
+  for (final mismatch in ['response', 'readback']) {
+    test(
+      'catalog update $mismatch mismatch remains unknown and locked',
+      () async {
+        final h = await _connect();
+        final overview = await h.repo.loadCatalogOverview();
+        h.transport.catalogUpdateMismatch = mismatch;
+        final result = await h.repo.updateCatalogPreferredTrains(overview, [
+          'community',
+        ]);
+        expect(result.outcome, AppOperationOutcome.unknown);
+        expect(h.transport.writes.length, 1);
+        final fresh = await h.repo.loadCatalogOverview();
+        await expectLater(
+          h.repo.updateCatalogPreferredTrains(fresh, ['stable', 'community']),
+          throwsA(_reason(AppsExceptionReason.busy)),
+        );
+        expect(h.transport.writes.length, 1);
+      },
+    );
+  }
   test('inventory and catalogue reads are bounded and never retrieve configuration', () async {
     final h = await _connect();
     final inventory = await h.repo.loadAppsInventory();
@@ -1381,6 +1476,8 @@ class _Transport implements RpcTransport {
   Map<String, Object?>? catalogRowOverride;
   List<String> catalogTrains = ['community', 'stable'];
   List<String> preferredTrains = ['stable'];
+  bool catalogUpdateTimeout = false;
+  String? catalogUpdateMismatch;
   String? rawConfigNumericToken;
   String? writeFailure;
   String? pollMismatch;
@@ -1411,6 +1508,7 @@ class _Transport implements RpcTransport {
       'app.upgrade',
       'app.delete',
       'app.update',
+      'catalog.update',
     }.contains(r['method']),
   );
   @override
@@ -1465,7 +1563,26 @@ class _Transport implements RpcTransport {
         result = {
           'id': 'official',
           'label': 'TRUENAS',
-          'preferred_trains': preferredTrains,
+          'preferred_trains':
+              catalogUpdateMismatch == 'readback' &&
+                  requests.any(
+                    (request) => request['method'] == 'catalog.update',
+                  )
+              ? ['stable']
+              : preferredTrains,
+          'location': '/mnt/catalog',
+        };
+      case 'catalog.update':
+        if (catalogUpdateTimeout) return;
+        preferredTrains = List<String>.from(
+          ((r['params'] as List).single as Map)['preferred_trains'] as List,
+        );
+        result = {
+          'id': 'official',
+          'label': 'TRUENAS',
+          'preferred_trains': catalogUpdateMismatch == 'response'
+              ? ['stable']
+              : preferredTrains,
           'location': '/mnt/catalog',
         };
       case 'catalog.get_app_details':

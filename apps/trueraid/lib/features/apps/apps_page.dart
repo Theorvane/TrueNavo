@@ -23,6 +23,8 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   String? _train;
   String? _category;
   bool _recommendedOnly = false;
+  CatalogOverview? _preferredSource;
+  List<String>? _preferredDraft;
 
   @override
   Widget build(BuildContext context) {
@@ -331,6 +333,12 @@ class _AppsPageState extends ConsumerState<AppsPage> {
           final overview = overviewAvailable
               ? ref.watch(catalogOverviewProvider).asData?.value
               : null;
+          if (!identical(_preferredSource, overview)) {
+            _preferredSource = overview;
+            _preferredDraft = overview == null
+                ? null
+                : List<String>.of(overview.preferredTrains);
+          }
           final trains = {
             ...catalog.map((app) => app.train),
             ...?overview?.availableTrains,
@@ -361,6 +369,11 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                         .contains(_search),
               )
               .toList();
+          final unavailablePreferred =
+              _preferredDraft
+                  ?.where((train) => !overview!.availableTrains.contains(train))
+                  .toList() ??
+              const <String>[];
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -379,6 +392,72 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                       ),
                     ),
                 const SizedBox(height: 12),
+              ],
+              if (overview != null &&
+                  session.availableMethodNames.contains('catalog.update')) ...[
+                const Text('Preferred catalog trains'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final train in {
+                      ...overview.availableTrains,
+                      ...overview.preferredTrains,
+                    })
+                      FilterChip(
+                        key: ValueKey('catalog-preference-$train'),
+                        label: Text(
+                          overview.availableTrains.contains(train)
+                              ? train
+                              : '$train · unavailable',
+                        ),
+                        selected: _preferredDraft?.contains(train) ?? false,
+                        onSelected:
+                            ref.watch(appsControllerProvider).locked ||
+                                (!overview.availableTrains.contains(train) &&
+                                    !(_preferredDraft?.contains(train) ??
+                                        false))
+                            ? null
+                            : (selected) => setState(() {
+                                final next = List<String>.of(_preferredDraft!);
+                                if (selected) {
+                                  next.add(train);
+                                } else {
+                                  next.remove(train);
+                                }
+                                _preferredDraft = next;
+                              }),
+                      ),
+                  ],
+                ),
+                if (unavailablePreferred.isNotEmpty)
+                  const Text(
+                    'Remove unavailable preferred trains before saving.',
+                  ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    key: const Key('catalog-preferences-save'),
+                    onPressed:
+                        ref.watch(appsControllerProvider).locked ||
+                            unavailablePreferred.isNotEmpty ||
+                            _sameTrainList(
+                              _preferredDraft!,
+                              overview.preferredTrains,
+                            )
+                        ? null
+                        : () => _savePreferredTrains(
+                            session,
+                            overview,
+                            List<String>.of(_preferredDraft!),
+                          ),
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('Save server preference'),
+                  ),
+                ),
+                const SizedBox(height: 16),
               ],
               Wrap(
                 spacing: 8,
@@ -535,6 +614,30 @@ class _AppsPageState extends ConsumerState<AppsPage> {
     child: OutlinedButton(onPressed: retry, child: const Text('Retry read')),
   );
 
+  Future<void> _savePreferredTrains(
+    AuthenticatedSession session,
+    CatalogOverview overview,
+    List<String> desired,
+  ) async {
+    final confirmed = await confirmAppOperation(
+      context,
+      title: 'Change catalog preferences',
+      endpoint: session.endpoint!,
+      target: 'catalog preferences',
+      warning: 'This changes which catalog trains the server prefers. No automatic retry will be made.',
+      reviewLines: [
+        'Current: ${overview.preferredTrains.join(', ')}',
+        'Requested: ${desired.join(', ')}',
+      ],
+      expectedSession: session,
+    );
+    if (confirmed && mounted) {
+      await ref
+          .read(appsControllerProvider.notifier)
+          .updatePreferredTrains(session, overview, desired);
+    }
+  }
+
   Future<void> _lifecycle(
     AuthenticatedSession session,
     InstalledApp app,
@@ -620,6 +723,13 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   }
 }
 
+bool _sameTrainList(List<String> a, List<String> b) =>
+    a.length == b.length &&
+    List.generate(
+      a.length,
+      (index) => a[index] == b[index],
+    ).every((same) => same);
+
 class AppsOperationBanner extends ConsumerWidget {
   const AppsOperationBanner({super.key});
   @override
@@ -632,7 +742,11 @@ class AppsOperationBanner extends ConsumerWidget {
         title: state.unknown
             ? 'Outcome unknown'
             : state.busy || state.pending
-            ? 'Application operation in progress'
+            ? state.target == 'catalog preferences'
+                  ? 'Catalog settings update in progress'
+                  : 'Application operation in progress'
+            : state.target == 'catalog preferences'
+            ? 'Catalog settings result'
             : 'Application operation result',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
