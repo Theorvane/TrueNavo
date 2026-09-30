@@ -25,6 +25,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   bool _recommendedOnly = false;
   InstalledApp? _expandedInstalledApp;
   InstalledApp? _expandedImageApp;
+  InstalledApp? _expandedRollbackApp;
   AuthenticatedSession? _detailsSession;
   CatalogOverview? _preferredSource;
   List<String>? _preferredDraft;
@@ -36,6 +37,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
       _detailsSession = session;
       _expandedInstalledApp = null;
       _expandedImageApp = null;
+      _expandedRollbackApp = null;
     }
     final capability = ref.watch(appsSessionProvider)?.appsCapabilities;
     final operation = ref.watch(appsControllerProvider);
@@ -320,6 +322,53 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                             onPressed: () => _pullImages(session, app, images),
                             icon: const Icon(Icons.download_outlined),
                             label: const Text('Pull images without redeploy'),
+                          ),
+                      ],
+                    ),
+                  ),
+          ],
+          if (allowed('app.rollback_versions')) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: ValueKey('app-rollback-versions-${app.name}'),
+              onPressed: () => setState(() {
+                _expandedRollbackApp = identical(_expandedRollbackApp, app)
+                    ? null
+                    : app;
+              }),
+              icon: Icon(
+                identical(_expandedRollbackApp, app)
+                    ? Icons.expand_less
+                    : Icons.expand_more,
+              ),
+              label: Text(
+                identical(_expandedRollbackApp, app)
+                    ? 'Hide rollback versions'
+                    : 'Check rollback versions',
+              ),
+            ),
+            if (identical(_expandedRollbackApp, app))
+              ref
+                  .watch(appRollbackVersionsProvider((session, app)))
+                  .when(
+                    skipLoadingOnRefresh: false,
+                    loading: () => const LinearProgressIndicator(),
+                    error: (_, _) => OutlinedButton(
+                      key: ValueKey('app-rollback-versions-retry-${app.name}'),
+                      onPressed: () => ref.invalidate(
+                        appRollbackVersionsProvider((session, app)),
+                      ),
+                      child: const Text('Retry rollback versions read'),
+                    ),
+                    data: (versions) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (versions.isEmpty)
+                          const Text('No rollback versions available.'),
+                        for (final version in versions) SelectableText(version),
+                        if (versions.isNotEmpty)
+                          const Text(
+                            'Read-only list. Rollback is not enabled in this screen.',
                           ),
                       ],
                     ),

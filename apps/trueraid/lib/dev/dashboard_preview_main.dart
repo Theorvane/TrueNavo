@@ -888,6 +888,9 @@ final class _PreviewRepository
     'example/media:latest',
   ];
   @override
+  Future<List<String>> loadAppRollbackVersions(InstalledApp app) async =>
+      const ['0.9.0'];
+  @override
   Future<AppOperationResult> pullAppImages(AppImagePullRequest request) async =>
       const AppOperationResult(outcome: AppOperationOutcome.rejected);
   @override

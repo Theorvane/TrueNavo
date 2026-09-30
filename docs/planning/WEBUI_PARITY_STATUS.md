@@ -1,6 +1,23 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: reviewed image pull without redeploy
+## Current continuation: on-demand app rollback version list
+
+Installed-app cards now expose an explicit read-only check for
+`app.rollback_versions` when the server offers that method. The SDK requires
+a current inventory handle, rereads the exact app ID/name/version without
+configuration or schema, and returns at most 64 unique bounded safe version
+labels. The list is immutable and tied to the authenticated session; the UI
+does not query it until tapped and hides it on account change. Malformed or
+stale replies fail closed. This does not invoke `app.rollback`, select a
+snapshot policy or imply that a rollback is safe. Fake-wire and widget tests
+cover exact arguments, no writes, malformed/stale replies, explicit reveal
+and account isolation. The official
+[25.10 `app.rollback_versions` contract](https://api.truenas.com/v25.10/api_methods_app.rollback_versions.html)
+defines the read. SDK analysis and all 5,340 SDK tests pass; Flutter analysis
+and 7,564 Flutter tests pass with one existing skip. Actual rollback and live
+release acceptance remain pending; no live NAS request or write was made.
+
+## Previous continuation: reviewed image pull without redeploy
 
 The installed-app outdated-image panel now offers an explicit
 `app.pull_images` job when `APPS_WRITE` exposes the method. The operator must

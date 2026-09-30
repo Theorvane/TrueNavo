@@ -107,6 +107,44 @@ void main() {
     expect(next.outdatedReads, 0);
     expect(h.api.actions, isEmpty);
   });
+  testWidgets('rollback versions load only on tap and stay account-bound', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    expect(h.api.rollbackReads, 0);
+    await _tap(
+      tester,
+      find.byKey(const ValueKey('app-rollback-versions-media')),
+    );
+    expect(h.api.rollbackReads, 1);
+    expect(find.text('0.9.0'), findsOneWidget);
+    expect(h.api.actions, isEmpty);
+    final next = _FakeApps();
+    h.active = AuthenticatedSession(
+      profileId: 'other-account',
+      repository: next,
+      availableMethodNames: _methods,
+      version: '25.10.1',
+      endpoint: 'wss://other.example/api/current',
+    );
+    h.container.invalidate(dashboardActiveSessionProvider);
+    await tester.pumpAndSettle();
+    expect(find.text('0.9.0'), findsNothing);
+    expect(next.rollbackReads, 0);
+  });
+  testWidgets('rollback version check is hidden without read permission', (
+    tester,
+  ) async {
+    final h = await _pump(
+      tester,
+      methods: _methods.difference({'app.rollback_versions'}),
+    );
+    expect(h.api.rollbackReads, 0);
+    expect(
+      find.byKey(const ValueKey('app-rollback-versions-media')),
+      findsNothing,
+    );
+  });
   testWidgets('outdated image read is hidden without method permission', (
     tester,
   ) async {
@@ -745,6 +783,7 @@ const _methods = {
   'app.upgrade_summary',
   'app.outdated_docker_images',
   'app.pull_images',
+  'app.rollback_versions',
   'catalog.trains',
   'catalog.config',
   'catalog.update',
@@ -812,6 +851,7 @@ class _FakeApps
   var reads = 0;
   var detailsReads = 0;
   var outdatedReads = 0;
+  var rollbackReads = 0;
   String displayNotes = 'Operator note';
   var overviewReads = 0;
   var syncPolls = 0;
@@ -912,6 +952,12 @@ class _FakeApps
   Future<List<String>> loadOutdatedAppImages(InstalledApp app) async {
     outdatedReads++;
     return const ['example/media:latest'];
+  }
+
+  @override
+  Future<List<String>> loadAppRollbackVersions(InstalledApp app) async {
+    rollbackReads++;
+    return const ['0.9.0'];
   }
 
   @override

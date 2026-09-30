@@ -18,6 +18,7 @@ const _methods = {
   'app.used_ports',
   'app.outdated_docker_images',
   'app.pull_images',
+  'app.rollback_versions',
   'app.create',
   'app.start',
   'app.stop',
@@ -906,6 +907,62 @@ void main() {
       expect(h.transport.writes, isEmpty);
     },
   );
+  test('rollback versions read is exact, bounded and immutable', () async {
+    final h = await _connect();
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    final versions = await h.repo.loadAppRollbackVersions(app);
+    expect(versions, ['0.9.0', '0.8.0']);
+    expect(() => versions.clear(), throwsUnsupportedError);
+    expect(
+      h.transport.requests[h.transport.requests.length - 2]['method'],
+      'app.query',
+    );
+    expect(h.transport.requests[h.transport.requests.length - 2]['params'], [
+      [
+        ['id', '=', 'demo'],
+      ],
+      {
+        'limit': 2,
+        'select': ['id', 'name', 'version'],
+        'extra': {'retrieve_config': false, 'include_app_schema': false},
+      },
+    ]);
+    expect(h.transport.requests.last['method'], 'app.rollback_versions');
+    expect(h.transport.requests.last['params'], ['demo']);
+    expect(h.transport.writes, isEmpty);
+  });
+  test('rollback version list rejects malformed and stale results', () async {
+    final h = await _connect();
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    h.transport.rollbackVersions = ['0.9.0', '0.9.0'];
+    await expectLater(
+      h.repo.loadAppRollbackVersions(app),
+      throwsA(_reason(AppsExceptionReason.invalidResponse)),
+    );
+    h.transport.rollbackVersions = ['0.9.0'];
+    h.transport.rows.single['version'] = '1.1.0';
+    await expectLater(
+      h.repo.loadAppRollbackVersions(app),
+      throwsA(_reason(AppsExceptionReason.staleSnapshot)),
+    );
+    expect(h.transport.requests.last['method'], 'app.query');
+    expect(h.transport.writes, isEmpty);
+  });
+  test('rollback version list rejects oversized and unsafe labels', () async {
+    final h = await _connect();
+    final app = (await h.repo.loadAppsInventory()).apps.single;
+    h.transport.rollbackVersions = List<String>.filled(65, '0.9.0');
+    await expectLater(
+      h.repo.loadAppRollbackVersions(app),
+      throwsA(_reason(AppsExceptionReason.invalidResponse)),
+    );
+    h.transport.rollbackVersions = ['0.9.0\nunsafe'];
+    await expectLater(
+      h.repo.loadAppRollbackVersions(app),
+      throwsA(_reason(AppsExceptionReason.invalidResponse)),
+    );
+    expect(h.transport.writes, isEmpty);
+  });
   test('outdated image check rejects stale and malformed responses', () async {
     final h = await _connect();
     final app = (await h.repo.loadAppsInventory()).apps.single;
@@ -1915,6 +1972,7 @@ class _Transport implements RpcTransport {
     'images': ['demo:1.0.0', 'sidecar:2.0.0'],
   };
   Object? outdatedImages = ['example/media:latest'];
+  Object? rollbackVersions = ['0.9.0', '0.8.0'];
   List<String> catalogTrains = ['community', 'stable'];
   List<String> preferredTrains = ['stable'];
   bool catalogUpdateTimeout = false;
@@ -2039,6 +2097,8 @@ class _Transport implements RpcTransport {
         result = upgradeSummary;
       case 'app.outdated_docker_images':
         result = outdatedImages;
+      case 'app.rollback_versions':
+        result = rollbackVersions;
       case 'app.query':
         final filter = (r['params'] as List).first as List;
         result = filter.isEmpty
