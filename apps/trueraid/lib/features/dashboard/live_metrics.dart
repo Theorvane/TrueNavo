@@ -180,6 +180,30 @@ class LiveMetricsCharts extends StatelessWidget {
             ),
           ],
         ),
+        _ChartSection(
+          title: 'CPU temperature trend',
+          value: _value(cpu?.temperature, '°C'),
+          child: LiveSparkline(
+            samples: samples,
+            select: (s) => s.cpu['cpu']?.temperature,
+            color: colors.secondary,
+            label: 'Aggregate CPU temperature degrees Celsius',
+            formatValue: (value) => '${_compact(value)} °C',
+            allowNegative: true,
+          ),
+        ),
+        _ChartSection(
+          title: 'Hottest reported core trend',
+          value: _value(hottestReportedCoreTemperature(latest), '°C'),
+          child: LiveSparkline(
+            samples: samples,
+            select: hottestReportedCoreTemperature,
+            color: colors.error,
+            label: 'Hottest reported CPU core temperature degrees Celsius',
+            formatValue: (value) => '${_compact(value)} °C',
+            allowNegative: true,
+          ),
+        ),
         Material(
           type: MaterialType.transparency,
           child: ExpansionTile(
@@ -421,6 +445,8 @@ class LiveMetricsCharts extends StatelessWidget {
                 [
                   'Client received UTC: ${latest.receivedAt.toUtc().toIso8601String()}',
                   'CPU aggregate (%): ${latest.cpu['cpu']?.usage ?? 'unavailable'}',
+                  'CPU aggregate temperature (°C): ${latest.cpu['cpu']?.temperature ?? 'unavailable'}',
+                  'Hottest reported CPU core temperature (°C): ${hottestReportedCoreTemperature(latest) ?? 'unavailable'}',
                   'Physical total (bytes): ${latest.memoryTotalBytes ?? 'unavailable'}',
                   'Physical available (bytes): ${latest.memoryAvailableBytes ?? 'unavailable'}',
                   'Physical available (%): ${memoryAvailablePercent(latest) ?? 'unavailable'}',
@@ -460,6 +486,22 @@ double? memoryAvailablePercent(RealtimeSample sample) {
   return available / total * 100;
 }
 
+/// Aggregate CPU temperature is a separate server series; do not use it as a
+/// synthetic core or turn missing core sensors into zero.
+double? hottestReportedCoreTemperature(RealtimeSample sample) {
+  double? hottest;
+  final coreName = RegExp(r'^cpu[0-9]+$');
+  for (final entry in sample.cpu.entries) {
+    if (!coreName.hasMatch(entry.key)) {
+      continue;
+    }
+    final temperature = entry.value.temperature;
+    if (temperature == null || !temperature.isFinite) continue;
+    hottest = hottest == null ? temperature : math.max(hottest, temperature);
+  }
+  return hottest;
+}
+
 class _ChartSection extends StatelessWidget {
   const _ChartSection({
     required this.title,
@@ -490,15 +532,23 @@ class _ChartSection extends StatelessWidget {
 }
 
 /// Segments split on missing values and receipt gaps > 6 seconds. No interpolation.
+/// Callers opt into a signed lower bound only for values such as Celsius.
 List<List<Offset>> liveMetricSegments(
   List<RealtimeSample> samples,
   double? Function(RealtimeSample) select, {
+  double minimum = 0,
   double? maximum,
 }) {
   if (samples.isEmpty) return const [];
   final values = samples.map(select).toList();
-  final finite = values.whereType<double>().where((v) => v.isFinite && v >= 0);
-  final upper = maximum ?? finite.fold<double>(1, math.max);
+  final finite = values.whereType<double>().where(
+    (v) => v.isFinite && v >= minimum,
+  );
+  final candidate = maximum ?? finite.fold<double>(minimum + 1, math.max);
+  final upper = candidate.isFinite && candidate > minimum
+      ? candidate
+      : minimum + 1;
+  final span = upper - minimum;
   final first = samples.first.receivedAt;
   final duration = samples.last.receivedAt.difference(first).inMicroseconds;
   final segments = <List<Offset>>[];
@@ -509,17 +559,17 @@ List<List<Offset>> liveMetricSegments(
         i > 0 &&
         samples[i].receivedAt.difference(samples[i - 1].receivedAt) >
             const Duration(seconds: 6);
-    if (gap || value == null || !value.isFinite || value < 0) {
+    if (gap || value == null || !value.isFinite || value < minimum) {
       if (current.isNotEmpty) segments.add(current);
       current = [];
     }
-    if (value == null || !value.isFinite || value < 0) continue;
+    if (value == null || !value.isFinite || value < minimum) continue;
     current.add(
       Offset(
         duration <= 0
             ? 1
             : samples[i].receivedAt.difference(first).inMicroseconds / duration,
-        1 - (value / upper).clamp(0, 1),
+        1 - ((value - minimum) / span).clamp(0, 1),
       ),
     );
   }
@@ -535,6 +585,7 @@ class LiveSparkline extends StatelessWidget {
     required this.label,
     this.maximum,
     this.formatValue,
+    this.allowNegative = false,
     super.key,
   });
   final List<RealtimeSample> samples;
@@ -543,25 +594,29 @@ class LiveSparkline extends StatelessWidget {
   final String label;
   final double? maximum;
   final String Function(double)? formatValue;
+  final bool allowNegative;
   @override
   Widget build(BuildContext context) {
     final values = samples
         .map(select)
         .whereType<double>()
-        .where((v) => v.isFinite && v >= 0)
+        .where((v) => v.isFinite && (allowNegative || v >= 0))
         .toList();
-    final maxValue = maximum ?? values.fold<double>(1, math.max);
+    final minValue = allowNegative
+        ? math.min(0.0, values.fold<double>(0, math.min))
+        : 0.0;
+    final maxValue = maximum ?? values.fold<double>(minValue + 1, math.max);
     final format = formatValue ?? _compact;
     final latest = samples.isEmpty ? null : select(samples.last);
     return Semantics(
       label:
           '$label. Latest ${latest ?? 'unavailable'}. ${values.length} reported points. '
-          'Chart scale zero to $maxValue. Missing points are gaps.',
+          'Chart scale $minValue to $maxValue. Missing points are gaps.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '${format(0)} — ${format(maxValue)}',
+            '${format(minValue)} — ${format(maxValue)}',
             style: Theme.of(context).textTheme.labelSmall,
           ),
           SizedBox(
@@ -571,6 +626,7 @@ class LiveSparkline extends StatelessWidget {
                 segments: liveMetricSegments(
                   samples,
                   select,
+                  minimum: minValue,
                   maximum: maxValue,
                 ),
                 color: color,

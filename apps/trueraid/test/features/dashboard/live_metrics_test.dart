@@ -265,6 +265,103 @@ void main() {
       [1, 1],
     );
   });
+  test('signed Celsius history preserves subzero readings and gaps', () {
+    RealtimeSample temperature(int second, double? value) => RealtimeSample(
+      receivedAt: time.add(Duration(seconds: second)),
+      cpu: {'cpu': RealtimeCpu(temperature: value)},
+      interfaces: const {},
+    );
+    final points = [
+      temperature(0, -10),
+      temperature(2, -5),
+      temperature(4, null),
+      temperature(6, 0),
+      temperature(20, 30),
+    ];
+    final segments = liveMetricSegments(
+      points,
+      (s) => s.cpu['cpu']?.temperature,
+      minimum: -10,
+      maximum: 30,
+    );
+    expect(segments.map((s) => s.length), [2, 1, 1]);
+    expect(segments.first.first.dy, 1);
+    expect(segments.first.last.dy, .875);
+    expect(segments.last.single.dy, 0);
+    expect(
+      liveMetricSegments(
+        points,
+        (s) => s.cpu['cpu']?.temperature,
+      ).map((s) => s.length),
+      [1, 1],
+    );
+  });
+  test('hottest core excludes aggregate, missing and unreported sensors', () {
+    RealtimeSample cores(Map<String, RealtimeCpu> cpu) =>
+        RealtimeSample(receivedAt: time, cpu: cpu, interfaces: const {});
+    expect(
+      hottestReportedCoreTemperature(
+        cores({
+          'cpu': const RealtimeCpu(temperature: 99),
+          'cpu0': const RealtimeCpu(temperature: -10),
+          'cpu1': const RealtimeCpu(temperature: -5),
+          'cpu2': const RealtimeCpu(),
+          'cpuX': const RealtimeCpu(temperature: 200),
+        }),
+      ),
+      -5,
+    );
+    expect(
+      hottestReportedCoreTemperature(
+        cores({'cpu': const RealtimeCpu(temperature: 45)}),
+      ),
+      isNull,
+    );
+    expect(
+      hottestReportedCoreTemperature(
+        cores({'cpu0': const RealtimeCpu(temperature: double.nan)}),
+      ),
+      isNull,
+    );
+  });
+  testWidgets(
+    'signed temperature chart labels negative scale and latest value',
+    (tester) async {
+      final values = [-10.0, -5.0];
+      final points = [
+        for (var i = 0; i < values.length; i++)
+          RealtimeSample(
+            receivedAt: time.add(Duration(seconds: i * 2)),
+            cpu: {'cpu': RealtimeCpu(temperature: values[i])},
+            interfaces: const {},
+          ),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: LiveSparkline(
+              samples: points,
+              select: (s) => s.cpu['cpu']?.temperature,
+              color: Colors.orange,
+              label: 'CPU temperature',
+              allowNegative: true,
+              formatValue: (value) => '$value °C',
+            ),
+          ),
+        ),
+      );
+      expect(find.text('-10.0 °C — -5.0 °C'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.label?.contains('Latest -5.0') == true,
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final brightness in Brightness.values) {
     testWidgets('charts fit 320px at 2x text ${brightness.name}', (
       tester,
@@ -296,6 +393,8 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.text('Physical memory'), findsOneWidget);
+      expect(find.text('CPU temperature trend'), findsOneWidget);
+      expect(find.text('Hottest reported core trend'), findsOneWidget);
       expect(find.text('Available memory trend'), findsOneWidget);
       expect(find.text('ARC cache trend'), findsOneWidget);
       expect(find.text('Disk read operations'), findsOneWidget);

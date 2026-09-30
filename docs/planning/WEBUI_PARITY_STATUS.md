@@ -1,6 +1,12 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: richer live performance trends
+## Current continuation: signed CPU temperature histories
+
+The dashboard live-performance panel now has separate aggregate CPU temperature and hottest-reported-core trend charts, including exact latest values. The hottest-core value is derived only from explicitly reported `cpu0`, `cpu1`, etc. sensor readings in each received sample; the aggregate `cpu` temperature is never substituted as a core, and missing core readings are not turned into zero. Both charts use Celsius and preserve negative valid readings with a signed dynamic vertical scale. A generic sparkline signed-range option leaves existing nonnegative usage, byte-rate, IOPS and percentage scales unchanged. Missing values and receipt-time gaps still split paths without interpolation.
+
+The same bounded `reporting.realtime` subscription supplies these trends: there is no new RPC, polling, server setting change or live NAS request. Tests cover subzero values, mixed and missing sensors, invalid sensor values, gaps, exact chart scale/semantics and 320px dark/light 200%-text layouts. The focused dashboard suite passes (26 tests), app static analysis is clean and the final full app regression passes (7,543 tests and one existing skip, four concurrent processes). This advances only TD-015; live release acceptance, additional hardware sensors, widget configuration and complete WebUI parity remain pending.
+
+## Previous continuation: richer live performance trends
 
 The dashboard live-performance panel now plots seven additional trends from its existing bounded `reporting.realtime` event window: physical-memory available percentage, ZFS ARC cache bytes, aggregate disk read/write IOPS, average disk busy percentage, and separate ZFS ARC data/metadata demand-hit percentages. Their latest values and units remain visible beside each chart, and the exact-measurements panel includes each new value. Available-memory percentage is computed only from a valid same-sample physical total and available count; ARC is not subtracted because reclaimable cache can be counted as available. Demand-hit rates remain two independent request classes, not slices of one whole.
 
