@@ -9,6 +9,7 @@ import 'app_install_page.dart';
 import 'app_config_page.dart';
 import 'apps_controller.dart';
 import 'apps_status_chart.dart';
+import 'apps_image_chart.dart';
 
 class AppsPage extends ConsumerStatefulWidget {
   const AppsPage({super.key});
@@ -26,6 +27,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
   InstalledApp? _expandedInstalledApp;
   InstalledApp? _expandedImageApp;
   InstalledApp? _expandedRollbackApp;
+  bool _showImages = false;
   AuthenticatedSession? _detailsSession;
   CatalogOverview? _preferredSource;
   List<String>? _preferredDraft;
@@ -38,6 +40,7 @@ class _AppsPageState extends ConsumerState<AppsPage> {
       _expandedInstalledApp = null;
       _expandedImageApp = null;
       _expandedRollbackApp = null;
+      _showImages = false;
     }
     final capability = ref.watch(appsSessionProvider)?.appsCapabilities;
     final operation = ref.watch(appsControllerProvider);
@@ -53,6 +56,9 @@ class _AppsPageState extends ConsumerState<AppsPage> {
                 ? null
                 : () {
                     ref.invalidate(appsInventoryProvider);
+                    if (_showImages && session != null) {
+                      ref.invalidate(appsImageInventoryProvider(session));
+                    }
                     if (_catalog) {
                       ref.invalidate(appsCatalogProvider(_cachedOnly));
                       ref.invalidate(catalogOverviewProvider);
@@ -205,6 +211,36 @@ class _AppsPageState extends ConsumerState<AppsPage> {
               AppsStatusChart(
                 states: inventory.apps.map((app) => app.state).toList(),
               ),
+              if (session.availableMethodNames.contains('app.image.query')) ...[
+                const SizedBox(height: 12),
+                TextButton.icon(
+                  key: const Key('apps-image-inventory-toggle'),
+                  onPressed: () => setState(() => _showImages = !_showImages),
+                  icon: Icon(
+                    _showImages ? Icons.expand_less : Icons.expand_more,
+                  ),
+                  label: Text(
+                    _showImages
+                        ? 'Hide Docker images'
+                        : 'Inspect Docker images',
+                  ),
+                ),
+                if (_showImages)
+                  ref
+                      .watch(appsImageInventoryProvider(session))
+                      .when(
+                        skipLoadingOnRefresh: false,
+                        loading: () => const LinearProgressIndicator(),
+                        error: (_, _) => OutlinedButton(
+                          key: const Key('apps-image-inventory-retry'),
+                          onPressed: () => ref.invalidate(
+                            appsImageInventoryProvider(session),
+                          ),
+                          child: const Text('Retry image inventory read'),
+                        ),
+                        data: (images) => AppsImageChart(images: images),
+                      ),
+              ],
               const SizedBox(height: 20),
               if (inventory.apps.isEmpty)
                 TdPanel(

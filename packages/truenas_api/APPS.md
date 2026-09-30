@@ -15,6 +15,7 @@ Verification uses fake transports only, with no NAS or credential access.
 - [25.10 application image pull job](https://api.truenas.com/v25.10/api_methods_app.pull_images.html)
 - [25.10 application rollback versions](https://api.truenas.com/v25.10/api_methods_app.rollback_versions.html)
 - [25.10 application rollback job](https://api.truenas.com/v25.10/api_methods_app.rollback.html)
+- [25.10 Docker image query](https://api.truenas.com/v25.10/api_methods_app.image.query.html)
 - [Application inventory, creation and deletion](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/crud.py)
 - [Upgrade summary, migration and configuration merge](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/upgrade.py)
 - [Question schema construction](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/apps/schema_construction_utils.py)
@@ -35,6 +36,13 @@ dedicated configuration review uses the restricted reads described below.
 Inventory also projects the nullable latest application version and a separate
 Docker-image update flag. The two signals remain independent and are display
 only; they do not start an upgrade or image pull.
+An explicit, account-bound image inventory reads `app.image.query` with a
+257-row sentinel and projects only ID, repository tags, size, dangling and
+update-available fields. At most 256 unique entries and 16 safe tags per
+entry are returned as immutable models. The dashboard shows a tagged/dangling
+ring and the sum of reported image sizes. This sum is not a disk-usage or
+reclaimable-space guarantee; dangling does not mean unused. No image deletion
+or pull is available from this panel.
 When an installed app reports image updates, the user can explicitly check
 `app.outdated_docker_images`. The SDK first verifies the exact current app
 identity, version and update flag with a configuration-free query, then

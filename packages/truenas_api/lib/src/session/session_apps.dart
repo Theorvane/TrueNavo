@@ -7,6 +7,7 @@ abstract interface class AuthenticatedAppsSession {
   Future<InstalledAppDetails> loadInstalledAppDetails(InstalledApp app);
   Future<List<String>> loadOutdatedAppImages(InstalledApp app);
   Future<List<String>> loadAppRollbackVersions(InstalledApp app);
+  Future<List<AppImageEntry>> loadAppImages();
   Future<AppOperationResult> rollbackApp(AppRollbackRequest request);
   Future<AppOperationResult> pullAppImages(AppImagePullRequest request);
   Future<List<CatalogApp>> loadAppsCatalog({bool cachedOnly = false});
@@ -139,6 +140,21 @@ final class InstalledAppWorkloads {
   final int portMappings;
   final int volumes;
   final int images;
+}
+
+final class AppImageEntry {
+  AppImageEntry({
+    required this.id,
+    required List<String> tags,
+    required this.sizeBytes,
+    required this.dangling,
+    required this.updateAvailable,
+  }) : tags = List.unmodifiable(tags);
+  final String id;
+  final List<String> tags;
+  final int sizeBytes;
+  final bool dangling;
+  final bool updateAvailable;
 }
 
 final class AppImagePullRequest {
@@ -635,6 +651,57 @@ final class _SessionApps {
         }
         return _rollbackVersions(app);
       });
+
+  Future<List<AppImageEntry>> loadImages() => _read(() async {
+    _guard('app.image.query');
+    final raw = await _call('app.image.query', [
+      <Object?>[],
+      {
+        'limit': 257,
+        'select': ['id', 'repo_tags', 'size', 'dangling', 'update_available'],
+        'extra': {'parse_tags': false},
+      },
+    ]);
+    if (raw is! List || raw.length > 256) {
+      throw const AppsException(AppsExceptionReason.invalidResponse);
+    }
+    final seen = <String>{};
+    final images = <AppImageEntry>[];
+    var total = 0;
+    for (final value in raw) {
+      if (value is! Map ||
+          !_appsText(value['id'], 128) ||
+          !seen.add(value['id'] as String) ||
+          value['repo_tags'] is! List ||
+          (value['repo_tags'] as List).length > 16 ||
+          value['size'] is! int ||
+          (value['size'] as int) < 0 ||
+          (value['size'] as int) > 9007199254740991 ||
+          value['dangling'] is! bool ||
+          value['update_available'] is! bool) {
+        throw const AppsException(AppsExceptionReason.invalidResponse);
+      }
+      final tags = value['repo_tags'] as List;
+      if (tags.any((tag) => !_appsText(tag, 512)) ||
+          tags.toSet().length != tags.length) {
+        throw const AppsException(AppsExceptionReason.invalidResponse);
+      }
+      total += value['size'] as int;
+      if (total > 9007199254740991) {
+        throw const AppsException(AppsExceptionReason.invalidResponse);
+      }
+      images.add(
+        AppImageEntry(
+          id: value['id'] as String,
+          tags: tags.cast<String>(),
+          sizeBytes: value['size'] as int,
+          dangling: value['dangling'] as bool,
+          updateAvailable: value['update_available'] as bool,
+        ),
+      );
+    }
+    return List.unmodifiable(images);
+  });
 
   Future<List<String>> _rollbackVersions(InstalledApp app) async {
     final raw = await _call('app.rollback_versions', [app.id]);

@@ -8,6 +8,7 @@ import 'package:trueraid/features/apps/app_install_page.dart';
 import 'package:trueraid/features/apps/apps_controller.dart';
 import 'package:trueraid/features/apps/apps_page.dart';
 import 'package:trueraid/features/apps/apps_status_chart.dart';
+import 'package:trueraid/features/apps/apps_image_chart.dart';
 import 'package:trueraid/features/connection/connection_controller.dart';
 import 'package:trueraid/features/dashboard/dashboard_controller.dart';
 import 'package:trueraid_design_system/trueraid_design_system.dart';
@@ -44,6 +45,47 @@ void main() {
     expect(h.api.actions, isEmpty);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('Docker images load on demand with size and tag chart', (
+    tester,
+  ) async {
+    final h = await _pump(tester);
+    expect(h.api.imageReads, 0);
+    await _tap(tester, find.byKey(const Key('apps-image-inventory-toggle')));
+    expect(h.api.imageReads, 1);
+    expect(find.text('Tagged · 1'), findsOneWidget);
+    expect(find.text('Dangling · 1'), findsOneWidget);
+    expect(find.text('Updates available · 1'), findsOneWidget);
+    expect(find.text('Sum of image sizes · 110.0 MiB'), findsOneWidget);
+    expect(find.text('example/media:latest'), findsOneWidget);
+    expect(
+      find.textContaining('Dangling does not prove unused'),
+      findsOneWidget,
+    );
+    expect(h.api.actions, isEmpty);
+  });
+  testWidgets(
+    'Docker image inventory requires read permission and resets on account change',
+    (tester) async {
+      final h = await _pump(tester);
+      await _tap(tester, find.byKey(const Key('apps-image-inventory-toggle')));
+      final next = _FakeApps();
+      h.active = AuthenticatedSession(
+        profileId: 'other-account',
+        repository: next,
+        availableMethodNames: _methods.difference({'app.image.query'}),
+        version: '25.10.1',
+        endpoint: 'wss://other.example/api/current',
+      );
+      h.container.invalidate(dashboardActiveSessionProvider);
+      await tester.pumpAndSettle();
+      expect(find.text('example/media:latest'), findsNothing);
+      expect(
+        find.byKey(const Key('apps-image-inventory-toggle')),
+        findsNothing,
+      );
+      expect(next.imageReads, 0);
+    },
+  );
   testWidgets(
     'installed notes and portals load only after explicit expansion',
     (tester) async {
@@ -662,6 +704,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+  testWidgets('Docker image chart fits 320px at 200 percent text', (
+    tester,
+  ) async {
+    _compactView(tester);
+    await _pump(tester, scale: 2);
+    await _tap(tester, find.byKey(const Key('apps-image-inventory-toggle')));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('empty Docker image ring reports no invented percentage', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: TrueRAIDTheme.dark(),
+        home: const Scaffold(body: AppsImageChart(images: [])),
+      ),
+    );
+    expect(
+      find.bySemanticsLabel('0 images; 0 tagged, 0 dangling.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('%'), findsNothing);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
   testWidgets('empty health ring reports zero without percentage fiction', (
     tester,
   ) async {
@@ -819,6 +889,7 @@ const _methods = {
   'app.pull_images',
   'app.rollback_versions',
   'app.rollback',
+  'app.image.query',
   'catalog.trains',
   'catalog.config',
   'catalog.update',
@@ -887,6 +958,7 @@ class _FakeApps
   var detailsReads = 0;
   var outdatedReads = 0;
   var rollbackReads = 0;
+  var imageReads = 0;
   String displayNotes = 'Operator note';
   var overviewReads = 0;
   var syncPolls = 0;
@@ -994,6 +1066,27 @@ class _FakeApps
   Future<List<String>> loadAppRollbackVersions(InstalledApp app) async {
     rollbackReads++;
     return const ['0.9.0'];
+  }
+
+  @override
+  Future<List<AppImageEntry>> loadAppImages() async {
+    imageReads++;
+    return [
+      AppImageEntry(
+        id: 'sha256:media',
+        tags: ['example/media:latest'],
+        sizeBytes: 104857600,
+        dangling: false,
+        updateAvailable: true,
+      ),
+      AppImageEntry(
+        id: 'sha256:old',
+        tags: const [],
+        sizeBytes: 10485760,
+        dangling: true,
+        updateAvailable: false,
+      ),
+    ];
   }
 
   @override

@@ -20,6 +20,7 @@ const _methods = {
   'app.pull_images',
   'app.rollback_versions',
   'app.rollback',
+  'app.image.query',
   'app.create',
   'app.start',
   'app.stop',
@@ -960,6 +961,60 @@ void main() {
     h.transport.rollbackVersions = ['0.9.0\nunsafe'];
     await expectLater(
       h.repo.loadAppRollbackVersions(app),
+      throwsA(_reason(AppsExceptionReason.invalidResponse)),
+    );
+    expect(h.transport.writes, isEmpty);
+  });
+  test(
+    'Docker image inventory reads bounded metadata without writes',
+    () async {
+      final h = await _connect();
+      final images = await h.repo.loadAppImages();
+      expect(images, hasLength(2));
+      expect(images.first.tags, ['example/media:latest']);
+      expect(images.first.sizeBytes, 104857600);
+      expect(images.last.dangling, isTrue);
+      expect(h.transport.requests.last['method'], 'app.image.query');
+      expect(h.transport.requests.last['params'], [
+        [],
+        {
+          'limit': 257,
+          'select': ['id', 'repo_tags', 'size', 'dangling', 'update_available'],
+          'extra': {'parse_tags': false},
+        },
+      ]);
+      expect(h.transport.writes, isEmpty);
+      expect(() => images.clear(), throwsUnsupportedError);
+      expect(() => images.first.tags.clear(), throwsUnsupportedError);
+    },
+  );
+  test('Docker image inventory rejects malformed and excess data', () async {
+    final h = await _connect();
+    h.transport.appImages = [
+      {
+        'id': 'x',
+        'repo_tags': ['unsafe\nref'],
+        'size': 1,
+        'dangling': false,
+        'update_available': false,
+      },
+    ];
+    await expectLater(
+      h.repo.loadAppImages(),
+      throwsA(_reason(AppsExceptionReason.invalidResponse)),
+    );
+    h.transport.appImages = List.generate(
+      257,
+      (i) => {
+        'id': 'sha256:$i',
+        'repo_tags': <String>[],
+        'size': 1,
+        'dangling': true,
+        'update_available': false,
+      },
+    );
+    await expectLater(
+      h.repo.loadAppImages(),
       throwsA(_reason(AppsExceptionReason.invalidResponse)),
     );
     expect(h.transport.writes, isEmpty);
@@ -2093,6 +2148,22 @@ class _Transport implements RpcTransport {
   };
   Object? outdatedImages = ['example/media:latest'];
   Object? rollbackVersions = ['0.9.0', '0.8.0'];
+  Object? appImages = [
+    {
+      'id': 'sha256:media',
+      'repo_tags': ['example/media:latest'],
+      'size': 104857600,
+      'dangling': false,
+      'update_available': true,
+    },
+    {
+      'id': 'sha256:old',
+      'repo_tags': <String>[],
+      'size': 10485760,
+      'dangling': true,
+      'update_available': false,
+    },
+  ];
   List<String> catalogTrains = ['community', 'stable'];
   List<String> preferredTrains = ['stable'];
   bool catalogUpdateTimeout = false;
@@ -2220,6 +2291,8 @@ class _Transport implements RpcTransport {
         result = outdatedImages;
       case 'app.rollback_versions':
         result = rollbackVersions;
+      case 'app.image.query':
+        result = appImages;
       case 'app.query':
         final filter = (r['params'] as List).first as List;
         result = filter.isEmpty

@@ -1,6 +1,21 @@
 # TrueNAS WebUI parity: implementation ledger
 
-## Current continuation: reviewed application rollback
+## Current continuation: on-demand Docker image inventory
+
+The Applications workspace now offers an explicit, read-only Docker image
+inventory. `app.image.query` projects only image ID, bounded repository tags,
+size, dangling state and update availability; 257 rows act as a limit sentinel
+and at most 256 validated images enter immutable app models. The panel renders
+a tagged/dangling ring, update count and summed reported image sizes, plus
+individual references. It loads only on tap, is permission-gated and clears
+on account change. “Dangling” is not presented as “unused,” and the size sum
+is not claimed as reclaimable storage. No pull or delete is invoked. Fake-wire,
+widget, accessibility and 320px/200%-text tests cover the path. [Official
+25.10 image query contract](https://api.truenas.com/v25.10/api_methods_app.image.query.html).
+SDK analysis and all 5,347 SDK tests pass; Flutter analysis and 7,570 Flutter
+tests pass with one existing skip. No live NAS request or write was made.
+
+## Previous continuation: reviewed application rollback
 
 Running installed apps can now select a server-offered rollback version after
 an explicit on-demand read. A confirmation review shows the endpoint, app ID,
