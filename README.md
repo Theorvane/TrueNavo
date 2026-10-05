@@ -4,10 +4,15 @@
 
 The Flutter app connects securely to TrueNAS, presents live inventory and capacity charts, and provides native administration with reviewed changes through a typed Dart API. The target is full applicable WebUI workflow parity; the current implementation is partial. Management writes are covered by fake-transport and widget tests; they have not been exercised on a real appliance. This is not a claim of full TrueNAS compatibility or official endorsement.
 
-TrueNavo replaces the former TrueRAID identity. Android and Apple now use `com.truenavo.truenavo` instead of `com.trueraid.trueraid`; desktop, web, local-database and secure-storage namespaces also change. This installs as a separate app, and existing server profiles, certificate pins and credentials are not migrated automatically. Keep the previous installation until you have reconfigured and verified the new one. The GitLab repository URL has not been renamed.
+TrueNavo replaces the former TrueRAID identity. Android and iOS use the store-registered identifier `com.sloki9637.truenavo`; macOS and Linux retain `com.truenavo.truenavo`. This installs as a separate app from earlier mobile identifiers, and existing server profiles, certificate pins and credentials are not migrated automatically. Keep the previous installation until you have reconfigured and verified the new one. The GitLab repository URL has not been renamed.
+
+Privacy policy: [www.sloki9637.com/privacy](https://www.sloki9637.com/privacy).
 
 ## Documentation
 
+- [Contribution and dev/main branch flow](CONTRIBUTING.md)
+- [GitHub and store release pipeline](RELEASING.md)
+- [Store registration and required assets](docs/store/store-setup.md)
 - [Product plan](docs/planning/TRUENAVO_PRODUCT_PLAN.md)
 - [Capability parity matrix](docs/planning/TRUENAVO_CAPABILITY_MATRIX.csv)
 - [TrueNAS API research](docs/research/TRUENAS_API_RESEARCH.md)

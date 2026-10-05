@@ -1,0 +1,94 @@
+name: Android Google Play
+
+on:
+  workflow_call:
+    inputs:
+      validate_only:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: truenavo-google-play
+  cancel-in-progress: false
+
+jobs:
+  credentials:
+    runs-on: ubuntu-24.04
+    environment: play-store
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      PLAY_CREDENTIALS: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Require complete credentials before any store upload
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD PLAY_CREDENTIALS; do
+            if test -z "${!name}"; then
+              echo "::error::Missing required configuration: $name"
+              exit 1
+            fi
+          done
+
+  upload:
+    needs: credentials
+    if: ${{ !inputs.validate_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: play-store
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - name: Install the upload key
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/truenavo-upload.jks"
+          echo "TRUENAVO_KEYSTORE_PATH=$RUNNER_TEMP/truenavo-upload.jks" >> "$GITHUB_ENV"
+      - name: Build the signed app bundle
+        run: |
+          flutter pub get
+          (cd apps/truenavo && flutter build appbundle --release)
+      - name: Verify the bundle uses the configured upload key
+        run: bash scripts/verify_android_signing.sh apps/truenavo/build/app/outputs/bundle/release/app-release.aab
+      - name: Collect reviewed localized notes
+        run: python3 scripts/release_metadata.py --whatsnew dist/whatsnew
+      - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: signed-android-bundle
+          path: apps/truenavo/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload to Google Play internal testing
+        uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.sloki9637.truenavo
+          releaseFiles: apps/truenavo/build/app/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
+          whatsNewDirectory: dist/whatsnew
+      - name: Remove upload key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/truenavo-upload.jks"

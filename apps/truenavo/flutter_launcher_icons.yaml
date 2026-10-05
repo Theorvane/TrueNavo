@@ -1,0 +1,23 @@
+# The approved generated master is copied into the repository unchanged.
+# Regenerate platform-size assets with: dart run tool/generate_brand_icons.dart
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: ../../brand/truenavo-icon.png
+  remove_alpha_ios: true
+  background_color_ios: '#001A4C'
+  adaptive_icon_background: '#001A4C'
+  adaptive_icon_foreground: ../../brand/truenavo-icon.png
+  adaptive_icon_foreground_inset: 0
+  web:
+    generate: true
+    image_path: ../../brand/truenavo-icon.png
+    background_color: '#001A4C'
+    theme_color: '#001A4C'
+  windows:
+    generate: true
+    image_path: ../../brand/truenavo-icon.png
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: ../../brand/truenavo-icon.png

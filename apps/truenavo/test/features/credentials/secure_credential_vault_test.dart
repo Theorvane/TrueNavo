@@ -76,7 +76,7 @@ void main() {
       );
       for (final options in port.options) {
         expect(options.androidResetOnError, isFalse);
-        expect(options.androidNamespace, 'com.truenavo.truenavo.api-key');
+        expect(options.androidNamespace, 'com.sloki9637.truenavo.api-key');
         expect(options.appleSynchronizable, isFalse);
         expect(options.appleThisDeviceUnlocked, isTrue);
         expect(options.macOsDataProtectionKeychain, isTrue);

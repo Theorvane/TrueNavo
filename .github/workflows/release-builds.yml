@@ -1,0 +1,107 @@
+name: Release build verification
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/**'
+      - 'apps/truenavo/android/**'
+      - 'apps/truenavo/ios/**'
+      - 'apps/truenavo/windows/**'
+      - 'apps/truenavo/pubspec.yaml'
+      - 'pubspec.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - id: version
+        run: python3 scripts/release_metadata.py --github-output "$GITHUB_OUTPUT"
+      - run: python3 -m unittest discover -s scripts/tests -v
+
+  windows:
+    needs: metadata
+    uses: ./.github/workflows/windows-package.yml
+    with:
+      version: ${{ needs.metadata.outputs.version }}
+
+  android-signing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - run: flutter pub get
+      - name: Verify missing release credentials fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if (cd apps/truenavo && flutter build appbundle --release) > "$RUNNER_TEMP/unsigned-build.log" 2>&1; then
+            echo '::error::A release built without signing configuration.'
+            exit 1
+          fi
+          if ! grep -q 'TrueNavo release signing is required' "$RUNNER_TEMP/unsigned-build.log"; then
+            cat "$RUNNER_TEMP/unsigned-build.log"
+            exit 1
+          fi
+      - name: Build with a synthetic test key and verify store rejection
+        shell: bash
+        env:
+          TRUENAVO_KEYSTORE_PATH: ${{ runner.temp }}/truenavo-smoke.jks
+          ANDROID_KEYSTORE_PASSWORD: synthetic-test-password
+          ANDROID_KEY_PASSWORD: synthetic-test-password
+          ANDROID_KEY_ALIAS: smoke
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -keystore "$TRUENAVO_KEYSTORE_PATH" -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            -keypass:env ANDROID_KEY_PASSWORD -alias "$ANDROID_KEY_ALIAS" -keyalg RSA -keysize 2048 \
+            -validity 1 -dname 'CN=Android Debug,O=Synthetic Test,C=US'
+          (cd apps/truenavo && flutter build appbundle --release)
+          if bash scripts/verify_android_signing.sh apps/truenavo/build/app/outputs/bundle/release/app-release.aab > "$RUNNER_TEMP/signing.log" 2>&1; then
+            echo '::error::A debug certificate was accepted for store deployment.'
+            exit 1
+          fi
+          if ! grep -q 'Debug signing is not accepted' "$RUNNER_TEMP/signing.log"; then
+            cat "$RUNNER_TEMP/signing.log"
+            exit 1
+          fi
+
+  ios-build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - run: flutter pub get
+      - name: Verify device release builds without distribution credentials
+        working-directory: apps/truenavo
+        run: flutter build ios --release --no-codesign

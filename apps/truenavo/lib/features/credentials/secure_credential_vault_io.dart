@@ -8,7 +8,7 @@ import 'secure_credential_vault.dart';
 const _maximumApiKeyLength = 16384;
 const _options = SecureCredentialStorageOptions(
   androidResetOnError: false,
-  androidNamespace: 'com.truenavo.truenavo.api-key',
+  androidNamespace: 'com.sloki9637.truenavo.api-key',
   appleSynchronizable: false,
   appleThisDeviceUnlocked: true,
   macOsDataProtectionKeychain: true,
@@ -153,7 +153,7 @@ final class _FlutterSecureCredentialStoragePort
     : _storage = const FlutterSecureStorage(
         aOptions: AndroidOptions(
           resetOnError: false,
-          storageNamespace: 'com.truenavo.truenavo.api-key',
+          storageNamespace: 'com.sloki9637.truenavo.api-key',
         ),
         iOptions: IOSOptions(
           accessibility: KeychainAccessibility.unlocked_this_device,
@@ -178,7 +178,7 @@ final class _FlutterSecureCredentialStoragePort
     key: key,
     aOptions: const AndroidOptions(
       resetOnError: false,
-      storageNamespace: 'com.truenavo.truenavo.api-key',
+      storageNamespace: 'com.sloki9637.truenavo.api-key',
     ),
     iOptions: const IOSOptions(
       accessibility: KeychainAccessibility.unlocked_this_device,
@@ -203,7 +203,7 @@ final class _FlutterSecureCredentialStoragePort
     value: value,
     aOptions: const AndroidOptions(
       resetOnError: false,
-      storageNamespace: 'com.truenavo.truenavo.api-key',
+      storageNamespace: 'com.sloki9637.truenavo.api-key',
     ),
     iOptions: const IOSOptions(
       accessibility: KeychainAccessibility.unlocked_this_device,
@@ -226,7 +226,7 @@ final class _FlutterSecureCredentialStoragePort
     key: key,
     aOptions: const AndroidOptions(
       resetOnError: false,
-      storageNamespace: 'com.truenavo.truenavo.api-key',
+      storageNamespace: 'com.sloki9637.truenavo.api-key',
     ),
     iOptions: const IOSOptions(
       accessibility: KeychainAccessibility.unlocked_this_device,
