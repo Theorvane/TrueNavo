@@ -1,0 +1,64 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.47.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Resolve dependencies
+        run: |
+          flutter config --no-analytics
+          flutter --version
+          flutter pub get
+      - name: Verify formatting and generated persistence code
+        run: |
+          dart format --output=none --set-exit-if-changed packages/truenas_api packages/truenavo_design_system examples/design_system_consumer apps/truenavo
+          (cd apps/truenavo && ./tool/verify_drift_generated.sh && ./tool/verify_drift_generated.sh)
+      - name: Analyze and test API package
+        working-directory: packages/truenas_api
+        run: |
+          dart analyze
+          dart test
+      - name: Analyze and test design system
+        working-directory: packages/truenavo_design_system
+        run: |
+          flutter analyze
+          flutter test
+      - name: Analyze and test design consumer
+        working-directory: examples/design_system_consumer
+        run: |
+          flutter analyze
+          flutter test
+      - name: Analyze and test application
+        working-directory: apps/truenavo
+        run: |
+          dart run tool/verify_drift_web_assets.dart
+          dart run tool/verify_persistence_security_boundaries.dart
+          flutter analyze
+          flutter test
+      - name: Build web release
+        working-directory: apps/truenavo
+        run: |
+          flutter build web --release
+          test -f build/web/sqlite3.wasm
+          test -f build/web/drift_worker.js
