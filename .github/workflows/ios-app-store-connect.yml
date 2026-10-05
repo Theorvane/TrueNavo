@@ -1,0 +1,114 @@
+name: iOS App Store Connect
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      build:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: truenavo-app-store-connect
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: app-store
+    env:
+      BUNDLE_ID: com.truenavo.truenavo
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_BUILD: ${{ inputs.build }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+      APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      APP_STORE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APP_STORE_PROVISIONING_PROFILE_BASE64 }}
+    steps:
+      - name: Require complete signing and upload credentials
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          for name in APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY APPLE_DISTRIBUTION_CERTIFICATE_BASE64 APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD APP_STORE_PROVISIONING_PROFILE_BASE64; do
+            if test -z "${!name}"; then
+              echo "::error::Missing required configuration: $name"
+              exit 1
+            fi
+          done
+          [[ "$ASC_KEY_ID" =~ ^[A-Za-z0-9]{10}$ ]]
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Za-z0-9]{10}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - name: Install and validate signing assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" | base64 -D > "$RUNNER_TEMP/distribution.p12"
+          printf '%s' "$APP_STORE_PROVISIONING_PROFILE_BASE64" | base64 -D > "$RUNNER_TEMP/profile.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          python3 scripts/apple_signing.py profile "$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-store-signing.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/app-store-signing.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-store-signing.keychain-db"
+          security import "$RUNNER_TEMP/distribution.p12" -P "$APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD" \
+            -t cert -f pkcs12 -k "$RUNNER_TEMP/app-store-signing.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/app-store-signing.keychain-db" >/dev/null
+          security list-keychains -d user -s "$RUNNER_TEMP/app-store-signing.keychain-db" login.keychain-db
+      - name: Install validated provisioning profile
+        run: |
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+      - name: Build device release
+        run: |
+          flutter pub get
+          (cd apps/truenavo && flutter build ios --release --no-codesign)
+      - name: Archive with distribution signing
+        working-directory: apps/truenavo/ios
+        run: |
+          xcodebuild -workspace Runner.xcworkspace -scheme Runner -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/TrueNavo.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" CODE_SIGN_IDENTITY='Apple Distribution' archive
+          codesign --verify --deep --strict "$RUNNER_TEMP/TrueNavo.xcarchive/Products/Applications/Runner.app"
+      - name: Export and verify IPA
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/TrueNavo.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export"
+          IPA="$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$IPA"
+          python3 scripts/apple_signing.py ipa "$IPA"
+          echo "TRUENAVO_IPA=$IPA" >> "$GITHUB_ENV"
+      - name: Upload to App Store Connect
+        run: |
+          set -euo pipefail
+          umask 077
+          export API_PRIVATE_KEYS_DIR="$RUNNER_TEMP/app-store-connect-api-keys"
+          mkdir -p "$API_PRIVATE_KEYS_DIR"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$API_PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          xcrun altool --upload-app -f "$TRUENAVO_IPA" -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+      - name: Remove private signing assets
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/app-store-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/distribution.p12" "$RUNNER_TEMP/profile.mobileprovision" "$RUNNER_TEMP/profile.plist"
+          if [[ "$ASC_KEY_ID" =~ ^[A-Za-z0-9]{10}$ ]]; then
+            rm -f "$RUNNER_TEMP/app-store-connect-api-keys/AuthKey_${ASC_KEY_ID}.p8"
+          fi

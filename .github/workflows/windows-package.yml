@@ -1,0 +1,50 @@
+name: Windows package
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - name: Build Windows release
+        run: |
+          flutter pub get
+          cd apps/truenavo
+          flutter build windows --release
+      - name: Package installer and portable ZIP
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = 'apps/truenavo/build/windows/x64/runner/Release'
+          if (-not (Test-Path "$src/truenavo.exe")) { throw 'Windows executable missing' }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$src/*" -DestinationPath 'dist/truenavo-windows-x64.zip'
+          choco install innosetup --version=6.2.2 --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DAppVersion=$env:VERSION" apps/truenavo/windows/installer/truenavo.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+          if (-not (Test-Path 'dist/truenavo-windows-x64-setup.exe')) { throw 'Installer missing' }
+      - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: truenavo-windows
+          path: dist/*
+          if-no-files-found: error

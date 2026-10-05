@@ -8,6 +8,9 @@ TrueNavo replaces the former TrueRAID identity. Android and Apple now use `com.t
 
 ## Documentation
 
+- [Contribution and dev/main branch flow](CONTRIBUTING.md)
+- [GitHub and store release pipeline](RELEASING.md)
+- [Store registration and required assets](docs/store/store-setup.md)
 - [Product plan](docs/planning/TRUENAVO_PRODUCT_PLAN.md)
 - [Capability parity matrix](docs/planning/TRUENAVO_CAPABILITY_MATRIX.csv)
 - [TrueNAS API research](docs/research/TRUENAS_API_RESEARCH.md)
