@@ -38,7 +38,7 @@ jobs:
           if (-not (Test-Path "$src/truenavo.exe")) { throw 'Windows executable missing' }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path "$src/*" -DestinationPath 'dist/truenavo-windows-x64.zip'
-          choco install innosetup --version=6.2.2 --no-progress -y
+          choco install innosetup --version=6.2.2 --allow-downgrade --no-progress -y
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
           & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' "/DAppVersion=$env:VERSION" apps/truenavo/windows/installer/truenavo.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
