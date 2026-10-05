@@ -1,6 +1,35 @@
 name: Change proposal
 description: Propose a TrueNavo change or report a behavior gap.
 body:
+  - type: dropdown
+    id: change_type
+    attributes:
+      label: Change type
+      description: Used for automatic labeling; never include credentials.
+      options:
+        - Bug report
+        - Feature request
+        - Question
+        - Maintenance
+    validations:
+      required: true
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      options:
+        - Other / unsure
+        - Android
+        - iOS
+        - Desktop
+        - Web
+        - TrueNAS API
+        - UI / design
+        - Security / credentials
+        - CI / release
+        - Documentation
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:

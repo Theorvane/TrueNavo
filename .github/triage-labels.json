@@ -1,0 +1,37 @@
+{
+  "reviewer": "sjungwon03-ai",
+  "labels": [
+    {"name": "bug", "color": "d73a4a", "description": "Something is not working"},
+    {"name": "enhancement", "color": "a2eeef", "description": "New feature or improvement"},
+    {"name": "documentation", "color": "0075ca", "description": "Documentation changes or questions"},
+    {"name": "question", "color": "d876e3", "description": "A usage or implementation question"},
+    {"name": "maintenance", "color": "ededed", "description": "Refactoring, tooling or maintenance"},
+    {"name": "needs:triage", "color": "fbca04", "description": "Needs a maintainer to assess or categorize"},
+    {"name": "dependencies", "color": "0366d6", "description": "Dependency or toolchain changes"},
+    {"name": "tests", "color": "bfd4f2", "description": "Test coverage or test tooling"},
+    {"name": "area:android", "color": "3ddc84", "description": "Android application and native bridge"},
+    {"name": "area:ios", "color": "a2aaad", "description": "iOS application and native bridge"},
+    {"name": "area:desktop", "color": "5319e7", "description": "macOS, Windows or Linux application"},
+    {"name": "area:web", "color": "1d76db", "description": "Web application and persistence"},
+    {"name": "area:api", "color": "0052cc", "description": "Typed TrueNAS API and contracts"},
+    {"name": "area:ui", "color": "c5def5", "description": "Flutter screens and design system"},
+    {"name": "area:security", "color": "b60205", "description": "Authentication, TLS or credential storage"},
+    {"name": "area:ci", "color": "ededed", "description": "Repository automation and CI"},
+    {"name": "area:release", "color": "0e8a16", "description": "Signing, packaging and store deployment"},
+    {"name": "release:promotion", "color": "006b75", "description": "Repository dev-to-main release promotion"}
+  ],
+  "path_rules": {
+    "area:android": ["apps/truenavo/android/**"],
+    "area:ios": ["apps/truenavo/ios/**"],
+    "area:desktop": ["apps/truenavo/macos/**", "apps/truenavo/windows/**", "apps/truenavo/linux/**"],
+    "area:web": ["apps/truenavo/web/**", "apps/truenavo/tool/*web*"],
+    "area:api": ["packages/truenas_api/**"],
+    "area:ui": ["apps/truenavo/lib/**", "packages/truenavo_design_system/**", "examples/design_system_consumer/**", "brand/**"],
+    "area:security": ["apps/truenavo/lib/features/credentials/**", "apps/truenavo/lib/features/tls_trust/**", "**/tlstrust/**", "**/*keychain*", "**/*credential*", "**/*tls*"],
+    "area:ci": [".github/**", "scripts/**", "apps/truenavo/tool/**"],
+    "area:release": [".github/workflows/release*", ".github/workflows/android-google-play.yml", ".github/workflows/ios-app-store-connect.yml", ".github/workflows/windows-package.yml", "apps/truenavo/windows/installer/**", "scripts/*signing*", "scripts/*release*", "docs/store/**", "RELEASING.md", "brand/**", "apps/truenavo/flutter_launcher_icons.yaml"],
+    "documentation": ["docs/**", "**/*.md"],
+    "dependencies": ["**/pubspec.yaml", "pubspec.yaml", "pubspec.lock", "**/Podfile*", "**/gradle-wrapper.properties", "**/settings.gradle*"],
+    "tests": ["**/test/**", "**/tests/**", "**/test_*.py", "**/*_test.dart"]
+  }
+}

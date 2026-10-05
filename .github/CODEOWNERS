@@ -1,0 +1,3 @@
+# Request a review for all ready-for-review PRs, including repository rules.
+# CODEOWNERS is evaluated from the PR base branch; it never approves a PR.
+* @sjungwon03-ai

@@ -1,0 +1,32 @@
+name: Issue and PR triage
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: triage-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The base/default branch only. Never checkout the PR head, download its
+      # artifacts, install its dependencies or execute contributor-controlled code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Add policy labels and request review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/triage.py
