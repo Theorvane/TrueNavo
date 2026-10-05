@@ -12,6 +12,13 @@
 !.env.example
 *.pem
 *.key
+*.p8
+*.p12
+*.mobileprovision
+*.jks
+*.keystore
+__pycache__/
+.release-secrets/
 
 # Flutter / Dart (future implementation)
 .dart_tool/

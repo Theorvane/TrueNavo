@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      destination:
+        description: Deployment destination (stores upload to internal testing / App Store Connect)
+        type: choice
+        options: [github, stores, all]
+        default: github
+      prerelease:
+        description: Mark the GitHub release as a preview
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: truenavo-release
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+      tag: ${{ steps.version.outputs.tag }}
+      destination: ${{ steps.decide.outputs.destination }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+      prerelease: ${{ steps.decide.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the protected release branch
+        run: test "$GITHUB_REF" = refs/heads/main
+      - id: version
+        name: Validate version and reviewed release notes
+        run: python3 scripts/release_metadata.py --github-output "$GITHUB_OUTPUT"
+      - id: decide
+        name: Decide whether this is a new release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          DESTINATION: ${{ inputs.destination }}
+          STORES_ENABLED: ${{ vars.STORE_DEPLOYMENT_ENABLED }}
+          PREVIEW: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if test "$EVENT_NAME" = push; then
+            DESTINATION=github
+            if test "$STORES_ENABLED" = true; then DESTINATION=all; fi
+            PREVIEW=true
+          fi
+          echo "destination=$DESTINATION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PREVIEW" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            if test "$EVENT_NAME" = push; then
+              echo 'should_release=false' >> "$GITHUB_OUTPUT"
+              echo "::notice::$TAG is already tagged; this main update is not a release."
+              exit 0
+            elif test "$DESTINATION" != stores; then
+              echo '::error::This version is already tagged. Bump the version or rerun only a failed job.'
+              exit 1
+            fi
+          fi
+          echo 'should_release=true' >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: metadata
+    if: needs.metadata.outputs.should_release == 'true'
+    uses: ./.github/workflows/check.yml
+
+  windows:
+    needs: [metadata, check]
+    if: needs.metadata.outputs.should_release == 'true' && needs.metadata.outputs.destination != 'stores'
+    uses: ./.github/workflows/windows-package.yml
+    with:
+      version: ${{ needs.metadata.outputs.version }}
+
+  web:
+    needs: [metadata, check]
+    if: needs.metadata.outputs.should_release == 'true' && needs.metadata.outputs.destination != 'stores'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - name: Build and package web release
+        run: |
+          set -euo pipefail
+          flutter pub get
+          (cd apps/truenavo && flutter build web --release)
+          test -f apps/truenavo/build/web/sqlite3.wasm
+          test -f apps/truenavo/build/web/drift_worker.js
+          mkdir dist
+          (cd apps/truenavo/build/web && zip -r "$GITHUB_WORKSPACE/dist/truenavo-web.zip" .)
+      - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: truenavo-web
+          path: dist/*
+          if-no-files-found: error
+
+  play-preflight:
+    needs: [metadata, check]
+    if: needs.metadata.outputs.should_release == 'true' && needs.metadata.outputs.destination != 'github'
+    uses: ./.github/workflows/android-google-play.yml
+    with:
+      validate_only: true
+
+  app-store-connect:
+    needs: [metadata, check, windows, web, play-preflight]
+    if: >-
+      ${{ !cancelled() && needs.metadata.outputs.should_release == 'true' &&
+      needs.metadata.outputs.destination != 'github' && needs.check.result == 'success' &&
+      needs.play-preflight.result == 'success' &&
+      (needs.metadata.outputs.destination == 'stores' ||
+      (needs.windows.result == 'success' && needs.web.result == 'success')) }}
+    uses: ./.github/workflows/ios-app-store-connect.yml
+    with:
+      version: ${{ needs.metadata.outputs.version }}
+      build: ${{ needs.metadata.outputs.build }}
+
+  google-play:
+    needs: [metadata, check, app-store-connect]
+    if: needs.metadata.outputs.should_release == 'true' && needs.metadata.outputs.destination != 'github'
+    uses: ./.github/workflows/android-google-play.yml
+
+  publish:
+    needs: [metadata, check, windows, web, app-store-connect, google-play]
+    if: >-
+      ${{ !cancelled() && needs.metadata.outputs.destination != 'stores' &&
+      needs.check.result == 'success' && needs.windows.result == 'success' &&
+      needs.web.result == 'success' &&
+      (needs.metadata.outputs.destination == 'github' ||
+      (needs.app-store-connect.result == 'success' && needs.google-play.result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: github-release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          pattern: truenavo-*
+          path: dist
+          merge-multiple: true
+      - name: Publish the verified artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          test -f dist/truenavo-windows-x64.zip
+          test -f dist/truenavo-windows-x64-setup.exe
+          test -f dist/truenavo-web.zip
+          (cd dist && sha256sum truenavo-* > SHA256SUMS.txt)
+          python3 scripts/release_metadata.py --github-notes "$RUNNER_TEMP/release-notes.md"
+          if gh release view "$TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/release-draft" 2>/dev/null; then
+            test "$(cat "$RUNNER_TEMP/release-draft")" = true
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --draft \
+              --title "TrueNavo $TAG" --notes-file "$RUNNER_TEMP/release-notes.md" dist/*
+          fi
+          gh release edit "$TAG" --draft=false --prerelease="$PRERELEASE"

@@ -1,0 +1,9 @@
+Use case: logo-brand
+Tool: built-in image_gen (not the fallback CLI).
+Approved by the maintainer on 2026-10-05.
+
+Create one original production-ready square mobile app icon for TrueNavo, a premium TrueNAS storage monitoring and management app. Logo-brand use case. A bold geometric N monogram subtly combining three stacked storage bars with a navigation arrow, one unified clean recognizable symbol, no letters or words outside the symbol. Vibrant cyan and teal with a small cool blue accent on a solid deep navy full-bleed background. Refined minimal flat vector-like appearance, precise edges, high contrast, readable at 24 px, no tiny details, no gradients that compromise legibility, no mockup, no surrounding devices, no text, no official TrueNAS logo, no Flutter logo. Single centered mark occupies approximately 58% of canvas width with generous safe margins for circular and rounded-square system masks. Actual canvas stays square with no baked-in rounded corners, opaque background, no transparency. 1024 by 1024 app icon master, polished trustworthy enterprise storage brand.
+
+The original generated PNG is retained unchanged as truenavo-icon.png.
+Platform size/format conversion uses flutter_launcher_icons 0.14.4 via
+apps/truenavo/tool/generate_brand_icons.dart, preserving Xcode project settings.
