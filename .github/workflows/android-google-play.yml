@@ -2,6 +2,10 @@ name: Android Google Play
 
 on:
   workflow_call:
+    inputs:
+      validate_only:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -11,9 +15,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  upload:
+  credentials:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     environment: play-store
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -22,15 +25,29 @@ jobs:
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       PLAY_CREDENTIALS: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
     steps:
-      - name: Require complete credentials
+      - name: Require complete credentials before any store upload
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
-          test -n "$ANDROID_KEYSTORE_BASE64"
-          test -n "$ANDROID_KEYSTORE_PASSWORD"
-          test -n "$ANDROID_KEY_ALIAS"
-          test -n "$ANDROID_KEY_PASSWORD"
-          test -n "$PLAY_CREDENTIALS"
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD PLAY_CREDENTIALS; do
+            if test -z "${!name}"; then
+              echo "::error::Missing required configuration: $name"
+              exit 1
+            fi
+          done
+
+  upload:
+    needs: credentials
+    if: ${{ !inputs.validate_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: play-store
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false

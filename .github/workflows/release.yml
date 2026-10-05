@@ -112,9 +112,21 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  app-store-connect:
+  play-preflight:
     needs: [metadata, check]
     if: needs.metadata.outputs.should_release == 'true' && needs.metadata.outputs.destination != 'github'
+    uses: ./.github/workflows/android-google-play.yml
+    with:
+      validate_only: true
+
+  app-store-connect:
+    needs: [metadata, check, windows, web, play-preflight]
+    if: >-
+      ${{ !cancelled() && needs.metadata.outputs.should_release == 'true' &&
+      needs.metadata.outputs.destination != 'github' && needs.check.result == 'success' &&
+      needs.play-preflight.result == 'success' &&
+      (needs.metadata.outputs.destination == 'stores' ||
+      (needs.windows.result == 'success' && needs.web.result == 'success')) }}
     uses: ./.github/workflows/ios-app-store-connect.yml
     with:
       version: ${{ needs.metadata.outputs.version }}

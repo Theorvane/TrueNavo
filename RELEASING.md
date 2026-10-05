@@ -8,6 +8,8 @@ The branch flow follows [LabFox](https://github.com/Theorvane/LabFox): feature P
 
 Until store registration and credentials are ready, `STORE_DEPLOYMENT_ENABLED=false` sends new versions to GitHub only. After configuring both stores, set that repository variable to `true`: the pipeline builds Windows/web, uploads iOS to App Store Connect, uploads Android to Play internal testing, then publishes GitHub. Store uploads do not submit an App Store review or promote Play production.
 
+Before the first store upload, the pipeline checks that Play credentials are present and, for an `all` release, that Windows/web packaging succeeded. Apple credentials and the exact provisioning profile are then validated before iOS upload. An installer failure or missing Play configuration cannot leave a store upload behind.
+
 The workflow can also be run manually **on `main`** with `destination=github`, `stores`, or `all`. A stores-only upload can use a newer build number of an existing semantic version. Never repeat an accepted or uncertain store upload automatically: inspect the store first, rerun only a failed job where appropriate, or increase the build number.
 
 Automatic GitHub releases are previews while the app remains pre-1.0. Manual dispatch permits changing the preview flag. Published versions are immutable; bump the semantic version for another GitHub release.
