@@ -1,4 +1,4 @@
-# TrueNavo
+# TrueNavo For TrueNas
 
 > An unofficial cross-platform TrueNAS dashboard and scoped management client.
 
