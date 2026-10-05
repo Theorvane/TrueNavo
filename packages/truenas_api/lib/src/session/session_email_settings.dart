@@ -610,7 +610,7 @@ final class _SessionEmailSettings {
             'This writes SMTP configuration only; review does not send mail and saving does not itself perform an SMTP test. TrueNAS commits the database before Gmail initialization and alert cleanup, so a later failure does not prove rollback. Keep omits the password, Replace sends only the newly entered secret, and Clear explicitly removes it. Disabling authentication with a stored password requires Clear.'
           else
             'This sends one fixed plain-text test message to the exact entered recipient using the saved configuration only. Sender, recipient, NAS product/hostname/domain, Message-ID and connection metadata can leave the NAS. TrueNAS prefixes its product and hostname/domain to the subject and uses its system hostname in the SMTP EHLO exchange. Explicitly authorize this external transmission; it cannot be recalled.',
-          'TLS/SSL select encrypted SMTP modes, not a verified SMTP identity guarantee. The pinned TrueNAS implementation uses default Python SMTP TLS contexts and does not configure certificate/hostname verification. An untrusted endpoint or network can expose credentials and message contents. Independently verify and accept the SMTP destination risk. TrueRAID API certificate pinning is separate and does not secure this server-to-SMTP connection.',
+          'TLS/SSL select encrypted SMTP modes, not a verified SMTP identity guarantee. The pinned TrueNAS implementation uses default Python SMTP TLS contexts and does not configure certificate/hostname verification. An untrusted endpoint or network can expose credentials and message contents. Independently verify and accept the SMTP destination risk. TrueNavo API certificate pinning is separate and does not secure this server-to-SMTP connection.',
           'Existing failed mail can already be queued on TrueNAS and later retried using the current settings and sender. This app cannot inspect or cancel that queue. queue:false prevents queuing only this test; it does not cancel earlier queued messages or stop other mail activity.',
           'OAuth must be absent (null or an exact empty object) for this SMTP workflow; its existing representation is preserved by omission. Nonempty or unprovable OAuth is display-only. No provider enrollment, token access, OAuth clearing, arbitrary message, override configuration, attachment, extra header, CC or recipient fallback is exposed.',
           'A saved configuration match is not proof of connectivity, password usability or mail delivery. A test job ID is acceptance only; only an explicit owned-job read showing SUCCESS with result true reports server-side success, never recipient delivery. False, failure, missing jobs, timeout and ambiguous results remain unknown with no automatic polling, retry or resend.',
@@ -897,8 +897,8 @@ List<Object?> _emailParams(EmailSettingsRequest r) {
   if (r.action == EmailSettingsAction.test) {
     return [
       {
-        'subject': 'TrueRAID SMTP configuration test',
-        'text': 'This is an explicitly requested TrueRAID SMTP test. No delivery or recovery guarantee is implied.',
+        'subject': 'TrueNavo SMTP configuration test',
+        'text': 'This is an explicitly requested TrueNavo SMTP test. No delivery or recovery guarantee is implied.',
         'html': null,
         'to': [r.recipient!],
         'cc': <String>[],

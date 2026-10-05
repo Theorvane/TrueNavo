@@ -69,7 +69,7 @@ mutation, retry loop, or fallback method.
   field, or contains any unsafe value, record only the fixed outcome category
   below and stop. Do not retry or collect a "more complete" payload.
 - Do not call a candidate that is outside the current production six-method
-  allowlist from the TrueRAID application. The collection environment and
+  allowlist from the TrueNavo application. The collection environment and
   review package are not a transport exception or runtime-admission decision.
 
 ## Retained evidence shape
@@ -91,10 +91,10 @@ It must conform to the existing fixture gate shape:
 
 This is not a copy or serialization of an appliance response. Each value must be
 one of the positive display-schema literals accepted by
-[`DeferredObservationContract`](../../apps/trueraid/lib/features/dashboard/deferred_observation_contracts.dart).
+[`DeferredObservationContract`](../../apps/truenavo/lib/features/dashboard/deferred_observation_contracts.dart).
 The record has at most 50 observations; every display string is at most 160
 characters. It must pass the fixture parser and the
-[`LiveObservationEvidenceGate`](../../apps/trueraid/lib/features/dashboard/live_observation_evidence.dart),
+[`LiveObservationEvidenceGate`](../../apps/truenavo/lib/features/dashboard/live_observation_evidence.dart),
 which retains only bounded typed observations and always reports runtime API
 access as disabled.
 

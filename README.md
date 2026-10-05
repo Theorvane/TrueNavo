@@ -1,15 +1,15 @@
-# TrueRAID
+# TrueNavo
 
 > An unofficial cross-platform TrueNAS dashboard and scoped management client.
 
 The Flutter app connects securely to TrueNAS, presents live inventory and capacity charts, and provides native administration with reviewed changes through a typed Dart API. The target is full applicable WebUI workflow parity; the current implementation is partial. Management writes are covered by fake-transport and widget tests; they have not been exercised on a real appliance. This is not a claim of full TrueNAS compatibility or official endorsement.
 
-The app ID and local storage namespaces changed with the TrueRAID rebrand. This installs as a separate app; existing server profiles, certificate pins and credentials are not migrated automatically. Keep the previous installation until you have reconfigured and verified the new one.
+TrueNavo replaces the former TrueRAID identity. Android and Apple now use `com.truenavo.truenavo` instead of `com.trueraid.trueraid`; desktop, web, local-database and secure-storage namespaces also change. This installs as a separate app, and existing server profiles, certificate pins and credentials are not migrated automatically. Keep the previous installation until you have reconfigured and verified the new one. The GitLab repository URL has not been renamed.
 
 ## Documentation
 
-- [Product plan](docs/planning/TRUERAID_PRODUCT_PLAN.md)
-- [Capability parity matrix](docs/planning/TRUERAID_CAPABILITY_MATRIX.csv)
+- [Product plan](docs/planning/TRUENAVO_PRODUCT_PLAN.md)
+- [Capability parity matrix](docs/planning/TRUENAVO_CAPABILITY_MATRIX.csv)
 - [TrueNAS API research](docs/research/TRUENAS_API_RESEARCH.md)
 - [NASDeck competitor research](docs/research/NASDECK_COMPETITIVE_RESEARCH.md)
 - [M0 foundation design](docs/planning/M0_FOUNDATION_DESIGN.md)
@@ -148,4 +148,4 @@ Native Factory reset adds a separate standalone FULL_ADMIN recovery review with 
 
 ## Trademark notice
 
-TrueRAID is an unofficial third-party project and is not affiliated with, endorsed by, or certified by iXsystems, Inc. TrueNAS is a trademark of iXsystems, Inc.
+TrueNavo is an unofficial third-party project and is not affiliated with, endorsed by, or certified by iXsystems, Inc. TrueNAS is a trademark of iXsystems, Inc.

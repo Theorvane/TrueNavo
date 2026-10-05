@@ -55,4 +55,4 @@ The API does not provide atomic compare-and-write. Local processes, filesystem c
 
 ## Verification
 
-`fvm dart test test/session/session_smb_shares_test.dart` exercises synthetic pinned-shape receipts and exact payloads, capability metadata, stale/single-use/forged handles, malformed identities, ancestor links, hidden children, HA, disabled/ancestor NFS conflicts, protected presets/options, secret-safe errors, post-dispatch uncertainty, and no side-effecting ACL/private probes. Flutter controller/widget/preview coverage is in `apps/trueraid/test/features/smb_shares/`.
+`fvm dart test test/session/session_smb_shares_test.dart` exercises synthetic pinned-shape receipts and exact payloads, capability metadata, stale/single-use/forged handles, malformed identities, ancestor links, hidden children, HA, disabled/ancestor NFS conflicts, protected presets/options, secret-safe errors, post-dispatch uncertainty, and no side-effecting ACL/private probes. Flutter controller/widget/preview coverage is in `apps/truenavo/test/features/smb_shares/`.

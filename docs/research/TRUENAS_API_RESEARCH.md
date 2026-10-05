@@ -1,4 +1,4 @@
-# TrueNAS API research for TrueRAID
+# TrueNAS API research for TrueNavo
 
 ## Executive conclusion
 
@@ -38,7 +38,7 @@ The key architecture decision is therefore not “WebSocket or REST,” but a tr
 
 ### Product implication (inference)
 
-“REST removed” means the general REST management surface is gone; it does **not** mean every HTTP endpoint is gone. TrueRAID should describe upload/download as auxiliary HTTP transports, not as a fallback REST client.
+“REST removed” means the general REST management surface is gone; it does **not** mean every HTTP endpoint is gone. TrueNavo should describe upload/download as auxiliary HTTP transports, not as a fallback REST client.
 
 ## 3. Authentication, API keys and sessions
 
@@ -113,14 +113,14 @@ The key architecture decision is therefore not “WebSocket or REST,” but a tr
 
 The following are the likely parity traps, based on the verified transport and authorization behavior above:
 
-1. **Legacy UI traffic is not the public API contract.** Current source still contains a legacy `/websocket` route and a separate `/api/current` JSON-RPC route; the current Web UI source also constructs its management connection with `/websocket`.[13][14][23] TrueRAID should target the documented versioned API, not blindly reproduce captured browser calls.
+1. **Legacy UI traffic is not the public API contract.** Current source still contains a legacy `/websocket` route and a separate `/api/current` JSON-RPC route; the current Web UI source also constructs its management connection with `/websocket`.[13][14][23] TrueNavo should target the documented versioned API, not blindly reproduce captured browser calls.
 2. **HA authentication redirects.** `REDIRECT` must be handled before normal session initialization; active-controller changes also imply reconnect, reauthentication and resubscription.[4]
 3. **Two-stage/step-up auth.** Password + OTP and token reconnect are stateful, while API keys bypass user 2FA. The product should make the security distinction visible.[1][4]
 4. **Shell, VM serial and container consoles.** These require token minting, a separate WebSocket, binary terminal handling, target-specific options and resize RPC—not a generated JSON-RPC method wrapper.[16][19][20]
 5. **Imports, exports, config backups, debug bundles and ISO/file jobs.** These cross JSON-RPC, HTTP streaming and job events, with single-use/timeout behavior.[3][9]
 6. **RBAC-conditioned UI.** Controls must be capability/role-aware; read-only, sharing and replication admins have materially different surfaces, and secret fields may be redacted rather than absent.[11]
 7. **STIG/security-profile behavior.** The v26 token docs say token generation is unsupported when replay-resistant GPOS STIG authentication is required.[5] Current middleware source is more nuanced for single-use versus multi-use tokens, so token-dependent upload/shell behavior should be feature-tested on every supported STIG release rather than assumed. This is a documented/source tension, not a settled guarantee.[5][15][16]
-8. **Version drift.** Published API versions follow TrueNAS releases and method schemas/events can move. TrueRAID needs a tested support matrix, explicit version adapters and an “unsupported appliance version” state.[1][8]
+8. **Version drift.** Published API versions follow TrueNAS releases and method schemas/events can move. TrueNavo needs a tested support matrix, explicit version adapters and an “unsupported appliance version” state.[1][8]
 
 ## Recommended support boundary
 

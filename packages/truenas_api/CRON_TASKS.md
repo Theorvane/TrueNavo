@@ -193,7 +193,7 @@ initialization can occur.
 ## Synthetic verification
 
 Run SDK protocol/safety tests from `packages/truenas_api` and UI tests from
-`apps/trueraid`:
+`apps/truenavo`:
 
 ```bash
 fvm dart test test/session/session_cron_tasks_test.dart test/session/session_cron_tasks_safety_test.dart

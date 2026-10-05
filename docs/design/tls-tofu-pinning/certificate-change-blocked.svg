@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780" role="img" aria-labelledby="title desc">
-  <title id="title">TrueRAID certificate change blocked and Web TLS limitation</title>
+  <title id="title">TrueNavo certificate change blocked and Web TLS limitation</title>
   <desc id="desc">Two dark and light message states show a native changed certificate blocking state and a Flutter Web state that cannot inspect or override browser TLS.</desc>
   <rect width="1200" height="780" fill="#0B1117"/>
   <g font-family="Arial, sans-serif">

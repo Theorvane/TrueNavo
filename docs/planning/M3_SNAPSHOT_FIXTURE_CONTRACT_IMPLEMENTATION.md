@@ -12,10 +12,10 @@
 
 ## Work boundary
 
-- Worktree: `/Users/jungwon/workspace/.worktrees/trueraid-m3-snapshot-contract`
+- Worktree: `/Users/jungwon/workspace/.worktrees/truenavo-m3-snapshot-contract`
 - Branch: `feat/m3-snapshot-fixture-contract`
 - Base: `8d63baa4b37bd92268ad0e243302c573021bd5bf`
-- Allowed production file: `apps/trueraid/lib/features/dashboard/snapshot_fixture_contract.dart`
+- Allowed production file: `apps/truenavo/lib/features/dashboard/snapshot_fixture_contract.dart`
 - Allowed tests/fixtures: dedicated `snapshot_fixture_*` files and `test/fixtures/dashboard/snapshot/`
 - Allowed docs: approved design, this plan, and implementation evidence.
 - Never edit runtime repository/controller/page/capabilities, `truenas_api`, persistence, platform, CI, generated schema, or existing deferred contracts.

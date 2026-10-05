@@ -2,7 +2,7 @@
 
 > **For Hermes:** Use Codex CLI in the isolated issue worktree to implement this plan task-by-task, with exact RED/GREEN evidence and exact-SHA independent review.
 
-**Goal:** Persist safe TrueRAID profile/capability state in cross-platform SQLite while keeping API keys in native secure storage and preserving the M1 TLS-before-credential boundary.
+**Goal:** Persist safe TrueNavo profile/capability state in cross-platform SQLite while keeping API keys in native secure storage and preserving the M1 TLS-before-credential boundary.
 
 **Architecture:** Drift owns typed app-local relational state behind a `ServerProfileStore` port. Production bootstrap injects the opened store and initial snapshot; controllers publish only committed snapshots. `TrueNasSessionRepository` resolves or stores credentials through its existing `CredentialVault` port only after a verified transport exists, while a native Flutter adapter uses versioned hashed endpoint keys and Web remains non-persistent.
 
@@ -15,13 +15,13 @@
 **Objective:** Add pinned, lockfile-resolved Drift dependencies, generated-code tooling, and deterministic native/Web database opening.
 
 **Files:**
-- Modify: `apps/trueraid/pubspec.yaml`
+- Modify: `apps/truenavo/pubspec.yaml`
 - Modify: `pubspec.lock`
-- Create: `apps/trueraid/lib/features/local_persistence/database_connection.dart`
-- Create: `apps/trueraid/lib/features/local_persistence/database_connection_io.dart`
-- Create: `apps/trueraid/lib/features/local_persistence/database_connection_web.dart`
-- Create/modify Web assets under `apps/trueraid/web/` as required by the selected Drift version
-- Test: `apps/trueraid/test/features/local_persistence/database_connection_test.dart`
+- Create: `apps/truenavo/lib/features/local_persistence/database_connection.dart`
+- Create: `apps/truenavo/lib/features/local_persistence/database_connection_io.dart`
+- Create: `apps/truenavo/lib/features/local_persistence/database_connection_web.dart`
+- Create/modify Web assets under `apps/truenavo/web/` as required by the selected Drift version
+- Test: `apps/truenavo/test/features/local_persistence/database_connection_test.dart`
 
 **Steps:**
 1. Add a failing platform-contract test proving the app exposes a fixed database name/path strategy and that Web selection does not import native IO.
@@ -36,10 +36,10 @@
 **Objective:** Implement schema version 1 with strict profile, selection, and capability constraints.
 
 **Files:**
-- Create: `apps/trueraid/lib/features/local_persistence/app_database.dart`
-- Generate: `apps/trueraid/lib/features/local_persistence/app_database.g.dart`
-- Create: `apps/trueraid/test/features/local_persistence/app_database_test.dart`
-- Create: `apps/trueraid/test/features/local_persistence/migration_test.dart`
+- Create: `apps/truenavo/lib/features/local_persistence/app_database.dart`
+- Generate: `apps/truenavo/lib/features/local_persistence/app_database.g.dart`
+- Create: `apps/truenavo/test/features/local_persistence/app_database_test.dart`
+- Create: `apps/truenavo/test/features/local_persistence/migration_test.dart`
 - Create schema export in the Drift-recommended test location
 
 **Steps:**
@@ -55,10 +55,10 @@
 **Objective:** Expose safe snapshots and transactional mutations without leaking Drift into feature controllers.
 
 **Files:**
-- Create: `apps/trueraid/lib/features/server_profiles/server_profile_store.dart`
-- Create: `apps/trueraid/lib/features/local_persistence/drift_server_profile_store.dart`
-- Create: `apps/trueraid/lib/features/local_persistence/persistence_failure.dart`
-- Test: `apps/trueraid/test/features/local_persistence/drift_server_profile_store_test.dart`
+- Create: `apps/truenavo/lib/features/server_profiles/server_profile_store.dart`
+- Create: `apps/truenavo/lib/features/local_persistence/drift_server_profile_store.dart`
+- Create: `apps/truenavo/lib/features/local_persistence/persistence_failure.dart`
+- Test: `apps/truenavo/test/features/local_persistence/drift_server_profile_store_test.dart`
 
 **Steps:**
 1. Write failing tests for ordered restore, new registration, endpoint/id collisions, transaction rollback, selection, unknown selection, removal, selection fallback, capability snapshot replacement, 4096 cap, grammar rejection, expiry, and cascade.
@@ -73,14 +73,14 @@
 **Objective:** Restore profiles before first render and persist every controller transition without stale/disposed publication.
 
 **Files:**
-- Modify: `apps/trueraid/lib/main.dart`
-- Create: `apps/trueraid/lib/bootstrap.dart`
-- Modify: `apps/trueraid/lib/features/server_profiles/server_profiles_controller.dart`
-- Modify: `apps/trueraid/lib/features/server_profiles/server_switcher.dart`
-- Modify: `apps/trueraid/lib/features/connection/connection_controller.dart`
+- Modify: `apps/truenavo/lib/main.dart`
+- Create: `apps/truenavo/lib/bootstrap.dart`
+- Modify: `apps/truenavo/lib/features/server_profiles/server_profiles_controller.dart`
+- Modify: `apps/truenavo/lib/features/server_profiles/server_switcher.dart`
+- Modify: `apps/truenavo/lib/features/connection/connection_controller.dart`
 - Modify relevant app-shell tests
-- Test: `apps/trueraid/test/features/server_profiles/server_profiles_persistence_test.dart`
-- Test: `apps/trueraid/test/bootstrap_test.dart`
+- Test: `apps/truenavo/test/features/server_profiles/server_profiles_persistence_test.dart`
+- Test: `apps/truenavo/test/bootstrap_test.dart`
 
 **Steps:**
 1. Write failing tests proving initial restored state has no empty flash, mutations publish only committed snapshots, write failures preserve prior state, late completions cannot mutate disposed providers, and connection success waits for profile/capability persistence.
@@ -96,13 +96,13 @@
 **Objective:** Persist API keys only in native secure storage under versioned hashed canonical endpoint keys.
 
 **Files:**
-- Create: `apps/trueraid/lib/features/credentials/secure_credential_vault.dart`
-- Create: `apps/trueraid/lib/features/credentials/secure_credential_vault_io.dart`
-- Create: `apps/trueraid/lib/features/credentials/secure_credential_vault_web.dart`
-- Create: `apps/trueraid/lib/features/credentials/credential_storage_key.dart`
-- Modify: `apps/trueraid/lib/features/connection/connection_controller.dart`
-- Test: `apps/trueraid/test/features/credentials/secure_credential_vault_test.dart`
-- Test: `apps/trueraid/test/features/credentials/credential_storage_key_test.dart`
+- Create: `apps/truenavo/lib/features/credentials/secure_credential_vault.dart`
+- Create: `apps/truenavo/lib/features/credentials/secure_credential_vault_io.dart`
+- Create: `apps/truenavo/lib/features/credentials/secure_credential_vault_web.dart`
+- Create: `apps/truenavo/lib/features/credentials/credential_storage_key.dart`
+- Modify: `apps/truenavo/lib/features/connection/connection_controller.dart`
+- Test: `apps/truenavo/test/features/credentials/secure_credential_vault_test.dart`
+- Test: `apps/truenavo/test/features/credentials/credential_storage_key_test.dart`
 
 **Steps:**
 1. Write failing tests for deterministic SHA-256 endpoint key derivation, domain separation/version prefix, native read/write/delete delegation, Web non-persistence, safe exception mapping, and no plaintext endpoint in storage keys.
@@ -121,8 +121,8 @@
 - Modify: `packages/truenas_api/lib/src/session/true_nas_session_repository.dart`
 - Modify: `packages/truenas_api/lib/src/session/credential_vault.dart`
 - Modify: `packages/truenas_api/test/session/true_nas_session_repository_test.dart`
-- Modify: `apps/trueraid/lib/features/connection/connection_controller.dart`
-- Modify: `apps/trueraid/test/features/connection/connection_controller_tls_test.dart`
+- Modify: `apps/truenavo/lib/features/connection/connection_controller.dart`
+- Modify: `apps/truenavo/test/features/connection/connection_controller_tls_test.dart`
 
 **Steps:**
 1. Add failing protocol tests proving vault read occurs after connector success, explicit key precedence, missing remembered key safety, write only after all summary calls succeed, and no write on TLS/auth/RPC/cancel failure.
@@ -137,10 +137,10 @@
 **Objective:** Offer native-only opt-in without prefilling secret material and make removal secret-first.
 
 **Files:**
-- Modify: `apps/trueraid/lib/features/connection/connection_screen.dart`
-- Modify: `apps/trueraid/lib/features/server_profiles/server_switcher.dart` or profile action surface
-- Modify: `apps/trueraid/test/features/connection/connection_screen_test.dart`
-- Modify: `apps/trueraid/test/features/server_profiles/server_switcher_test.dart`
+- Modify: `apps/truenavo/lib/features/connection/connection_screen.dart`
+- Modify: `apps/truenavo/lib/features/server_profiles/server_switcher.dart` or profile action surface
+- Modify: `apps/truenavo/test/features/connection/connection_screen_test.dart`
+- Modify: `apps/truenavo/test/features/server_profiles/server_switcher_test.dart`
 
 **Steps:**
 1. Write failing widget tests for native unchecked-by-default remember control, Web absence/explanation, empty-key remembered connection intent, no secret prefill, busy/keyboard/accessibility behavior, save warning, and secret-first profile removal.
@@ -155,7 +155,7 @@
 **Objective:** Prove the storage boundary cannot accept secrets or violate lifecycle guarantees.
 
 **Files:**
-- Create: `apps/trueraid/test/features/local_persistence/persistence_security_test.dart`
+- Create: `apps/truenavo/test/features/local_persistence/persistence_security_test.dart`
 - Extend focused credential/profile/connection tests
 
 **Steps:**

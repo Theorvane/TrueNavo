@@ -1,0 +1,1075 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:truenavo/features/tls_trust/models.dart';
+import 'package:truenavo/features/tls_trust/native_tls_io.dart';
+import 'package:truenavo/features/tls_trust/native_tls_ports.dart';
+import 'package:truenas_api/truenas_api.dart';
+
+/// Task 6 RED contract for the Apple-only, exact-pin RPC reconnect bridge.
+///
+/// The deliberately small [PinnedRpcChannel] is an intended API:
+/// the native side receives only these versioned, session-scoped messages.
+void main() {
+  final authority = NormalizedAuthority.parse(
+    'https://NAS.example.test/api/v2.0/websocket',
+  );
+  final pin = PinRecord(
+    leafDerSha256: 'A' * 64,
+    createdAt: DateTime.utc(2026, 9, 6),
+  );
+
+  group('Apple exact-pin reconnect', () {
+    test(
+      'probe cancellation requires an exact operation-bound acknowledgement',
+      () async {
+        for (final response in <Object?>[
+          StateError('native cancel detail'),
+          null,
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': 'wrong',
+            'failureCode': 'cancelled',
+          },
+          <String, Object>{
+            'protocolVersion': 2,
+            'operationId': '0' * 32,
+            'failureCode': 'cancelled',
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': '0' * 32,
+            'failureCode': 'pinMismatch',
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': '0' * 32,
+            'failureCode': 'cancelled',
+            'extra': true,
+          },
+          <String, Object>{'protocolVersion': 1, 'operationId': '0' * 32},
+        ]) {
+          final cancellation = CancellationSource();
+          final channel = _FakeCaptureChannel()..cancelResult = response;
+          final probe =
+              createProbeForNativeTlsPlatform(
+                NativeTlsPlatform.apple,
+                probeChannel: channel,
+              ).probe(
+                authority: authority,
+                timeout: const Duration(milliseconds: 100),
+                cancellation: cancellation.token,
+              );
+
+          cancellation.cancel();
+
+          expect(
+            await probe,
+            const NativeProbeBoundaryFailure(
+              NativeTlsBoundaryFailure.cleanupFailed,
+            ),
+          );
+          expect(channel.cancelCalls, hasLength(1));
+        }
+      },
+    );
+
+    test('is bounded on bridged runners and unavailable elsewhere', () async {
+      for (final platform in [
+        NativeTlsPlatform.apple,
+        NativeTlsPlatform.android,
+      ]) {
+        final channel = _FakePinnedChannel();
+        final connector = createReconnectForNativeTlsPlatform(
+          platform,
+          probeChannel: channel,
+        );
+        final future = connector.reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(milliseconds: 100),
+          cancellation: CancellationSource().token,
+        );
+        expect(channel.calls, hasLength(1), reason: platform.name);
+        channel.completeConnect(channel.calls.single.operationId);
+        expect(
+          await future,
+          isA<NativePinnedVerified>(),
+          reason: platform.name,
+        );
+      }
+
+      for (final platform in [
+        NativeTlsPlatform.linux,
+        NativeTlsPlatform.windows,
+        NativeTlsPlatform.other,
+      ]) {
+        final outcome = await createReconnectForNativeTlsPlatform(platform)
+            .reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: CancellationSource().token,
+            );
+        expect(
+          outcome,
+          const NativePinnedBoundaryFailure(
+            NativeTlsBoundaryFailure.backendUnavailable,
+          ),
+        );
+      }
+    });
+
+    test(
+      'connect request is an exact allowlist and no transport exists early',
+      () async {
+        final channel = _FakePinnedChannel();
+        final future =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              probeChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: CancellationSource().token,
+            );
+        final call = channel.calls.single;
+        expect(call.method, 'truenavo.connectPinnedRpc');
+        expect(call.arguments, <String, Object>{
+          'protocolVersion': 1,
+          'operationId': call.operationId,
+          'host': 'nas.example.test',
+          'port': 443,
+          'rpcPath': '/api/v2.0/websocket',
+          'leafDerSha256': 'A' * 64,
+        });
+        expect(call.operationId, matches(RegExp(r'^[0-9a-f]{32}$')));
+        expect(
+          call.arguments.keys,
+          isNot(
+            containsAll(<String>[
+              'apiKey',
+              'credential',
+              'authorization',
+              'headers',
+              'frame',
+              'profile',
+              'leafDer',
+              'callback',
+              'url',
+            ]),
+          ),
+        );
+        expect(channel.transportMessages, isEmpty);
+
+        channel.completeConnect(call.operationId);
+        final outcome = await future;
+        expect(outcome, isA<NativePinnedVerified>());
+        expect(
+          (outcome as NativePinnedVerified).transport,
+          isA<RpcTransport>(),
+        );
+      },
+    );
+
+    test(
+      'only an exact successful response makes a session transport available',
+      () async {
+        for (final malformed in <Object?>[
+          null,
+          <String, Object>{'protocolVersion': 1, 'operationId': 'wrong'},
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': '0' * 32,
+            'sessionId': 'A' * 32,
+          },
+          <String, Object>{
+            'protocolVersion': 2,
+            'operationId': '0' * 32,
+            'sessionId': 'b' * 32,
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': '0' * 32,
+            'sessionId': 'b' * 32,
+            'extra': true,
+          },
+        ]) {
+          final channel = _FakePinnedChannel();
+          final future =
+              createReconnectForNativeTlsPlatform(
+                NativeTlsPlatform.apple,
+                probeChannel: channel,
+              ).reconnect(
+                authority: authority,
+                pin: pin,
+                timeout: const Duration(milliseconds: 100),
+                cancellation: CancellationSource().token,
+              );
+          channel.completeConnect(channel.calls.single.operationId, malformed);
+          final outcome = await future;
+          expect(outcome, isA<NativePinnedFailure>());
+          expect(
+            (outcome as NativePinnedFailure).failure,
+            CertificateTrustFailure.malformedCertificate,
+          );
+          expect(channel.transportMessages, isEmpty);
+        }
+      },
+    );
+
+    test('the transferred transport long-polls one strict session-scoped frame at a time', () async {
+      final channel = _FakePinnedChannel();
+      final outcome = await _successfulReconnect(channel, authority, pin);
+      final transport = outcome.transport;
+
+      await transport.send('{"method":"core.ping"}');
+      expect(
+        channel.transportMessages.single,
+        _Message('truenavo.sendPinnedRpc', {
+          'protocolVersion': 1,
+          'sessionId': _FakePinnedChannel.sessionId,
+          'frame': '{"method":"core.ping"}',
+        }),
+      );
+
+      final received = expectLater(
+        transport.inboundFrames,
+        emitsInOrder(<Object>[
+          '{"result":"pong"}',
+          emitsError(isA<RpcTransportClosedException>()),
+          emitsDone,
+        ]),
+      );
+      expect(channel.receiveCalls, hasLength(1));
+      expect(
+        channel.receiveCalls.single,
+        const _Message('truenavo.receivePinnedRpc', {
+          'protocolVersion': 1,
+          'sessionId': _FakePinnedChannel.sessionId,
+        }),
+      );
+      channel.completeReceive(<String, Object>{
+        'protocolVersion': 1,
+        'sessionId': _FakePinnedChannel.sessionId,
+        'frame': '{"result":"pong"}',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(channel.receiveCalls, hasLength(2));
+      channel.completeReceive(<String, Object>{
+        'protocolVersion': 1,
+        'sessionId': _FakePinnedChannel.sessionId,
+        'frame': 7,
+      });
+      await received;
+
+      await transport.close();
+      await transport.close();
+      expect(channel.closeCalls, [
+        _Message('truenavo.closePinnedRpc', {
+          'protocolVersion': 1,
+          'sessionId': _FakePinnedChannel.sessionId,
+        }),
+      ]);
+    });
+
+    test(
+      'wrong receive responses and native receive errors fail closed',
+      () async {
+        for (final inbound in <Object?>[
+          null,
+          <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+          },
+          <String, Object>{
+            'protocolVersion': 2,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'frame': 'x',
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': 'c' * 32,
+            'frame': 'x',
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'frame': 'x',
+            'unknown': true,
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'closed': false,
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'frame': 'x',
+            'closed': true,
+          },
+          StateError('native certificate detail must not escape'),
+        ]) {
+          final channel = _FakePinnedChannel();
+          final transport = (await _successfulReconnect(
+            channel,
+            authority,
+            pin,
+          )).transport;
+          final errors = transport.inboundFrames.toList();
+          if (inbound is StateError) {
+            channel.failReceive(inbound);
+          } else {
+            channel.completeReceive(inbound);
+          }
+          await expectLater(
+            errors,
+            throwsA(isA<RpcTransportClosedException>()),
+          );
+          expect(channel.closeCalls, hasLength(1));
+        }
+      },
+    );
+
+    test(
+      'a closed receive response emits only a closed exception then done',
+      () async {
+        final channel = _FakePinnedChannel();
+        final transport = (await _successfulReconnect(
+          channel,
+          authority,
+          pin,
+        )).transport;
+        final received = expectLater(
+          transport.inboundFrames,
+          emitsInOrder(<Object>[
+            emitsError(isA<RpcTransportClosedException>()),
+            emitsDone,
+          ]),
+        );
+        channel.completeReceive(const <String, Object>{
+          'protocolVersion': 1,
+          'sessionId': _FakePinnedChannel.sessionId,
+          'closed': true,
+        });
+        await received;
+        expect(channel.closeCalls, hasLength(1));
+      },
+    );
+
+    test(
+      'malformed send acknowledgements and channel errors fail closed',
+      () async {
+        for (final response in <Object?>[
+          null,
+          <String, Object>{'protocolVersion': 1},
+          <String, Object>{
+            'protocolVersion': 2,
+            'sessionId': _FakePinnedChannel.sessionId,
+          },
+          <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'extra': true,
+          },
+          StateError('native error text must not escape'),
+          const _SynchronousChannelError(),
+        ]) {
+          final channel = _FakePinnedChannel();
+          final transport = (await _successfulReconnect(
+            channel,
+            authority,
+            pin,
+          )).transport;
+          final expectedErrors = expectLater(
+            transport.inboundFrames,
+            emitsInOrder(<Object>[
+              emitsError(isA<RpcTransportClosedException>()),
+              emitsDone,
+            ]),
+          );
+          channel.nextSendResult = response;
+          await expectLater(
+            transport.send('x'),
+            throwsA(isA<RpcTransportClosedException>()),
+          );
+          await expectedErrors;
+          expect(channel.closeCalls, hasLength(1));
+          channel.completeReceive(const <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'closed': true,
+          });
+        }
+      },
+    );
+
+    test(
+      'malformed close acknowledgements and channel errors fail closed',
+      () async {
+        for (final response in <Object?>[
+          <String, Object>{'protocolVersion': 1},
+          StateError('native close detail must not escape'),
+          const _SynchronousChannelError(),
+        ]) {
+          final channel = _FakePinnedChannel();
+          final transport = (await _successfulReconnect(
+            channel,
+            authority,
+            pin,
+          )).transport;
+          final done = expectLater(transport.inboundFrames, emitsDone);
+          expect(channel.receiveCalls, hasLength(1));
+          channel.nextCloseResult = response;
+          await expectLater(
+            transport.close(),
+            throwsA(isA<RpcTransportClosedException>()),
+          );
+          await done;
+          expect(channel.closeCalls, hasLength(1));
+          // The pending fake receive must settle deterministically. Production
+          // ignores it after explicit close rather than starting another poll.
+          channel.completeReceive(const <String, Object>{
+            'protocolVersion': 1,
+            'sessionId': _FakePinnedChannel.sessionId,
+            'frame': 'late',
+          });
+          await Future<void>.delayed(Duration.zero);
+          expect(channel.receiveCalls, hasLength(1));
+        }
+      },
+    );
+
+    test('send bounds UTF-8 bytes rather than UTF-16 code units', () async {
+      final channel = _FakePinnedChannel();
+      final transport = (await _successfulReconnect(
+        channel,
+        authority,
+        pin,
+      )).transport;
+      // Each emoji is four UTF-8 bytes but two UTF-16 code units, so this
+      // exceeds the 16 MiB byte cap while staying under it by `String.length`.
+      final tooLarge = List<String>.filled(4194305, '😀').join();
+      expect(tooLarge.length, lessThan(16 * 1024 * 1024));
+      await expectLater(
+        transport.send(tooLarge),
+        throwsA(isA<RpcTransportClosedException>()),
+      );
+      expect(channel.transportMessages, isEmpty);
+      expect(channel.closeCalls, hasLength(1));
+    });
+
+    test(
+      'a valid send acknowledgement after close still fails typed',
+      () async {
+        final channel = _FakePinnedChannel()..holdSend = true;
+        final transport = (await _successfulReconnect(
+          channel,
+          authority,
+          pin,
+        )).transport;
+        final events = <Object>[];
+        final subscription = transport.inboundFrames.listen(
+          events.add,
+          onError: events.add,
+        );
+
+        final sent = transport.send('x');
+        expect(channel.transportMessages, hasLength(1));
+        final closed = transport.close();
+        await closed;
+        channel.completeSend();
+
+        await expectLater(sent, throwsA(isA<RpcTransportClosedException>()));
+        expect(channel.closeCalls, hasLength(1));
+        expect(events.whereType<RpcTransportClosedException>(), hasLength(0));
+        await subscription.cancel();
+      },
+    );
+
+    test(
+      'oversized inbound UTF-8 frame fails through shared awaited cleanup',
+      () async {
+        final channel = _FakePinnedChannel()..holdClose = true;
+        final transport = (await _successfulReconnect(
+          channel,
+          authority,
+          pin,
+        )).transport;
+        final tooLarge = List<String>.filled(4194305, '😀').join();
+        expect(tooLarge.length, lessThan(16 * 1024 * 1024));
+        final received = expectLater(
+          transport.inboundFrames,
+          emitsInOrder(<Object>[
+            emitsError(isA<RpcTransportClosedException>()),
+            emitsDone,
+          ]),
+        );
+        channel.completeReceive(<String, Object>{
+          'protocolVersion': 1,
+          'sessionId': _FakePinnedChannel.sessionId,
+          'frame': tooLarge,
+        });
+        await Future<void>.delayed(Duration.zero);
+        final explicit = transport.close();
+        var settled = false;
+        explicit.whenComplete(() => settled = true);
+        expect(channel.closeCalls, hasLength(1));
+        expect(settled, isFalse);
+        channel.completeClose();
+        await explicit;
+        await received;
+        expect(channel.receiveCalls, hasLength(1));
+      },
+    );
+
+    test(
+      'failure cleanup is shared with explicit close and is awaited',
+      () async {
+        for (final failure in ['send', 'receive', 'remote']) {
+          final channel = _FakePinnedChannel()..holdClose = true;
+          final transport = (await _successfulReconnect(
+            channel,
+            authority,
+            pin,
+          )).transport;
+          final events = <Object>[];
+          final subscription = transport.inboundFrames.listen(
+            events.add,
+            onError: events.add,
+          );
+          Future<void> failureFuture;
+          if (failure == 'send') {
+            channel.nextSendResult = StateError('native');
+            failureFuture = transport.send('x').catchError((_) {});
+          } else if (failure == 'receive') {
+            channel.failReceive(StateError('native'));
+            failureFuture = Future<void>.delayed(Duration.zero);
+          } else {
+            channel.completeReceive(const <String, Object>{
+              'protocolVersion': 1,
+              'sessionId': _FakePinnedChannel.sessionId,
+              'closed': true,
+            });
+            failureFuture = Future<void>.delayed(Duration.zero);
+          }
+          await Future<void>.delayed(Duration.zero);
+          final explicit = transport.close();
+          var settled = false;
+          explicit.whenComplete(() => settled = true);
+          expect(channel.closeCalls, hasLength(1));
+          await Future<void>.delayed(Duration.zero);
+          expect(settled, isFalse);
+          channel.completeClose();
+          await failureFuture;
+          await explicit;
+          expect(events.whereType<RpcTransportClosedException>(), hasLength(1));
+          await subscription.cancel();
+        }
+      },
+    );
+
+    test('timeout, cancellation, and late replies use only the operation cancel path', () async {
+      final timeoutChannel = _FakePinnedChannel();
+      final timedOut =
+          await createReconnectForNativeTlsPlatform(
+            NativeTlsPlatform.apple,
+            probeChannel: timeoutChannel,
+          ).reconnect(
+            authority: authority,
+            pin: pin,
+            timeout: const Duration(milliseconds: 1),
+            cancellation: CancellationSource().token,
+          );
+      expect(
+        timedOut,
+        const NativePinnedFailure(
+          CertificateTrustFailure.pinnedReconnectFailed,
+        ),
+      );
+      expect(
+        timeoutChannel.cancelCalls.single.method,
+        'truenavo.cancelPinnedRpc',
+      );
+      timeoutChannel.completeConnect(timeoutChannel.calls.single.operationId);
+      expect(timeoutChannel.transportMessages, isEmpty);
+
+      final source = CancellationSource();
+      final cancelledChannel = _FakePinnedChannel();
+      final pending =
+          createReconnectForNativeTlsPlatform(
+            NativeTlsPlatform.apple,
+            probeChannel: cancelledChannel,
+          ).reconnect(
+            authority: authority,
+            pin: pin,
+            timeout: const Duration(milliseconds: 100),
+            cancellation: source.token,
+          );
+      source.cancel();
+      expect(
+        await pending,
+        const NativePinnedFailure(CertificateTrustFailure.cancelled),
+      );
+      expect(
+        cancelledChannel.cancelCalls.single.method,
+        'truenavo.cancelPinnedRpc',
+      );
+
+      final handoffSource = CancellationSource();
+      final handoffChannel = _FakePinnedChannel();
+      final handoff =
+          createReconnectForNativeTlsPlatform(
+            NativeTlsPlatform.apple,
+            probeChannel: handoffChannel,
+          ).reconnect(
+            authority: authority,
+            pin: pin,
+            timeout: const Duration(milliseconds: 100),
+            cancellation: handoffSource.token,
+          );
+      handoffChannel.completeConnect(handoffChannel.calls.single.operationId);
+      handoffSource.cancel();
+      expect(
+        await handoff,
+        const NativePinnedFailure(CertificateTrustFailure.cancelled),
+      );
+      // A Dart response queued behind cancellation has a session identifier,
+      // so it is closed through the session-scoped fallback exactly once.
+      expect(handoffChannel.cancelCalls, hasLength(1));
+      await Future<void>.delayed(Duration.zero);
+      expect(handoffChannel.closeCalls, hasLength(1));
+
+      final ownerSource = CancellationSource();
+      final ownerChannel = _FakePinnedChannel();
+      final owned =
+          createReconnectForNativeTlsPlatform(
+            NativeTlsPlatform.apple,
+            probeChannel: ownerChannel,
+          ).reconnect(
+            authority: authority,
+            pin: pin,
+            timeout: const Duration(milliseconds: 100),
+            cancellation: ownerSource.token,
+          );
+      ownerChannel.completeConnect(ownerChannel.calls.single.operationId);
+      final transferred = (await owned as NativePinnedVerified).transport;
+      ownerSource.cancel();
+      await transferred.send('caller-owned');
+      expect(ownerChannel.transportMessages, hasLength(1));
+
+      final preCancelled = CancellationSource()..cancel();
+      final idle = _FakePinnedChannel();
+      expect(
+        await createReconnectForNativeTlsPlatform(
+          NativeTlsPlatform.apple,
+          probeChannel: idle,
+        ).reconnect(
+          authority: authority,
+          pin: pin,
+          timeout: const Duration(milliseconds: 100),
+          cancellation: preCancelled.token,
+        ),
+        const NativePinnedFailure(CertificateTrustFailure.cancelled),
+      );
+      expect(idle.calls, isEmpty);
+      expect(idle.cancelCalls, isEmpty);
+    });
+
+    test('bounded cancellation waits for native cleanup in both didOpen queue orders', () async {
+      for (final openedBeforeCancel in [false, true]) {
+        final source = CancellationSource();
+        final channel = _FakePinnedChannel()..holdCancel = true;
+        final reconnect =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              probeChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: source.token,
+            );
+        if (openedBeforeCancel) {
+          // Native didOpen can precede a queued MethodChannel response.
+          channel.completeConnect(channel.calls.single.operationId);
+        }
+        source.cancel();
+        await channel.heldCancelStarted.future;
+        var settled = false;
+        reconnect.whenComplete(() => settled = true);
+        expect(channel.cancelCalls, hasLength(1));
+        expect(settled, isFalse);
+        channel.completeCancel();
+        expect(
+          await reconnect,
+          const NativePinnedFailure(CertificateTrustFailure.cancelled),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(channel.closeCalls, hasLength(openedBeforeCancel ? 1 : 0));
+      }
+    });
+
+    test('failed cancel acknowledgements are cleanup failures and late sessions close once', () async {
+      for (final cancelResponse in <Object?>[
+        StateError('native cancel failure'),
+        <String, Object>{'protocolVersion': 1, 'operationId': 'wrong'},
+        <String, Object>{
+          'protocolVersion': 1,
+          'operationId': '0' * 32,
+          'failureCode': 'pinMismatch',
+        },
+      ]) {
+        final source = CancellationSource();
+        final channel = _FakePinnedChannel()..nextCancelResult = cancelResponse;
+        final reconnect =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              probeChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: source.token,
+            );
+
+        source.cancel();
+        expect(
+          await reconnect,
+          const NativePinnedBoundaryFailure(
+            NativeTlsBoundaryFailure.cleanupFailed,
+          ),
+        );
+        channel.completeConnect(channel.calls.single.operationId);
+        await Future<void>.delayed(Duration.zero);
+        expect(channel.closeCalls, hasLength(1));
+      }
+    });
+
+    test(
+      'a late valid session close failure before cancel ACK is cleanupFailed',
+      () async {
+        final source = CancellationSource();
+        final channel = _FakePinnedChannel()
+          ..holdCancel = true
+          ..holdClose = true;
+        final reconnect =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              probeChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: source.token,
+            );
+
+        source.cancel();
+        await channel.heldCancelStarted.future;
+        channel.completeConnect(channel.calls.single.operationId);
+        await Future<void>.delayed(Duration.zero);
+        expect(channel.closeCalls, hasLength(1));
+        channel.completeClose(StateError('late close detail'));
+        channel.completeCancel();
+        expect(
+          await reconnect,
+          const NativePinnedBoundaryFailure(
+            NativeTlsBoundaryFailure.cleanupFailed,
+          ),
+        );
+        expect(channel.closeCalls, hasLength(1));
+      },
+    );
+
+    test('maps fixed native failures separately, isolates probe identity, and retains normal public trust source', () async {
+      final failureCodes = <String, CertificateTrustFailure>{
+        'pinMismatch': CertificateTrustFailure.pinMismatch,
+        'hostnameMismatch': CertificateTrustFailure.hostnameMismatch,
+        'expiredCertificate': CertificateTrustFailure.expiredCertificate,
+        'notYetValidCertificate':
+            CertificateTrustFailure.notYetValidCertificate,
+        'malformedCertificate': CertificateTrustFailure.malformedCertificate,
+        'pinnedReconnectFailed': CertificateTrustFailure.pinnedReconnectFailed,
+        'cancelled': CertificateTrustFailure.cancelled,
+      };
+      for (final entry in failureCodes.entries) {
+        final channel = _FakePinnedChannel();
+        final future =
+            createReconnectForNativeTlsPlatform(
+              NativeTlsPlatform.apple,
+              probeChannel: channel,
+            ).reconnect(
+              authority: authority,
+              pin: pin,
+              timeout: const Duration(milliseconds: 100),
+              cancellation: CancellationSource().token,
+            );
+        channel.completeConnect(
+          channel.calls.single.operationId,
+          <String, Object>{
+            'protocolVersion': 1,
+            'operationId': channel.calls.single.operationId,
+            'failureCode': entry.key,
+          },
+        );
+        final outcome = await future;
+        expect(outcome, isA<NativePinnedFailure>());
+        expect((outcome as NativePinnedFailure).failure, entry.value);
+      }
+      final probeChannel = _FakeProbeChannel();
+      final probe =
+          PresentedLeafProbeBackend(
+            channel: probeChannel,
+            now: DateTime.now,
+          ).startProbe(
+            authority: authority,
+            cancellation: CancellationSource().token,
+          );
+      final probeOperationId = probeChannel.calls.single.operationId;
+      await probe.close();
+      final reconnectChannel = _FakePinnedChannel();
+      final reconnect =
+          createReconnectForNativeTlsPlatform(
+            NativeTlsPlatform.apple,
+            probeChannel: reconnectChannel,
+          ).reconnect(
+            authority: authority,
+            pin: pin,
+            timeout: const Duration(milliseconds: 100),
+            cancellation: CancellationSource().token,
+          );
+      expect(
+        reconnectChannel.calls.single.operationId,
+        isNot(probeOperationId),
+      );
+      expect(
+        reconnectChannel.calls.map((call) => call.method),
+        isNot(contains('truenavo.capturePresentedLeaf')),
+      );
+      reconnectChannel.completeConnect(
+        reconnectChannel.calls.single.operationId,
+      );
+      await reconnect;
+      final source = File(
+        '../../packages/truenas_api/lib/src/transport/web_socket_connector.dart',
+      ).readAsStringSync();
+      expect(source, contains('WebSocketChannel.connect(endpoint)'));
+      expect(source, isNot(contains('badCertificateCallback')));
+      expect(source, isNot(contains('allowBadCertificates')));
+    });
+  });
+}
+
+Future<NativePinnedVerified> _successfulReconnect(
+  _FakePinnedChannel channel,
+  NormalizedAuthority authority,
+  PinRecord pin,
+) async {
+  final future =
+      createReconnectForNativeTlsPlatform(
+        NativeTlsPlatform.apple,
+        probeChannel: channel,
+      ).reconnect(
+        authority: authority,
+        pin: pin,
+        timeout: const Duration(milliseconds: 100),
+        cancellation: CancellationSource().token,
+      );
+  channel.completeConnect(channel.calls.single.operationId);
+  return await future as NativePinnedVerified;
+}
+
+final class _FakePinnedChannel implements PinnedRpcChannel {
+  static const sessionId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  static const _unset = _Unset();
+  final calls = <_Message>[];
+  final transportMessages = <_Message>[];
+  final closeCalls = <_Message>[];
+  final cancelCalls = <_Message>[];
+  final receiveCalls = <_Message>[];
+  final _pendingConnects = <String, Completer<Object?>>{};
+  final _pendingReceives = <Completer<Object?>>[];
+  Object? nextSendResult = _unset;
+  Object? nextCloseResult = _unset;
+  Object? nextCancelResult = _unset;
+  bool holdSend = false;
+  Completer<Object?>? _pendingSend;
+  bool holdClose = false;
+  Completer<Object?>? _pendingClose;
+  bool holdCancel = false;
+  final heldCancelStarted = Completer<void>();
+  Completer<Object?>? _pendingCancel;
+
+  @override
+  Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) {
+    final message = _Message(method, Map<String, Object>.from(arguments));
+    if (method == 'truenavo.connectPinnedRpc') {
+      calls.add(message);
+      return (_pendingConnects[message.operationId] = Completer<Object?>())
+          .future;
+    }
+    if (method == 'truenavo.cancelPinnedRpc') {
+      cancelCalls.add(message);
+      if (holdCancel) {
+        final pending = _pendingCancel = Completer<Object?>();
+        if (!heldCancelStarted.isCompleted) heldCancelStarted.complete();
+        return pending.future;
+      }
+      if (identical(nextCancelResult, _unset)) {
+        return Future<Object?>.value(<String, Object>{
+          'protocolVersion': 1,
+          'operationId': message.operationId,
+          'failureCode': 'cancelled',
+        });
+      }
+      return _respond(nextCancelResult);
+    }
+    if (method == 'truenavo.receivePinnedRpc') {
+      receiveCalls.add(message);
+      final pending = Completer<Object?>();
+      _pendingReceives.add(pending);
+      return pending.future;
+    }
+    if (method == 'truenavo.sendPinnedRpc') {
+      transportMessages.add(message);
+      if (holdSend) return (_pendingSend = Completer<Object?>()).future;
+      return _respond(nextSendResult);
+    }
+    if (method == 'truenavo.closePinnedRpc') {
+      closeCalls.add(message);
+      if (holdClose) return (_pendingClose = Completer<Object?>()).future;
+      return _respond(nextCloseResult);
+    }
+    return Future<Object?>.value(<String, Object>{
+      'protocolVersion': 1,
+      'sessionId': sessionId,
+    });
+  }
+
+  void completeConnect(String operationId, [Object? response = _unset]) {
+    _pendingConnects[operationId]!.complete(
+      identical(response, _unset)
+          ? <String, Object>{
+              'protocolVersion': 1,
+              'operationId': operationId,
+              'sessionId': sessionId,
+            }
+          : response,
+    );
+  }
+
+  Future<Object?> _respond(Object? result) {
+    if (result is _SynchronousChannelError) {
+      throw StateError('synchronous native error text must not escape');
+    }
+    if (result is StateError) return Future<Object?>.error(result);
+    return Future<Object?>.value(
+      identical(result, _unset)
+          ? <String, Object>{'protocolVersion': 1, 'sessionId': sessionId}
+          : result,
+    );
+  }
+
+  void completeReceive(Object? response) {
+    final pending = _pendingReceives.removeAt(0);
+    pending.complete(response);
+  }
+
+  void completeSend([Object? response = _unset]) {
+    _pendingSend!.complete(
+      identical(response, _unset)
+          ? <String, Object>{'protocolVersion': 1, 'sessionId': sessionId}
+          : response,
+    );
+  }
+
+  void failReceive(Object error) {
+    final pending = _pendingReceives.removeAt(0);
+    pending.completeError(error);
+  }
+
+  void completeClose([Object? response = _unset]) {
+    _pendingClose!.complete(
+      identical(response, _unset)
+          ? <String, Object>{'protocolVersion': 1, 'sessionId': sessionId}
+          : response,
+    );
+  }
+
+  void completeCancel([Object? response = _unset]) => _pendingCancel!.complete(
+    identical(response, _unset)
+        ? <String, Object>{
+            'protocolVersion': 1,
+            'operationId': calls.single.operationId,
+            'failureCode': 'cancelled',
+          }
+        : response,
+  );
+}
+
+final class _SynchronousChannelError {
+  const _SynchronousChannelError();
+}
+
+final class _Unset {
+  const _Unset();
+}
+
+final class _FakeProbeChannel implements PresentedLeafProbeChannel {
+  final calls = <_Message>[];
+
+  @override
+  Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) {
+    calls.add(_Message(method, Map<String, Object>.from(arguments)));
+    if (method == 'truenavo.cancelPresentedLeaf') {
+      return Future<Object?>.value(<String, Object>{
+        'protocolVersion': 1,
+        'operationId': arguments['operationId']! as String,
+        'failureCode': 'cancelled',
+      });
+    }
+    return Future<Object?>.value(null);
+  }
+}
+
+final class _FakeCaptureChannel implements PresentedLeafProbeChannel {
+  final cancelCalls = <_Message>[];
+  Object? cancelResult;
+
+  @override
+  Future<Object?> invokeMethod(String method, Map<String, Object?> arguments) {
+    if (method == 'truenavo.capturePresentedLeaf') {
+      return Completer<Object?>().future;
+    }
+    if (method == 'truenavo.cancelPresentedLeaf') {
+      cancelCalls.add(_Message(method, Map<String, Object>.from(arguments)));
+      final result = cancelResult;
+      return result is StateError
+          ? Future<Object?>.error(result)
+          : Future<Object?>.value(result);
+    }
+    throw StateError('unexpected method');
+  }
+}
+
+final class _Message {
+  const _Message(this.method, this.arguments);
+  final String method;
+  final Map<String, Object> arguments;
+  String get operationId => arguments['operationId']! as String;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _Message &&
+      method == other.method &&
+      _sameMap(arguments, other.arguments);
+  @override
+  int get hashCode => Object.hash(method, Object.hashAll(arguments.entries));
+}
+
+bool _sameMap(Map<String, Object> a, Map<String, Object> b) =>
+    a.length == b.length &&
+    a.entries.every((entry) => b[entry.key] == entry.value);

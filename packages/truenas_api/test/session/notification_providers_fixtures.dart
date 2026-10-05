@@ -33,13 +33,13 @@ String npTitle(NotificationProviderType provider) => switch (provider) {
 Map<String, Object?> npFields(NotificationProviderType p) => switch (p) {
   NotificationProviderType.slack || NotificationProviderType.opsGenie => {},
   NotificationProviderType.mattermost => {
-    'username': 'TrueRAID',
+    'username': 'TrueNavo',
     'channel': 'operations',
   },
   NotificationProviderType.telegram => {
     'chat_ids': [-1001234567890, 123456],
   },
-  NotificationProviderType.pagerDuty => {'client_name': 'TrueRAID'},
+  NotificationProviderType.pagerDuty => {'client_name': 'TrueNavo'},
   NotificationProviderType.victorOps => {},
   NotificationProviderType.awsSns => {
     'region': 'us-east-1',

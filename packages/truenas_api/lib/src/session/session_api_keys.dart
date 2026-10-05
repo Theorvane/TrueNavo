@@ -482,7 +482,7 @@ final class _SessionApiKeys {
             'No expiry was explicitly selected. This credential will remain valid until removed, rotated or server-revoked.',
           if (request.action == ApiKeyAction.create ||
               request.action == ApiKeyAction.rotate)
-            'The new key is returned once, never stored by TrueRAID. Reveal only in a private place and record it in a password manager. Losing the response cannot be recovered by retrying.',
+            'The new key is returned once, never stored by TrueNavo. Reveal only in a private place and record it in a password manager. Losing the response cannot be recovered by retrying.',
           if (request.action == ApiKeyAction.rotate) 'Rotation immediately replaces this key. Update every client that used it; the old value cannot be recovered.',
           if (request.action == ApiKeyAction.edit) 'Name and expiry edits update the database without immediately regenerating PAM authentication configuration in this server version. Expiry edits are not an immediate revocation mechanism. Existing sessions are not terminated.',
           if (request.action == ApiKeyAction.delete) 'Deletion removes this key permanently and blocks future authentication with it. Existing authenticated sessions may continue; this is not a session-termination operation.',

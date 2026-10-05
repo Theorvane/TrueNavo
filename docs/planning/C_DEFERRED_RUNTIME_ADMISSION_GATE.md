@@ -15,13 +15,13 @@ The authenticated session's **dashboard runtime query API** accepts only those
 methods, and the dashboard maps only those methods to enabled features.
 Connection bootstrap uses separate authentication/identity/capability calls;
 those are not admissions for dashboard observation reads. See
-[dashboard capabilities](../../apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart),
+[dashboard capabilities](../../apps/truenavo/lib/features/dashboard/dashboard_capabilities.dart),
 [session repository](../../packages/truenas_api/lib/src/session/true_nas_session_repository.dart),
-and [deferred fixture contracts](../../apps/trueraid/lib/features/dashboard/deferred_observation_contracts.dart).
+and [deferred fixture contracts](../../apps/truenavo/lib/features/dashboard/deferred_observation_contracts.dart).
 
 VDEV, disk, snapshot, and apps observations are fixture-only and runtime-disabled
 today, for every version family. Fixture parsing and evidence eligibility do not
-enable an API capability; see [live observation evidence](../../apps/trueraid/lib/features/dashboard/live_observation_evidence.dart).
+enable an API capability; see [live observation evidence](../../apps/truenavo/lib/features/dashboard/live_observation_evidence.dart).
 
 Source-backed candidate method facts are recorded in the
 [deferred contract discovery ledger](C_DEFERRED_CONTRACT_DISCOVERY_LEDGER.md).
@@ -32,13 +32,13 @@ method beyond the exact source-backed candidate tuple.
 
 ## Local admission-record boundary
 
-[`DeferredAdmissionRecord`](../../apps/trueraid/lib/features/dashboard/deferred_admission_record.dart)
+[`DeferredAdmissionRecord`](../../apps/truenavo/lib/features/dashboard/deferred_admission_record.dart)
 is a pure local decision record, not a runtime admission. Only after valid typed
 source/request/response SHA-256 identifiers, every pass/fail gate, and explicit
 approval are present can it retain bounded metadata: version family, domain, and
 those three typed digests. Any failed or incomplete input retains no metadata and
 uses one fixed non-sensitive rejection reason; its
-[`apiCapabilityEnabled`](../../apps/trueraid/test/features/dashboard/deferred_admission_record_test.dart)
+[`apiCapabilityEnabled`](../../apps/truenavo/test/features/dashboard/deferred_admission_record_test.dart)
 value is always `false`, including for an approved local record.
 
 The exact source-backed method is intentionally not represented in this local
@@ -86,7 +86,7 @@ out-of-scope result stops the tuple; it remains runtime-disabled.
 6. **Version/domain test matrix.** Exercise the exact tuple for its version
    family and domain, including supported, partial, denied, failed, and
    no-observation outcomes. The planning matrix identifies the deferred product
-   areas: [capability matrix](TRUERAID_CAPABILITY_MATRIX.csv).
+   areas: [capability matrix](TRUENAVO_CAPABILITY_MATRIX.csv).
 7. **Separate approval.** Review a complete approval record for this tuple.
    Evidence eligibility is not approval.
 8. **Narrow code change.** In a distinct code MR, add only the approved exact

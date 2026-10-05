@@ -1,9 +1,9 @@
-name: trueraid_workspace
+name: truenavo_workspace
 publish_to: none
 environment:
   sdk: ^3.13.0
 workspace:
-  - apps/trueraid
+  - apps/truenavo
   - examples/design_system_consumer
   - packages/truenas_api
-  - packages/trueraid_design_system
+  - packages/truenavo_design_system

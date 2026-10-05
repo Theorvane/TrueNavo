@@ -47,6 +47,6 @@ Native display/serial streaming and console admission, secure-boot/OVMF creation
 - [ISO readability and ownership validation](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/plugins/vm/devices/cdrom.py)
 - [Dataset property model](https://github.com/truenas/middleware/blob/TS-25.10.1/src/middlewared/middlewared/api/v25_10_0/pool_dataset.py)
 
-Verification commands: `fvm dart test test/session/session_virtual_machines_test.dart` in `packages/truenas_api`, and `fvm flutter test test/features/virtual_machines/virtual_machines_test.dart` in `apps/trueraid`. These commands use only in-memory fake fixtures.
+Verification commands: `fvm dart test test/session/session_virtual_machines_test.dart` in `packages/truenas_api`, and `fvm flutter test test/features/virtual_machines/virtual_machines_test.dart` in `apps/truenavo`. These commands use only in-memory fake fixtures.
 
 Current focused verification: 51 SDK tests and 24 controller/widget/preview tests pass. The SDK suite includes leaf-spelling-preserving symlink ancestors, missing directory proof, ancestor inode/device/mount drift, RAW/CDROM start rechecks and bounded/noncanonical paths. The UI suite includes 320px at 200% text scaling, unsupported-route retry suppression, all three modal session fences, original-server pending-operation provenance, count/badge semantics, empty inventory and 14px configuration/device-control spacing. All VM-owned Dart files analyze without diagnostics. This is fake-only implementation evidence, not live NAS validation or a full-parity claim.

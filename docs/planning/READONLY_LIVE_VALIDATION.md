@@ -93,7 +93,7 @@ failures. Their allowlists likewise emitted no configuration/data mutations.
 
 ## Reproduction and local verification
 
-From `apps/trueraid`, in an interactive terminal:
+From `apps/truenavo`, in an interactive terminal:
 
 ```sh
 fvm dart run tool/readonly_live_probe.dart https://NAS_ADDRESS ACCOUNT APPROVED_SHA256
@@ -106,7 +106,7 @@ or save a key-bearing command, environment file, or raw RPC transcript.
 - Application: **948 passed**, one pre-existing browser-only skip; analyzer clean.
 - API package: **379 passed**; analyzer clean.
 - Normal Android debug APK built and was installed on `emulator-5554` without
-  clearing app data. `com.trueraid.trueraid/.MainActivity` was verified resumed.
+  clearing app data. `com.truenavo.truenavo/.MainActivity` was verified resumed.
   The supplied key was not entered on the emulator. Existing Gradle/AGP/Kotlin
   upcoming-support warnings remain; they did not prevent the build.
 - Includes 43 outgoing-policy tests, 7 localhost TLS tests, 59 reporting SDK tests,

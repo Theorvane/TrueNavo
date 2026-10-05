@@ -185,4 +185,4 @@ fvm flutter test test/features/smb_settings
 ```
 
 Run the first command from `packages/truenas_api`, and the second from
-`apps/trueraid`. No production endpoint or credential is part of these fixtures.
+`apps/truenavo`. No production endpoint or credential is part of these fixtures.

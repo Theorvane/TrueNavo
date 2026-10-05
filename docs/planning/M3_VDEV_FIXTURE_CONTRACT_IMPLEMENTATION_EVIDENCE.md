@@ -91,7 +91,7 @@ persistence, generated-schema, platform, or CI file changed.
 Initial focused RED:
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 ```
 
@@ -144,7 +144,7 @@ creating the preflight context.
 Focused GREEN:
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test \
   test/features/dashboard/vdev_fixture_contract_test.dart \
   test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
@@ -161,14 +161,14 @@ Commands executed on the committed candidate include:
 
 ```sh
 fvm dart format --output=none --set-exit-if-changed \
-  packages/truenas_api packages/trueraid_design_system \
-  examples/design_system_consumer apps/trueraid
+  packages/truenas_api packages/truenavo_design_system \
+  examples/design_system_consumer apps/truenavo
 
-(cd apps/trueraid && fvm flutter analyze)
-(cd apps/trueraid && fvm flutter test)
-(cd apps/trueraid && fvm flutter build web --release)
+(cd apps/truenavo && fvm flutter analyze)
+(cd apps/truenavo && fvm flutter test)
+(cd apps/truenavo && fvm flutter build web --release)
 (cd packages/truenas_api && fvm dart analyze && fvm dart test)
-(cd packages/trueraid_design_system && fvm flutter analyze && fvm flutter test)
+(cd packages/truenavo_design_system && fvm flutter analyze && fvm flutter test)
 (cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test)
 ```
 

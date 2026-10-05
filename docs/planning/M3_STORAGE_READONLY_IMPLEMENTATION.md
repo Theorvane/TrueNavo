@@ -27,8 +27,8 @@
 ## Task 1 — Specify deterministic bounded storage models
 
 **Files**
-- Modify: `apps/trueraid/test/features/dashboard/dashboard_controller_test.dart`
-- Modify: `apps/trueraid/lib/features/dashboard/dashboard_repository.dart`
+- Modify: `apps/truenavo/test/features/dashboard/dashboard_controller_test.dart`
+- Modify: `apps/truenavo/lib/features/dashboard/dashboard_repository.dart`
 
 **RED**
 
@@ -45,7 +45,7 @@ Add focused repository tests proving:
 Run:
 
 ```bash
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/dashboard_controller_test.dart
 ```
 
@@ -65,8 +65,8 @@ Re-run the focused test and confirm it passes.
 ## Task 2 — Specify Storage summary and grouped rendering
 
 **Files**
-- Modify: `apps/trueraid/test/features/dashboard/dashboard_page_test.dart`
-- Modify: `apps/trueraid/lib/features/dashboard/dashboard_page.dart`
+- Modify: `apps/truenavo/test/features/dashboard/dashboard_page_test.dart`
+- Modify: `apps/truenavo/lib/features/dashboard/dashboard_page.dart`
 
 **RED**
 
@@ -83,7 +83,7 @@ Add widget tests for:
 Run:
 
 ```bash
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/dashboard_page_test.dart
 ```
 
@@ -110,9 +110,9 @@ Re-run the focused widget test and confirm it passes.
 ## Task 3 — Refactor while preserving closed capabilities
 
 **Files**
-- Modify only if needed: `apps/trueraid/lib/features/dashboard/dashboard_repository.dart`
-- Modify only if needed: `apps/trueraid/lib/features/dashboard/dashboard_page.dart`
-- Verify unchanged authority: `apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart`
+- Modify only if needed: `apps/truenavo/lib/features/dashboard/dashboard_repository.dart`
+- Modify only if needed: `apps/truenavo/lib/features/dashboard/dashboard_page.dart`
+- Verify unchanged authority: `apps/truenavo/lib/features/dashboard/dashboard_capabilities.dart`
 
 After both focused suites are green:
 
@@ -124,7 +124,7 @@ After both focused suites are green:
 
 ## Task 4 — Focused verification
 
-From `apps/trueraid`:
+From `apps/truenavo`:
 
 ```bash
 fvm dart format --output=none --set-exit-if-changed \
@@ -141,7 +141,7 @@ Also run from the repository root:
 
 ```bash
 git diff --check
-git diff -- apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart
+git diff -- apps/truenavo/lib/features/dashboard/dashboard_capabilities.dart
 ```
 
 The capability diff must be empty.
@@ -151,7 +151,7 @@ The capability diff must be empty.
 Use repository scripts/commands already established by the project. At minimum:
 
 ```bash
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test
 fvm flutter build web --release
 
@@ -159,7 +159,7 @@ cd ../../packages/truenas_api
 fvm dart analyze
 fvm dart test
 
-cd ../trueraid_design_system
+cd ../truenavo_design_system
 fvm flutter analyze
 fvm flutter test
 ```

@@ -63,7 +63,7 @@ static fixture Object?
 ```
 
 The implementation belongs beside the existing deferred observation contracts
-under `apps/trueraid/lib/features/dashboard/`. It must not be referenced by
+under `apps/truenavo/lib/features/dashboard/`. It must not be referenced by
 `DashboardRepository`, `DashboardController`, production providers, or
 `DashboardPage`.
 
@@ -282,17 +282,17 @@ Run focused fixture tests first, then:
 
 ```sh
 fvm dart format --output=none --set-exit-if-changed \
-  packages/truenas_api packages/trueraid_design_system \
-  examples/design_system_consumer apps/trueraid
-(cd apps/trueraid && fvm flutter analyze)
-(cd apps/trueraid && fvm flutter test)
+  packages/truenas_api packages/truenavo_design_system \
+  examples/design_system_consumer apps/truenavo
+(cd apps/truenavo && fvm flutter analyze)
+(cd apps/truenavo && fvm flutter test)
 (cd packages/truenas_api && fvm dart analyze && fvm dart test)
-(cd packages/trueraid_design_system && fvm flutter analyze && fvm flutter test)
+(cd packages/truenavo_design_system && fvm flutter analyze && fvm flutter test)
 (cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test)
-(cd apps/trueraid && fvm flutter build web --release)
-(cd apps/trueraid && ./tool/verify_drift_generated.sh)
-(cd apps/trueraid && fvm dart run tool/verify_drift_web_assets.dart)
-(cd apps/trueraid && fvm dart run tool/verify_persistence_security_boundaries.dart)
+(cd apps/truenavo && fvm flutter build web --release)
+(cd apps/truenavo && ./tool/verify_drift_generated.sh)
+(cd apps/truenavo && fvm dart run tool/verify_drift_web_assets.dart)
+(cd apps/truenavo && fvm dart run tool/verify_persistence_security_boundaries.dart)
 git diff --check
 ```
 

@@ -142,7 +142,7 @@ remain outside this slice.
 
 `fvm dart test test/session/session_quotas_test.dart` in `packages/truenas_api`
 passes 110 fake-wire tests. `fvm flutter test test/features/quotas` in
-`apps/trueraid` passes 35 controller/widget/preview tests. Owned Dart files pass
+`apps/truenavo` passes 35 controller/widget/preview tests. Owned Dart files pass
 static analysis and formatting checks. Regressions cover all four quota types,
 independent limit removal, sparse/unknown usage, identity and quota drift,
 slow-read dataset replacement, shared mutation exclusion, unknown outcomes,

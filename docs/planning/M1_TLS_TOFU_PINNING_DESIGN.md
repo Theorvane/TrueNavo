@@ -4,11 +4,11 @@
 >
 > Scope: TD-003 / GitLab issue #2. This document is a design and implementation-handoff contract; it makes no claim of live-server interoperability.
 >
-> Foundations: [TrueRAID Design System](./TRUERAID_DESIGN_SYSTEM.md), [Product Plan](./TRUERAID_PRODUCT_PLAN.md), and [M1 adaptive shell design](./M1_ADAPTIVE_SHELL_SERVER_PROFILE_DESIGN.md).
+> Foundations: [TrueNavo Design System](./TRUENAVO_DESIGN_SYSTEM.md), [Product Plan](./TRUENAVO_PRODUCT_PLAN.md), and [M1 adaptive shell design](./M1_ADAPTIVE_SHELL_SERVER_PROFILE_DESIGN.md).
 
 ## 1. Purpose, scope, and non-goals
 
-TrueRAID needs a deliberately narrow way for a native user to trust a self-signed or privately issued server certificate without weakening TLS. The approved approach is two-phase: probe and inspect a certificate without sending credentials, obtain explicit user approval, then make a new TLS connection that is pinned to the approved leaf certificate before any API key is transmitted.
+TrueNavo needs a deliberately narrow way for a native user to trust a self-signed or privately issued server certificate without weakening TLS. The approved approach is two-phase: probe and inspect a certificate without sending credentials, obtain explicit user approval, then make a new TLS connection that is pinned to the approved leaf certificate before any API key is transmitted.
 
 This slice designs certificate inspection, first-use trust-on-first-use (TOFU), stored leaf-certificate pins, and explicit certificate replacement. It applies to Android, iOS, macOS, Windows, and Linux. It does not persist Server Profile metadata or API keys; existing M1 profiles remain process-memory-only.
 
@@ -25,7 +25,7 @@ The UI must use the existing width-based shell: `<600` retains the native `Navig
 
 ## 3. Boundaries and interfaces
 
-The application owns this feature under a future `apps/trueraid/lib/features/tls_trust/` boundary. `truenas_api` owns transport mechanics only; `trueraid_design_system` remains generic and exposes no TLS domain model. The M1 ServerProfile model and catalog must not receive a certificate, fingerprint, pin decision, or API key.
+The application owns this feature under a future `apps/truenavo/lib/features/tls_trust/` boundary. `truenas_api` owns transport mechanics only; `truenavo_design_system` remains generic and exposes no TLS domain model. The M1 ServerProfile model and catalog must not receive a certificate, fingerprint, pin decision, or API key.
 
 ```text
 ConnectionScreen / ConnectionController

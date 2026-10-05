@@ -1,5 +1,5 @@
 name: design_system_consumer
-description: Compile-only external-consumer fixture for the TrueRAID design system.
+description: Compile-only external-consumer fixture for the TrueNavo design system.
 publish_to: none
 environment:
   sdk: ^3.13.0
@@ -7,8 +7,8 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  trueraid_design_system:
-    path: ../../packages/trueraid_design_system
+  truenavo_design_system:
+    path: ../../packages/truenavo_design_system
 dev_dependencies:
   flutter_test:
     sdk: flutter

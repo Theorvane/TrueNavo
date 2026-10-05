@@ -53,4 +53,4 @@ TrueNAS offers no atomic compare-and-swap for these operations. Another administ
 - **32 Flutter tests** pass with connector-free providers: manual refresh, filtering/search, chart semantics, plain/one-shot/HA controls, read-only details, exact target/impact acknowledgment, cancellation, shared locks, session/inventory/background expiry, and 320/430 logical-pixel reviews at 200% text with a 300-pixel keyboard inset.
 - `AlertsPreviewAdapter` contains static safe sample metadata and rejects every mutation. No observed live-server write, notification delivery or crash-durability result is claimed.
 
-Commands: `fvm dart test test/session/session_alerts_test.dart` from `packages/truenas_api`; `fvm flutter test test/features/alerts/alerts_test.dart` from `apps/trueraid`. Scoped SDK and Flutter analysis are clean.
+Commands: `fvm dart test test/session/session_alerts_test.dart` from `packages/truenas_api`; `fvm flutter test test/features/alerts/alerts_test.dart` from `apps/truenavo`. Scoped SDK and Flutter analysis are clean.

@@ -778,7 +778,7 @@ final class _SessionSshCredentials {
               ? 'The unreferenced keychain entry is absent after deletion. Remote authorized keys and existing sessions were not revoked.'
               : request.action == SshCredentialAction.rename
               ? 'The name change was verified through safe projected metadata. Private attributes were not read.'
-              : 'The keypair was stored and its public identity verified. Only the public key is available here; private material is not retained by TrueRAID.',
+              : 'The keypair was stored and its public identity verified. Only the public key is available here; private material is not retained by TrueNavo.',
           publicKey: expectedPublic == null
               ? null
               : after.credentials

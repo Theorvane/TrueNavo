@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
-  <title id="title">TrueRAID mobile first certificate trust flow</title>
+  <title id="title">TrueNavo mobile first certificate trust flow</title>
   <desc id="desc">Dark mobile certificate review screen showing a credential-free probe, certificate details, copyable SHA-256 fingerprint, and explicit trust and connect action.</desc>
   <rect width="1200" height="900" fill="#0B1117"/>
   <g font-family="Arial, sans-serif">

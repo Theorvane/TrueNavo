@@ -68,7 +68,7 @@ or app-bootstrap file changed.
 Initial RED:
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/disk_fixture_contract_test.dart
 ```
 

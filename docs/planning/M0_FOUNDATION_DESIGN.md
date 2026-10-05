@@ -4,7 +4,7 @@
 >
 > 기준: Flutter 3.47.0 stable, Dart 3.13.0, macOS arm64 (2026-09-05에 확인)
 >
-> 근거: [제품 기획안](./TRUERAID_PRODUCT_PLAN.md), [TrueNAS API 조사](../research/TRUENAS_API_RESEARCH.md)
+> 근거: [제품 기획안](./TRUENAVO_PRODUCT_PLAN.md), [TrueNAS API 조사](../research/TRUENAS_API_RESEARCH.md)
 
 ## 1. 목적과 지원 경계
 
@@ -38,9 +38,9 @@ M0은 사용자가 TrueNAS 25.04 또는 25.10 장비에 WSS로 API key를 사용
 ```text
 .
 ├── pubspec.yaml                         # workspace 루트
-├── apps/trueraid/                       # Flutter 앱
+├── apps/truenavo/                       # Flutter 앱
 │   ├── lib/main.dart
-│   ├── lib/trueraid_app.dart
+│   ├── lib/truenavo_app.dart
 │   └── lib/features/connection/
 └── packages/truenas_api/                 # Flutter 비의존 순수 Dart 패키지
     └── lib/src/
@@ -128,7 +128,7 @@ ServerSummary
 
 ## 7. Flutter와 Riverpod 3 경계
 
-`main.dart`는 오직 `ProviderScope(child: TrueRAIDApp(...))`로 루트를 감싼다. `TrueRAIDApp`은 scope를 만들지 않는 위젯으로, 테스트에서 `ProviderScope(overrides: [...])`로 connector·repository factory·vault를 교체할 수 있다. Riverpod 3에서 안정된 provider/controller API만 사용하며, 앱의 presentation 계층 밖에서 `BuildContext`를 사용하지 않는다.
+`main.dart`는 오직 `ProviderScope(child: TrueNavoApp(...))`로 루트를 감싼다. `TrueNavoApp`은 scope를 만들지 않는 위젯으로, 테스트에서 `ProviderScope(overrides: [...])`로 connector·repository factory·vault를 교체할 수 있다. Riverpod 3에서 안정된 provider/controller API만 사용하며, 앱의 presentation 계층 밖에서 `BuildContext`를 사용하지 않는다.
 
 첫 화면은 다음 상태를 표현한다.
 

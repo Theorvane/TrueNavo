@@ -46,11 +46,11 @@ fvm flutter test \
 
 | 대상 | 명령 | 실제 결과 |
 | --- | --- | --- |
-| 앱 format | `cd apps/trueraid && fvm dart format --output=none --set-exit-if-changed lib test` | exit 0, 22 files unchanged |
-| 앱 analyze | `cd apps/trueraid && fvm flutter analyze` | exit 0, no issues |
-| 앱 전체 | `cd apps/trueraid && fvm flutter test --reporter compact` | exit 0, **55 tests passed** |
-| 디자인 시스템 analyze | `cd packages/trueraid_design_system && fvm flutter analyze` | exit 0, no issues |
-| 디자인 시스템 전체 | `cd packages/trueraid_design_system && fvm flutter test --reporter compact` | exit 0, **27 tests passed** |
+| 앱 format | `cd apps/truenavo && fvm dart format --output=none --set-exit-if-changed lib test` | exit 0, 22 files unchanged |
+| 앱 analyze | `cd apps/truenavo && fvm flutter analyze` | exit 0, no issues |
+| 앱 전체 | `cd apps/truenavo && fvm flutter test --reporter compact` | exit 0, **55 tests passed** |
+| 디자인 시스템 analyze | `cd packages/truenavo_design_system && fvm flutter analyze` | exit 0, no issues |
+| 디자인 시스템 전체 | `cd packages/truenavo_design_system && fvm flutter test --reporter compact` | exit 0, **27 tests passed** |
 | API analyze | `cd packages/truenas_api && fvm dart analyze` | exit 0; 기존 info diagnostics 4건, error/warning 0 |
 | API 전체 | `cd packages/truenas_api && fvm dart test --reporter compact` | exit 0, **45 tests passed** |
 | 외부 consumer | `cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test --reporter compact` | exit 0, no issues, **1 test passed** |
@@ -73,10 +73,10 @@ CI는 `.fvmrc`의 Flutter `3.47.0`을 사용합니다. Linux shell runner는 exa
 
 | 명령 | 실제 결과 |
 | --- | --- |
-| `cd apps/trueraid && fvm flutter build web --release` | exit 0 — `✓ Built build/web` |
-| `cd apps/trueraid && fvm flutter build macos --release` | exit 0 — `✓ Built .../trueraid.app (49.7MB)` |
-| `codesign --verify --deep --strict --verbose=2 .../trueraid.app` | exit 0 — valid on disk, satisfies Designated Requirement |
-| `codesign -d --entitlements :- .../trueraid.app` | `com.apple.security.app-sandbox=true`, `com.apple.security.network.client=true` |
+| `cd apps/truenavo && fvm flutter build web --release` | exit 0 — `✓ Built build/web` |
+| `cd apps/truenavo && fvm flutter build macos --release` | exit 0 — `✓ Built .../truenavo.app (49.7MB)` |
+| `codesign --verify --deep --strict --verbose=2 .../truenavo.app` | exit 0 — valid on disk, satisfies Designated Requirement |
+| `codesign -d --entitlements :- .../truenavo.app` | `com.apple.security.app-sandbox=true`, `com.apple.security.network.client=true` |
 | `macos/Runner/Release.entitlements` 직접 확인 | app sandbox와 network client만 선언 |
 
 로컬 산출물은 ad-hoc signature(`TeamIdentifier=not set`)이며 배포용 Developer ID/App Store 서명 또는 notarization 증거가 아닙니다.
@@ -103,6 +103,6 @@ CI는 `.fvmrc`의 Flutter `3.47.0`을 사용합니다. Linux shell runner는 exa
 
 ## 범위·보안 점검
 
-- remediation 변경은 `apps/trueraid`의 shell/profile 구현과 테스트, root GitLab CI와 runner bootstrap shim, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
+- remediation 변경은 `apps/truenavo`의 shell/profile 구현과 테스트, root GitLab CI와 runner bootstrap shim, 이 evidence 문서에 한정합니다. dependency/lockfile, `packages/truenas_api`, platform TLS 코드는 변경하지 않았습니다.
 - M1 profile/shell 파일은 persistence, discovery, secure storage, TLS trust mutation, credential persistence, reconnect coordinator, capability registry, operational data, ads/billing을 구현하지 않습니다.
 - 이 구현은 credential-backed live switching, real TrueNAS interoperability, Developer ID/notarized distribution, Android/iOS build, 또는 TD-002 완료의 증거가 아닙니다.

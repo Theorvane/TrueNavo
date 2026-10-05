@@ -53,4 +53,4 @@ No public secret-free revision/hash can detect a same-ID/name/provider secret-on
 - Flutter connector-free suite: **30 tests** passing, including cancellation/session/inventory/background expiry, no secret autofill/provider-state retention, explicit review/confirmation, shared locks, count semantics, and create/review/confirm at 320/430 logical pixels with 200% text and a 300-pixel keyboard inset.
 - `CloudCredentialsPreviewAdapter` contains no real credentials or connector and rejects all writes.
 
-Commands: `fvm dart test test/session/session_cloud_credentials_test.dart` from `packages/truenas_api`; `fvm flutter test test/features/cloud_credentials/cloud_credentials_test.dart` from `apps/trueraid`. No live write or cloud-authentication result is claimed.
+Commands: `fvm dart test test/session/session_cloud_credentials_test.dart` from `packages/truenas_api`; `fvm flutter test test/features/cloud_credentials/cloud_credentials_test.dart` from `apps/truenavo`. No live write or cloud-authentication result is claimed.

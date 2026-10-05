@@ -12,17 +12,17 @@
 
 ## Invariants for every task
 
-- Worktree: `/Users/jungwon/workspace/.worktrees/trueraid-m3-vdev-contract`
+- Worktree: `/Users/jungwon/workspace/.worktrees/truenavo-m3-vdev-contract`
 - Branch: `feat/m3-vdev-fixture-contract`
 - Base: `1d152e339d0374d87e492e565c6b2c1a1a713834`
 - Use `fvm dart` and `fvm flutter`; never invoke bare `dart` or `flutter`.
 - Do not add a runtime RPC, provider, route, persistence field, generated schema, UI, or live test.
 - Do not modify:
   - `packages/truenas_api/lib/src/session/true_nas_session_repository.dart`
-  - `apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart`
-  - `apps/trueraid/lib/features/dashboard/dashboard_repository.dart`
-  - `apps/trueraid/lib/features/dashboard/dashboard_controller.dart`
-  - `apps/trueraid/lib/features/dashboard/dashboard_page.dart`
+  - `apps/truenavo/lib/features/dashboard/dashboard_capabilities.dart`
+  - `apps/truenavo/lib/features/dashboard/dashboard_repository.dart`
+  - `apps/truenavo/lib/features/dashboard/dashboard_controller.dart`
+  - `apps/truenavo/lib/features/dashboard/dashboard_page.dart`
 - Fixture values must not appear in exceptions, rejection values, logs, or typed output unless represented by a fixed local enum.
 - Commit each coherent task only after its focused tests and `git diff --check` pass.
 
@@ -40,8 +40,8 @@
 **Objective:** Introduce the public fixture-only types and constants without implementing decoding.
 
 **Files:**
-- Create: `apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart`
-- Create: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Create: `apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart`
+- Create: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
 
 **Step 1: Write failing API-shape tests**
 
@@ -67,7 +67,7 @@ Assert:
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 ```
 
@@ -103,7 +103,7 @@ enum VdevOperationalStatus {
 **Step 4: Run GREEN and analyzer**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 fvm flutter analyze
 ```
@@ -113,8 +113,8 @@ Expected: focused tests pass and analyzer reports no issues.
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart
 git commit -m "feat(storage): define VDEV fixture types"
 ```
 
@@ -123,11 +123,11 @@ git commit -m "feat(storage): define VDEV fixture types"
 **Objective:** Prove all supported version families have explicit selectors and positive-schema decoding.
 
 **Files:**
-- Modify: `apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart`
-- Modify: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
-- Create: `apps/trueraid/test/fixtures/dashboard/vdev/v25_04_minimal.json`
-- Create: `apps/trueraid/test/fixtures/dashboard/vdev/v25_10_minimal.json`
-- Create: `apps/trueraid/test/fixtures/dashboard/vdev/v26_plus_minimal.json`
+- Modify: `apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart`
+- Modify: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Create: `apps/truenavo/test/fixtures/dashboard/vdev/v25_04_minimal.json`
+- Create: `apps/truenavo/test/fixtures/dashboard/vdev/v25_10_minimal.json`
+- Create: `apps/truenavo/test/fixtures/dashboard/vdev/v26_plus_minimal.json`
 
 **Step 1: Write failing per-version fixture tests**
 
@@ -145,7 +145,7 @@ Fixtures must use synthetic, identifier-free data and contain a single data grou
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   --plain-name "decodes minimal topology for every supported family"
 ```
@@ -159,7 +159,7 @@ Implement three private decoding entry points. They may share only validated pri
 **Step 4: Run GREEN**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 ```
 
@@ -168,9 +168,9 @@ Expected: per-version fixtures pass.
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart \
-  apps/trueraid/test/fixtures/dashboard/vdev
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart \
+  apps/truenavo/test/fixtures/dashboard/vdev
 git commit -m "feat(storage): decode versioned VDEV fixtures"
 ```
 
@@ -179,8 +179,8 @@ git commit -m "feat(storage): decode versioned VDEV fixtures"
 **Objective:** Cover all group/status enums and complete-versus-rejected schema behavior.
 
 **Files:**
-- Modify: `apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart`
-- Modify: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Modify: `apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart`
+- Modify: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
 
 **Step 1: Write failing tests**
 
@@ -196,7 +196,7 @@ Test:
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   --plain-name "normalizes deterministic VDEV groups and states"
 ```
@@ -210,15 +210,15 @@ Use fixed maps and enum-order reconstruction. Never use arbitrary source strings
 **Step 4: Run GREEN**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 ```
 
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart
 git commit -m "test(storage): enforce VDEV fixture enums"
 ```
 
@@ -227,8 +227,8 @@ git commit -m "test(storage): enforce VDEV fixture enums"
 **Objective:** Make local malformed or over-bound nodes yield a bounded partial snapshot when safe data remains.
 
 **Files:**
-- Modify: `apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart`
-- Modify: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Modify: `apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart`
+- Modify: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
 
 **Step 1: Write boundary RED tests**
 
@@ -251,7 +251,7 @@ Expected rules:
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   --plain-name "enforces VDEV local traversal bounds"
 ```
@@ -263,7 +263,7 @@ Use an explicit traversal context with retained node count and partial flag. App
 **Step 4: Run GREEN and analyzer**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 fvm flutter analyze
 ```
@@ -271,8 +271,8 @@ fvm flutter analyze
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart
 git commit -m "feat(storage): bound VDEV fixture traversal"
 ```
 
@@ -281,8 +281,8 @@ git commit -m "feat(storage): bound VDEV fixture traversal"
 **Objective:** Bound hostile fixture cost and reject cycle-like or aliased container graphs.
 
 **Files:**
-- Modify: `apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart`
-- Modify: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Modify: `apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart`
+- Modify: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
 
 **Step 1: Write failing adversarial tests**
 
@@ -301,7 +301,7 @@ Expected: exact global limits are accepted when otherwise safe; one beyond rejec
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   --plain-name "rejects hostile and shared fixture containers"
 ```
@@ -313,15 +313,15 @@ Track maps and lists in `HashSet.identity()`. Count every visited container befo
 **Step 4: Run GREEN**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 ```
 
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart
 git commit -m "fix(storage): contain VDEV fixture graphs"
 ```
 
@@ -330,8 +330,8 @@ git commit -m "fix(storage): contain VDEV fixture graphs"
 **Objective:** Prove no secret-shaped, device-identifying, control, invisible, malformed, or overlong string crosses the fixture boundary.
 
 **Files:**
-- Modify: `apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart`
-- Modify: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Modify: `apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart`
+- Modify: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
 
 **Step 1: Write failing matrix tests**
 
@@ -352,7 +352,7 @@ Also test a valid paired emoji in an ignored unknown field does not enter output
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   --plain-name "rejects sensitive and unsafe fixture strings"
 ```
@@ -364,15 +364,15 @@ Use fixed enum lookups for admitted strings and a general fail-closed validator 
 **Step 4: Run GREEN**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart
 ```
 
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart
 git commit -m "test(storage): reject unsafe VDEV fixture data"
 ```
 
@@ -381,8 +381,8 @@ git commit -m "test(storage): reject unsafe VDEV fixture data"
 **Objective:** Lock the fixture-only boundary against mutation and accidental production wiring.
 
 **Files:**
-- Modify: `apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart`
-- Create: `apps/trueraid/test/features/dashboard/vdev_fixture_runtime_boundary_test.dart`
+- Modify: `apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart`
+- Create: `apps/truenavo/test/features/dashboard/vdev_fixture_runtime_boundary_test.dart`
 
 **Step 1: Write failing tests**
 
@@ -399,7 +399,7 @@ Test that:
 **Step 2: Run RED**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
 ```
@@ -413,7 +413,7 @@ Copy every retained collection with `List.unmodifiable`. Add no production integ
 **Step 4: Run GREEN**
 
 ```sh
-cd apps/trueraid
+cd apps/truenavo
 fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
   test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
 ```
@@ -421,9 +421,9 @@ fvm flutter test test/features/dashboard/vdev_fixture_contract_test.dart \
 **Step 5: Commit**
 
 ```sh
-git add apps/trueraid/lib/features/dashboard/vdev_fixture_contract.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_contract_test.dart \
-  apps/trueraid/test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
+git add apps/truenavo/lib/features/dashboard/vdev_fixture_contract.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_contract_test.dart \
+  apps/truenavo/test/features/dashboard/vdev_fixture_runtime_boundary_test.dart
 git commit -m "test(storage): keep VDEV contract fixture-only"
 ```
 
@@ -451,19 +451,19 @@ Record:
 
 ```sh
 fvm dart format --output=none --set-exit-if-changed \
-  packages/truenas_api packages/trueraid_design_system \
-  examples/design_system_consumer apps/trueraid
+  packages/truenas_api packages/truenavo_design_system \
+  examples/design_system_consumer apps/truenavo
 
-(cd apps/trueraid && fvm flutter analyze)
-(cd apps/trueraid && fvm flutter test)
-(cd apps/trueraid && fvm flutter build web --release)
+(cd apps/truenavo && fvm flutter analyze)
+(cd apps/truenavo && fvm flutter test)
+(cd apps/truenavo && fvm flutter build web --release)
 (cd packages/truenas_api && fvm dart analyze && fvm dart test)
-(cd packages/trueraid_design_system && fvm flutter analyze && fvm flutter test)
+(cd packages/truenavo_design_system && fvm flutter analyze && fvm flutter test)
 (cd examples/design_system_consumer && fvm flutter analyze && fvm flutter test)
-(cd apps/trueraid && ./tool/verify_drift_generated.sh)
-(cd apps/trueraid && ./tool/verify_drift_generated.sh)
-(cd apps/trueraid && fvm dart run tool/verify_drift_web_assets.dart)
-(cd apps/trueraid && fvm dart run tool/verify_persistence_security_boundaries.dart)
+(cd apps/truenavo && ./tool/verify_drift_generated.sh)
+(cd apps/truenavo && ./tool/verify_drift_generated.sh)
+(cd apps/truenavo && fvm dart run tool/verify_drift_web_assets.dart)
+(cd apps/truenavo && fvm dart run tool/verify_persistence_security_boundaries.dart)
 git diff --check
 ```
 
@@ -472,10 +472,10 @@ git diff --check
 ```sh
 git diff --exit-code 1d152e339d0374d87e492e565c6b2c1a1a713834...HEAD -- \
   packages/truenas_api/lib/src/session/true_nas_session_repository.dart \
-  apps/trueraid/lib/features/dashboard/dashboard_capabilities.dart \
-  apps/trueraid/lib/features/dashboard/dashboard_repository.dart \
-  apps/trueraid/lib/features/dashboard/dashboard_controller.dart \
-  apps/trueraid/lib/features/dashboard/dashboard_page.dart
+  apps/truenavo/lib/features/dashboard/dashboard_capabilities.dart \
+  apps/truenavo/lib/features/dashboard/dashboard_repository.dart \
+  apps/truenavo/lib/features/dashboard/dashboard_controller.dart \
+  apps/truenavo/lib/features/dashboard/dashboard_page.dart
 ```
 
 Expected: exit 0 and no output.

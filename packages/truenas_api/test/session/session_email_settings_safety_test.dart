@@ -397,8 +397,8 @@ void main() {
     expect(result.jobId, 71);
     expect(h.wire.writes.single['params'], [
       {
-        'subject': 'TrueRAID SMTP configuration test',
-        'text': 'This is an explicitly requested TrueRAID SMTP test. No delivery or recovery guarantee is implied.',
+        'subject': 'TrueNavo SMTP configuration test',
+        'text': 'This is an explicitly requested TrueNavo SMTP test. No delivery or recovery guarantee is implied.',
         'html': null,
         'to': ['recipient@example.org'],
         'cc': <String>[],

@@ -30,15 +30,15 @@ portable_quality_and_web:
     - shared-build
   before_script: *linux_flutter_setup
   script:
-    - dart format --output=none --set-exit-if-changed packages/truenas_api packages/trueraid_design_system examples/design_system_consumer apps/trueraid
-    - (cd apps/trueraid && ./tool/verify_drift_generated.sh && ./tool/verify_drift_generated.sh)
+    - dart format --output=none --set-exit-if-changed packages/truenas_api packages/truenavo_design_system examples/design_system_consumer apps/truenavo
+    - (cd apps/truenavo && ./tool/verify_drift_generated.sh && ./tool/verify_drift_generated.sh)
     - (cd packages/truenas_api && dart analyze && dart test)
-    - (cd packages/trueraid_design_system && flutter analyze && flutter test)
+    - (cd packages/truenavo_design_system && flutter analyze && flutter test)
     - (cd examples/design_system_consumer && flutter analyze && flutter test)
-    - (cd apps/trueraid && dart run tool/verify_drift_web_assets.dart && dart run tool/verify_persistence_security_boundaries.dart && flutter analyze && flutter test)
-    - (cd apps/trueraid && flutter build web --release)
-    - test -f apps/trueraid/build/web/sqlite3.wasm
-    - test -f apps/trueraid/build/web/drift_worker.js
+    - (cd apps/truenavo && dart run tool/verify_drift_web_assets.dart && dart run tool/verify_persistence_security_boundaries.dart && flutter analyze && flutter test)
+    - (cd apps/truenavo && flutter build web --release)
+    - test -f apps/truenavo/build/web/sqlite3.wasm
+    - test -f apps/truenavo/build/web/drift_worker.js
 
 macos_release:
   stage: verify
@@ -52,14 +52,14 @@ macos_release:
   # Shipping/notarization requires a real Developer ID and is outside this CI gate.
   script:
     - |
-      cd "apps/trueraid"
+      cd "apps/truenavo"
       task2_derived_data_path="$CI_PROJECT_DIR/build/macos-task2-derived"
       fvm flutter build macos --release --config-only
       rm -rf "$task2_derived_data_path"
       xcodebuild -quiet -workspace "macos/Runner.xcworkspace" -scheme Runner -configuration Release -derivedDataPath "$task2_derived_data_path" CODE_SIGNING_ALLOWED=NO build
-      codesign --force --deep --sign - --entitlements "macos/Runner/Release.entitlements" "$task2_derived_data_path/Build/Products/Release/trueraid.app"
-      codesign --verify --deep --strict "$task2_derived_data_path/Build/Products/Release/trueraid.app"
-      codesign -d --entitlements :- "$task2_derived_data_path/Build/Products/Release/trueraid.app" 2>/dev/null |
+      codesign --force --deep --sign - --entitlements "macos/Runner/Release.entitlements" "$task2_derived_data_path/Build/Products/Release/truenavo.app"
+      codesign --verify --deep --strict "$task2_derived_data_path/Build/Products/Release/truenavo.app"
+      codesign -d --entitlements :- "$task2_derived_data_path/Build/Products/Release/truenavo.app" 2>/dev/null |
         plutil -convert json -o - - |
         python3 -c "import json,sys; entitlements=json.load(sys.stdin); assert entitlements.get('com.apple.security.network.client') is True; assert 'keychain-access-groups' in entitlements"
       task2_ios_derived_data_path="$CI_PROJECT_DIR/build/ios-task2-derived"

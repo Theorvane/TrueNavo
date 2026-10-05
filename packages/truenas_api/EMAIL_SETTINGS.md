@@ -52,7 +52,7 @@ Python's SMTP_SSL or starttls calls. The standard Python context path can be
 unverified; see [smtplib](https://github.com/python/cpython/blob/v3.11.9/Lib/smtplib.py)
 and [SSL compatibility context](https://github.com/python/cpython/blob/v3.11.9/Lib/ssl.py).
 The user must independently verify and explicitly accept the destination and
-credential/message disclosure risk. TrueRAID's separate TrueNAS API certificate
+credential/message disclosure risk. TrueNavo's separate TrueNAS API certificate
 pinning does not secure the NAS-to-SMTP connection.
 
 ## Public API and private data ownership

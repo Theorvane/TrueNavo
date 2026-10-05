@@ -1,0 +1,557 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:truenavo_design_system/truenavo_design_system.dart';
+
+import '../dashboard/dashboard_controller.dart';
+import 'nvme_attached_namespace_move_coordinator.dart';
+import 'nvme_overview.dart';
+
+class NvmeAttachedNamespaceMoveEditor extends ConsumerStatefulWidget {
+  const NvmeAttachedNamespaceMoveEditor({super.key});
+  @override
+  ConsumerState<NvmeAttachedNamespaceMoveEditor> createState() => _MoveState();
+}
+
+class _MoveState extends ConsumerState<NvmeAttachedNamespaceMoveEditor> {
+  final _id = TextEditingController(),
+      _phrase = TextEditingController(),
+      _destinationId = TextEditingController();
+  NvmeAttachedNamespaceMoveReview? _review;
+  NvmeAttachedNamespaceMoveCoordinator? _owner;
+  NvmeAttachedNamespaceMoveCoordinator? _candidateOwner;
+  List<NvmeAttachedNamespaceMoveCandidate>? _candidates;
+  Object? _session, _reviewSession;
+  bool _busy = false,
+      _reload = false,
+      _limitations = false,
+      _identityRisk = false;
+  bool _attachedDestination = false, _destinationExposure = false;
+  bool _isolatedSource = false;
+  Provider<NvmeAttachedNamespaceMoveCoordinator?> get _coordinatorProvider =>
+      _attachedDestination
+      ? (_isolatedSource
+            ? nvmeIsolatedSourceAttachedDestinationMoveCoordinatorProvider
+            : nvmePairedNamespaceMoveCoordinatorProvider)
+      : nvmeAttachedNamespaceMoveCoordinatorProvider;
+  String? _message;
+  int _epoch = 0;
+  int? get _targetId => RegExp(r'^[1-9][0-9]{0,9}$').hasMatch(_id.text)
+      ? int.tryParse(_id.text)
+      : null;
+  int? get _desiredDestination {
+    if (!RegExp(r'^[1-9][0-9]{0,9}$').hasMatch(_destinationId.text)) {
+      return null;
+    }
+    final value = int.tryParse(_destinationId.text);
+    return value != null && value > 0 ? value : null;
+  }
+
+  void _discard() {
+    _epoch++;
+    if (_review != null) _owner?.cancel(_review!);
+    _review = null;
+    _owner = null;
+    _reviewSession = null;
+    _reload = _limitations = _identityRisk = false;
+    _destinationExposure = false;
+    _phrase.clear();
+  }
+
+  @override
+  void dispose() {
+    _discard();
+    _id.dispose();
+    _destinationId.dispose();
+    _phrase.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCandidates(
+    NvmeAttachedNamespaceMoveCoordinator coordinator,
+  ) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _destinationId.clear();
+      _message = null;
+    });
+    try {
+      final candidates = await coordinator.loadCandidates();
+      if (!mounted ||
+          epoch != _epoch ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(coordinator, ref.read(_coordinatorProvider))) {
+        return;
+      }
+      setState(() {
+        _candidates = candidates;
+        _candidateOwner = coordinator;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          identical(session, ref.read(dashboardActiveSessionProvider))) {
+        setState(
+          () => _message = 'Move target discovery failed. No configuration request was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _prepare(
+    NvmeAttachedNamespaceMoveCoordinator coordinator,
+  ) async {
+    final session = ref.read(dashboardActiveSessionProvider);
+    _discard();
+    final epoch = _epoch;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final review = await coordinator.prepare(
+        _targetId ?? 0,
+        destinationId: _desiredDestination ?? 0,
+      );
+      if (!mounted ||
+          epoch != _epoch ||
+          !identical(session, ref.read(dashboardActiveSessionProvider)) ||
+          !identical(coordinator, ref.read(_coordinatorProvider))) {
+        coordinator.cancel(review);
+        return;
+      }
+      setState(() {
+        _review = review;
+        _owner = coordinator;
+        _reviewSession = session;
+      });
+    } on Object {
+      if (mounted &&
+          epoch == _epoch &&
+          identical(session, ref.read(dashboardActiveSessionProvider))) {
+        setState(
+          () => _message = 'Review failed. Select a disabled unlocked ZVOL source and a different restricted destination compatible with the selected connection mode, safe disabled unlocked ZVOL residents and noncolliding NSIDs. Nothing is enabled or removed. Nothing was sent.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _submit(
+    NvmeAttachedNamespaceMoveCoordinator coordinator,
+    NvmeAttachedNamespaceMoveReview review,
+  ) async {
+    final session = _reviewSession, phrase = _phrase.text;
+    final reload = _reload,
+        limitations = _limitations,
+        identityRisk = _identityRisk;
+    final exposure = _destinationExposure;
+    _review = null;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final result = await coordinator.execute(
+      review,
+      phrase,
+      acknowledgeReload: reload,
+      acknowledgeLimitations: limitations,
+      acknowledgeIdentityRisk: identityRisk,
+      acknowledgeDestinationExposure: exposure,
+    );
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (identical(session, ref.read(dashboardActiveSessionProvider))) {
+        _discard();
+        _candidates = null;
+        _candidateOwner = null;
+        _message = result.message;
+      }
+    });
+    if (identical(session, ref.read(dashboardActiveSessionProvider)) &&
+        result.outcome == NvmeAttachedNamespaceMoveOutcome.completed) {
+      ref.invalidate(nvmeOverviewProvider);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(dashboardActiveSessionProvider);
+    final coordinator = ref.watch(_coordinatorProvider);
+    if (!identical(session, _session)) {
+      _discard();
+      _id.clear();
+      _destinationId.clear();
+      _candidates = null;
+      _candidateOwner = null;
+      _message = null;
+      _session = session;
+    }
+    if (_owner != null && !identical(coordinator, _owner)) _discard();
+    if (_candidateOwner != null && !identical(coordinator, _candidateOwner)) {
+      _candidates = null;
+      _candidateOwner = null;
+      _id.clear();
+      _destinationId.clear();
+    }
+    final active =
+        !_busy &&
+        coordinator?.available == true &&
+        coordinator?.locked == false;
+    final review = _review;
+    final candidates = _candidates;
+    final selected = candidates
+        ?.where((c) => c.target.id == _targetId)
+        .singleOrNull;
+    final selectedDestination = selected?.destinations
+        .where((s) => s.id == _desiredDestination)
+        .singleOrNull;
+    return TdPanel(
+      title: _attachedDestination
+          ? (_isolatedSource
+                ? 'Move an isolated disabled ZVOL to a singly attached subsystem'
+                : 'Move a disabled ZVOL between singly attached subsystems')
+          : 'Move a singly attached disabled ZVOL to an isolated subsystem',
+      description: _attachedDestination
+          ? (_isolatedSource
+                ? 'The restricted source must have no port or host mapping. The restricted destination must have exactly one disabled unshared TCP/RDMA port and no host grant. Both may contain only disabled unlocked unique-NSID ZVOLs, without destination NSID collisions. No port or association fields are submitted; runtime access, addresses and hidden backing identity are not attested.'
+                : 'Both restricted subsystems must have exactly one disabled unshared TCP/RDMA port, no host grants, and only disabled unlocked unique-NSID ZVOL residents. Destination NSIDs must not collide. Both associations and ports remain unchanged. Disabled saved flags do not prove runtime isolation or prevent future exposure. Only the saved subsystem assignment changes.')
+          : 'Only a disabled unlocked ZVOL in a restricted subsystem behind one disabled TCP/RDMA port, with no other port mapping or host grant and safe disabled residents, is supported. The different destination must be restricted and have no port or host mapping and only safe disabled unlocked ZVOL residents with noncolliding NSIDs. Known public subsystem NQNs must be unique. Only the saved subsystem assignment changes; NSID, port, enablement and backing fields remain unchanged.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Checkbox(
+                key: const Key('nvme-attached-namespace-move-destination-mode'),
+                value: _attachedDestination,
+                onChanged: _busy
+                    ? null
+                    : (value) => setState(() {
+                        _discard();
+                        _candidates = null;
+                        _candidateOwner = null;
+                        _id.clear();
+                        _destinationId.clear();
+                        _message = null;
+                        _attachedDestination = value == true;
+                        _isolatedSource = false;
+                      }),
+              ),
+              const Expanded(
+                child: Text('Use a singly attached disabled destination'),
+              ),
+            ],
+          ),
+          if (_attachedDestination)
+            Row(
+              children: [
+                Checkbox(
+                  key: const Key(
+                    'nvme-attached-namespace-move-isolated-source',
+                  ),
+                  value: _isolatedSource,
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() {
+                          _discard();
+                          _candidates = null;
+                          _candidateOwner = null;
+                          _id.clear();
+                          _destinationId.clear();
+                          _message = null;
+                          _isolatedSource = value == true;
+                        }),
+                ),
+                const Expanded(
+                  child: Text(
+                    'Use an isolated source without a port association',
+                  ),
+                ),
+              ],
+            ),
+          OutlinedButton(
+            key: const Key('nvme-attached-namespace-move-discover'),
+            onPressed: active ? () => _loadCandidates(coordinator!) : null,
+            child: const Text('Load or refresh eligible move targets'),
+          ),
+          if (candidates != null) ...[
+            const Text(
+              'Discovery is a public configuration snapshot, not a safety or runtime guarantee. Selection only fills IDs; review and submission each reread the server.',
+            ),
+            if (candidates.isEmpty)
+              const Text(
+                'No eligible namespace and destination pairs were found.',
+              ),
+            if (candidates.isNotEmpty) ...[
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Choose namespace',
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    key: const Key(
+                      'nvme-attached-namespace-move-source-choice',
+                    ),
+                    isExpanded: true,
+                    value: selected?.target.id,
+                    hint: const Text('Select a namespace'),
+                    items: [
+                      for (final candidate in candidates)
+                        DropdownMenuItem(
+                          value: candidate.target.id,
+                          child: Text(
+                            '#${candidate.target.id} · NSID ${candidate.target.nsid} · ${candidate.source.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: active
+                        ? (id) => setState(() {
+                            _discard();
+                            _id.text = id?.toString() ?? '';
+                            _destinationId.clear();
+                            _message = null;
+                          })
+                        : null,
+                  ),
+                ),
+              ),
+              if (selected != null) ...[
+                Text(
+                  'Source: ${selected.source.name} — ${selected.source.subnqn}; namespace #${selected.target.id}, NSID ${selected.target.nsid}',
+                ),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Choose destination subsystem',
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int>(
+                      key: const Key(
+                        'nvme-attached-namespace-move-destination-choice',
+                      ),
+                      isExpanded: true,
+                      value: selectedDestination?.id,
+                      hint: const Text('Select a destination'),
+                      items: [
+                        for (final destination in selected.destinations)
+                          DropdownMenuItem(
+                            value: destination.id,
+                            child: Text(
+                              '#${destination.id} · ${destination.name}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: active
+                          ? (id) => setState(() {
+                              _discard();
+                              _destinationId.text = id?.toString() ?? '';
+                              _message = null;
+                            })
+                          : null,
+                    ),
+                  ),
+                ),
+                if (selectedDestination != null)
+                  Text(
+                    'Destination: ${selectedDestination.name} — ${selectedDestination.subnqn}',
+                  ),
+              ],
+            ],
+          ],
+          TextField(
+            key: const Key('nvme-attached-namespace-move-id'),
+            controller: _id,
+            enabled: active,
+            keyboardType: TextInputType.number,
+            maxLength: 10,
+            decoration: const InputDecoration(
+              labelText: 'Exact namespace database ID (not NSID)',
+            ),
+            onChanged: (_) => setState(() {
+              _discard();
+              _destinationId.clear();
+            }),
+          ),
+          TextField(
+            key: const Key('nvme-attached-namespace-move-new'),
+            controller: _destinationId,
+            enabled: active,
+            keyboardType: TextInputType.number,
+            maxLength: 10,
+            decoration: InputDecoration(
+              labelText: _attachedDestination
+                  ? 'Exact singly attached destination subsystem database ID'
+                  : 'Exact isolated destination subsystem database ID',
+            ),
+            onChanged: (_) => setState(_discard),
+          ),
+          OutlinedButton(
+            key: const Key('nvme-attached-namespace-move-review'),
+            onPressed:
+                active && _targetId != null && _desiredDestination != null
+                ? () => _prepare(coordinator!)
+                : null,
+            child: const Text('Review attached namespace move'),
+          ),
+          if (coordinator?.available != true)
+            const Text(
+              'Required methods and protected host inventory are unavailable.',
+            ),
+          if (coordinator?.locked == true)
+            const Text(
+              'An operation is in progress or an NVMe change is unverified. Reconnect before editing.',
+            ),
+          if (review != null) ...[
+            if (review.destinationMapping != null)
+              Text(
+                'Preserved destination association #${review.destinationMapping!.id}, disabled port #${review.destinationPort!.id} ${review.destinationPort!.transport}',
+              ),
+            Text('Server: ${review.endpoint}'),
+            Text(
+              'Namespace #${review.target.id}, preserved NSID ${review.target.nsid}; subsystem #${review.source.id} NQN ${review.source.subnqn} → #${review.destination.id} NQN ${review.destination.subnqn}',
+            ),
+            Text(
+              review.mapping == null
+                  ? 'Source subsystem #${review.source.id} has no port association.'
+                  : 'Preserved association #${review.mapping!.id}, disabled port #${review.port!.id} ${review.port!.transport}; subsystem ${review.source.name}; NQN ${review.source.subnqn}',
+            ),
+            Text(
+              'Unchanged neighboring namespaces: ${review.sourceNamespaces.length}',
+            ),
+            for (final resident in review.sourceNamespaces)
+              Text(
+                'Namespace #${resident.id}, NSID ${resident.nsid}: disabled unlocked ZVOL; unchanged',
+              ),
+            Text(
+              'Unchanged destination residents: ${review.destinationNamespaces.length}',
+            ),
+            for (final resident in review.destinationNamespaces)
+              Text(
+                'Destination namespace #${resident.id}, NSID ${resident.nsid}: disabled unlocked ZVOL; unchanged',
+              ),
+            const Text(
+              'Only subsys_id is submitted. Public topology is rechecked; sequential reads cannot exclude concurrent changes or hidden backing drift. Review is single-use and expires in five minutes.',
+            ),
+            Row(
+              children: [
+                Checkbox(
+                  key: const Key('nvme-attached-namespace-move-reload'),
+                  value: _reload,
+                  onChanged: _busy
+                      ? null
+                      : (v) => setState(() => _reload = v == true),
+                ),
+                const Expanded(
+                  child: Text(
+                    'I consent to the saved subsystem assignment change and NVMe configuration reload. Initiator configuration may need updating; runtime access is not tested.',
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                Checkbox(
+                  key: const Key('nvme-attached-namespace-move-limitations'),
+                  value: _limitations,
+                  onChanged: _busy
+                      ? null
+                      : (v) => setState(() => _limitations = v == true),
+                ),
+                const Expanded(
+                  child: Text(
+                    'I understand backing identity, ownership and health are unverified and concurrent administrators are not excluded. No retry or rollback is attempted for an uncertain result.',
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                Checkbox(
+                  key: const Key('nvme-attached-namespace-move-identity'),
+                  value: _identityRisk,
+                  onChanged: _busy
+                      ? null
+                      : (value) =>
+                            setState(() => _identityRisk = value == true),
+                ),
+                const Expanded(
+                  child: Text(
+                    'I understand moving a namespace changes its subsystem NQN context and may disrupt discovery or access. No port or namespace is enabled; reviewed associations are preserved. Saved flags and absent grants do not prove runtime isolation or actual client access.',
+                  ),
+                ),
+              ],
+            ),
+            const Text('Confirmation phrase (copy or type exactly):'),
+            if (review.destinationMapping != null)
+              Row(
+                children: [
+                  Checkbox(
+                    key: const Key('nvme-attached-namespace-move-exposure'),
+                    value: _destinationExposure,
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(
+                            () => _destinationExposure = value == true,
+                          ),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'I accept destination discovery/access and future-exposure risks. Both saved ports remain disabled; runtime isolation, client reconfiguration and backing health are not proven.',
+                    ),
+                  ),
+                ],
+              ),
+            SelectableText(
+              review.confirmation,
+              key: const Key('nvme-attached-namespace-move-confirmation'),
+            ),
+            TextField(
+              key: const Key('nvme-attached-namespace-move-phrase'),
+              controller: _phrase,
+              enabled: !_busy,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'Exact confirmation phrase',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            FilledButton(
+              key: const Key('nvme-attached-namespace-move-submit'),
+              onPressed:
+                  active &&
+                      _reload &&
+                      _limitations &&
+                      _identityRisk &&
+                      (review.destinationMapping == null ||
+                          _destinationExposure) &&
+                      _phrase.text == review.confirmation
+                  ? () => _submit(coordinator!, review)
+                  : null,
+              child: const Text('Apply saved namespace move'),
+            ),
+            TextButton(
+              key: const Key('nvme-attached-namespace-move-cancel'),
+              onPressed: _busy ? null : () => setState(_discard),
+              child: const Text('Cancel review'),
+            ),
+          ],
+          if (_message != null) Text(_message!),
+        ],
+      ),
+    );
+  }
+}

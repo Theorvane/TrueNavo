@@ -2,7 +2,7 @@
 
 This document records the earlier dashboard/Quick management increment. The broader current target and implementation gaps are tracked in [WebUI parity status](WEBUI_PARITY_STATUS.md); full administration is no longer excluded from the product target.
 
-This increment extends the existing read-only inventory without widening its six-method query allowlist. Mutation commands are separately typed, session-bound and version-gated. TrueRAID remains unofficial; these adapters are not appliance certification.
+This increment extends the existing read-only inventory without widening its six-method query allowlist. Mutation commands are separately typed, session-bound and version-gated. TrueNavo remains unofficial; these adapters are not appliance certification.
 
 ## Available operations
 
@@ -39,7 +39,7 @@ Pool capacity charts use each pool's own reported percentage; unrelated pools ar
 
 ## Local verification
 
-From `apps/trueraid`: `fvm flutter analyze`, `fvm flutter test`, `fvm flutter build apk --debug`.
+From `apps/truenavo`: `fvm flutter analyze`, `fvm flutter test`, `fvm flutter build apk --debug`.
 From `packages/truenas_api`: `fvm dart test`.
 
 Use the dev-only `lib/dev/dashboard_preview_main.dart` target to inspect the interface without a server. The normal entrypoint contains no sample data. Install the normal APK after preview testing before connecting to a real server.

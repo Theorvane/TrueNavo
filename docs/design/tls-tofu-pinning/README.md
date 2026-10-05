@@ -8,7 +8,7 @@ These are approved planned-design review artifacts for TD-003, not evidence of a
 
 ![Blocked certificate change and Web limitation](./certificate-change-blocked.svg)
 
-The mockups are normative for content hierarchy, exact safety copy, and interaction behavior. Flutter implementation must use TrueRAID design-system semantic tokens and components, rather than copying SVG color, spacing, or typography literals.
+The mockups are normative for content hierarchy, exact safety copy, and interaction behavior. Flutter implementation must use TrueNavo design-system semantic tokens and components, rather than copying SVG color, spacing, or typography literals.
 
 Review checklist:
 

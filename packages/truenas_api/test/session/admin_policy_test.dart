@@ -437,7 +437,7 @@ void main() {
       'TD-076',
     };
     final requirements =
-        File('../../docs/planning/TRUERAID_CAPABILITY_MATRIX.csv')
+        File('../../docs/planning/TRUENAVO_CAPABILITY_MATRIX.csv')
             .readAsLinesSync()
             .skip(1)
             .where((line) => line.isNotEmpty)

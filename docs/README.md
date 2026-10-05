@@ -1,12 +1,12 @@
-# TrueRAID Documentation
+# TrueNavo Documentation
 
 ## Planning
 
-- [`planning/TRUERAID_PRODUCT_PLAN.md`](planning/TRUERAID_PRODUCT_PLAN.md) — product scope, UX, architecture, security, testing, and roadmap
-- [`planning/TRUERAID_CAPABILITY_MATRIX.csv`](planning/TRUERAID_CAPABILITY_MATRIX.csv) — 88-item full-function parity ledger
-- [`planning/TRUERAID_DESIGN_SYSTEM.md`](planning/TRUERAID_DESIGN_SYSTEM.md) — approved A+B visual direction, tokens, responsive rules, components, and accessibility criteria
-- [`planning/TRUERAID_DESIGN_SYSTEM_IMPLEMENTATION.md`](planning/TRUERAID_DESIGN_SYSTEM_IMPLEMENTATION.md) — task-by-task TDD, verification, rendering, and stacked-MR delivery plan
-- [`planning/TRUERAID_DESIGN_SYSTEM_IMPLEMENTATION_EVIDENCE.md`](planning/TRUERAID_DESIGN_SYSTEM_IMPLEMENTATION_EVIDENCE.md) — factual design-system remediation and verification evidence
+- [`planning/TRUENAVO_PRODUCT_PLAN.md`](planning/TRUENAVO_PRODUCT_PLAN.md) — product scope, UX, architecture, security, testing, and roadmap
+- [`planning/TRUENAVO_CAPABILITY_MATRIX.csv`](planning/TRUENAVO_CAPABILITY_MATRIX.csv) — 88-item full-function parity ledger
+- [`planning/TRUENAVO_DESIGN_SYSTEM.md`](planning/TRUENAVO_DESIGN_SYSTEM.md) — approved A+B visual direction, tokens, responsive rules, components, and accessibility criteria
+- [`planning/TRUENAVO_DESIGN_SYSTEM_IMPLEMENTATION.md`](planning/TRUENAVO_DESIGN_SYSTEM_IMPLEMENTATION.md) — task-by-task TDD, verification, rendering, and stacked-MR delivery plan
+- [`planning/TRUENAVO_DESIGN_SYSTEM_IMPLEMENTATION_EVIDENCE.md`](planning/TRUENAVO_DESIGN_SYSTEM_IMPLEMENTATION_EVIDENCE.md) — factual design-system remediation and verification evidence
 - [`planning/M0_FOUNDATION_DESIGN.md`](planning/M0_FOUNDATION_DESIGN.md) — approved M0 secure connection boundary
 - [`planning/M0_FOUNDATION_IMPLEMENTATION.md`](planning/M0_FOUNDATION_IMPLEMENTATION.md) — M0 implementation and verification plan
 - [`planning/M0_IMPLEMENTATION_EVIDENCE.md`](planning/M0_IMPLEMENTATION_EVIDENCE.md) — command evidence from this isolated implementation
