@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/snapshot_schedules_preview.dart';
+import 'package:truenavo/sample/snapshot_schedules_preview.dart';
 import 'package:truenavo/features/snapshot_schedules/snapshot_calendar_editor.dart';
 import 'package:truenavo/features/snapshot_schedules/snapshot_schedule_editor.dart';
 import 'package:truenavo/features/snapshot_schedules/snapshot_schedule_review.dart';

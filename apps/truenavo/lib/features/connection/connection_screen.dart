@@ -10,9 +10,14 @@ import '../tls_trust/certificate_trust_coordinator.dart';
 import '../tls_trust/tls_trust_providers.dart';
 
 class ConnectionScreen extends ConsumerStatefulWidget {
-  const ConnectionScreen({super.key, this.onConnectionSucceeded});
+  const ConnectionScreen({
+    super.key,
+    this.onConnectionSucceeded,
+    this.onExploreDemo,
+  });
 
   final VoidCallback? onConnectionSucceeded;
+  final VoidCallback? onExploreDemo;
 
   @override
   ConsumerState<ConnectionScreen> createState() => _ConnectionScreenState();
@@ -137,6 +142,25 @@ class _ConnectionScreenState extends ConsumerState<ConnectionScreen> {
           ),
         ),
         const SizedBox(height: TdSpacing.group),
+        if (widget.onExploreDemo != null) ...[
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('explore-offline-demo'),
+              onPressed: busy ? null : widget.onExploreDemo,
+              icon: const Icon(Icons.explore_outlined),
+              label: const Text('Explore offline demo'),
+            ),
+          ),
+          const SizedBox(height: TdSpacing.related),
+          Text(
+            'No NAS, login or internet required. Browse sample data and preview management screens without applying changes.',
+            style: TdTypography.body.copyWith(
+              color: context.tdTheme.textSecondary,
+            ),
+          ),
+          const SizedBox(height: TdSpacing.group),
+        ],
         TdTextField(
           label: 'Server URL',
           fieldKey: const Key('server-url-field'),

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/cloud_credentials_preview.dart';
+import 'package:truenavo/sample/cloud_credentials_preview.dart';
 import 'package:truenavo/features/cloud_credentials/cloud_credentials_controller.dart';
 import 'package:truenavo/features/cloud_credentials/cloud_credentials_editor.dart';
 import 'package:truenavo/features/cloud_credentials/cloud_credentials_page.dart';

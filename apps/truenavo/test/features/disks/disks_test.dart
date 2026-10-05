@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/disks_preview.dart';
+import 'package:truenavo/sample/disks_preview.dart';
 import 'package:truenavo/features/disks/disks_controller.dart';
 import 'package:truenavo/features/disks/disks_editor.dart';
 import 'package:truenavo/features/disks/disks_page.dart';

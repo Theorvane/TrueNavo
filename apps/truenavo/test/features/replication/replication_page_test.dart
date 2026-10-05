@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/replication_preview.dart';
+import 'package:truenavo/sample/replication_preview.dart';
 import 'package:truenavo/features/replication/replication_controller.dart';
 import 'package:truenavo/features/replication/replication_page.dart';
 import 'package:truenavo_design_system/truenavo_design_system.dart';

@@ -22,6 +22,30 @@ The repository currently has no advertising, subscription, or analytics SDK in t
 
 Provide review access that store reviewers can actually reach: an isolated demo server/account or a reviewed connector-free demonstration flow. A private LAN address and personal administrator API key are unsuitable review credentials. Do not reuse the previously supplied read-only development credential as a store-review account.
 
+### Offline demonstration access (build 2 and later)
+
+The release app has a public **Explore offline demo** button on its connection screen. It needs no NAS, credentials, network, payment, OTP or other device. It opens the normal dashboard and native management pages with synthetic sample data. A persistent banner discloses demo mode on pages and dialogs. Management forms can be explored, but submissions are rejected; this is not evidence of a successful real operation. Some workspaces remain unavailable under the app's documented partial compatibility. The demo does not guarantee store acceptance or substitute for testing real connections.
+
+Declare the real app's NAS authentication/connection restriction accurately in Play's App access form. Describe the offline demo as an alternate demonstration route, not an unrestricted real NAS account. Use these English instructions only with a binary containing the button (the previously supplied build 1 does not):
+
+```text
+Instruction name: TrueNavo offline demonstration
+
+Open the app and tap "Explore offline demo" on the connection screen.
+No username, password, server address, API key, OTP, internet connection,
+payment, or separate device is required for this demonstration.
+Browse Home, Storage, Workloads, Alerts, and Jobs. Use "Manage server"
+or search to explore the available management screens and sample graphs.
+The banner "OFFLINE DEMO · SAMPLE DATA" identifies synthetic data.
+Management submissions are blocked; they do not modify a NAS.
+Tap "Exit demo" to return to the normal connection screen. Demo state
+is discarded. Real monitoring and management require the user's own
+compatible TrueNAS server and account; no personal NAS credentials
+are provided for review.
+```
+
+Leave credential fields empty when the console allows credential-free instructions; do not invent a demo account or paste a personal administrator key. Verify the exact review binary and explain any functionality the demo does not expose. Google requires reusable, location-independent review access and English instructions: [sign-in details requirements](https://support.google.com/googleplay/android-developer/answer/15748846?hl=en).
+
 The current app has partial TrueNAS compatibility and management writes have not been accepted on a real appliance. Keep that disclosure in store copy and release notes; a green build is not a full compatibility claim.
 
 ## Needed from the maintainer

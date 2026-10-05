@@ -7,6 +7,7 @@ import 'package:truenavo_design_system/truenavo_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';
 
 import 'live_metrics_controller.dart';
+import '../offline_demo/offline_demo_mode.dart';
 
 final _coreNamePattern = RegExp(r'^cpu[0-9]+$');
 
@@ -77,13 +78,15 @@ class _DashboardLiveMetricsState extends ConsumerState<DashboardLiveMetrics>
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(liveMetricsControllerProvider);
+    final demo = ref.watch(offlineDemoModeProvider);
     final running =
         state.phase == LiveMetricsPhase.live ||
         state.phase == LiveMetricsPhase.connecting;
     return TdPanel(
-      title: 'Live performance',
-      description:
-          'Server events · 2-second interval · up to 60 received samples',
+      title: demo ? 'Sample performance' : 'Live performance',
+      description: demo
+          ? 'Generated offline samples · not server measurements'
+          : 'Server events · 2-second interval · up to 60 received samples',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -94,8 +97,9 @@ class _DashboardLiveMetricsState extends ConsumerState<DashboardLiveMetrics>
             runSpacing: 8,
             children: [
               Text(switch (state.phase) {
-                LiveMetricsPhase.live => '● Live',
-                LiveMetricsPhase.connecting => 'Connecting…',
+                LiveMetricsPhase.live => demo ? '● Sample' : '● Live',
+                LiveMetricsPhase.connecting =>
+                  demo ? 'Loading samples…' : 'Connecting…',
                 LiveMetricsPhase.paused => 'Paused',
                 LiveMetricsPhase.unavailable => 'Unavailable',
                 LiveMetricsPhase.idle => 'Ready',

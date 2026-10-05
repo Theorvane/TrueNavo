@@ -9,7 +9,7 @@ import 'server_profile_store.dart';
 
 /// Production bootstrap overrides this with its single opened Drift store.
 final serverProfileStoreProvider = Provider<ServerProfileStore>(
-  (ref) => _EphemeralServerProfileStore(),
+  (ref) => MemoryServerProfileStore(),
 );
 
 /// Production bootstrap supplies the already-hydrated, immutable snapshot.
@@ -268,13 +268,15 @@ final class ServerProfilesController extends Notifier<ServerProfilesState> {
   }
 }
 
-/// Keeps isolated widget/unit tests usable. It is never used by production,
-/// where bootstrap provides the opened Drift store and hydrated snapshot.
-final class _EphemeralServerProfileStore implements ServerProfileStore {
-  ServerProfileSnapshot _snapshot = ServerProfileSnapshot(
-    profiles: const [],
-    selectedProfileId: null,
-  );
+/// Session-only storage for offline demo and isolated tests. Live bootstrap
+/// replaces it with the opened Drift store; nothing here touches the disk.
+final class MemoryServerProfileStore implements ServerProfileStore {
+  MemoryServerProfileStore({ServerProfileSnapshot? initialSnapshot})
+    : _snapshot =
+          initialSnapshot ??
+          ServerProfileSnapshot(profiles: const [], selectedProfileId: null);
+
+  ServerProfileSnapshot _snapshot;
 
   @override
   Future<ServerProfileSnapshot> load() async => _snapshot;

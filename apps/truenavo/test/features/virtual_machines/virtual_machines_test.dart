@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:truenavo/features/connection/connection_controller.dart';
-import 'package:truenavo/dev/virtual_machines_preview.dart';
+import 'package:truenavo/sample/virtual_machines_preview.dart';
 import 'package:truenavo/features/dashboard/dashboard_controller.dart';
 import 'package:truenavo/features/management/server_operation_lock.dart';
 import 'package:truenavo/features/virtual_machines/virtual_machines_controller.dart';

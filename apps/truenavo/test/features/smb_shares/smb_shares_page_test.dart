@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/smb_shares_preview.dart';
+import 'package:truenavo/sample/smb_shares_preview.dart';
 import 'package:truenavo/features/smb_shares/smb_share_editor.dart';
 import 'package:truenavo/features/smb_shares/smb_shares_controller.dart';
 import 'package:truenavo/features/smb_shares/smb_shares_page.dart';

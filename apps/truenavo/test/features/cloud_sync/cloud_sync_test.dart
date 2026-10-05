@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/cloud_sync_preview.dart';
+import 'package:truenavo/sample/cloud_sync_preview.dart';
 import 'package:truenavo/features/cloud_sync/cloud_sync_controller.dart';
 import 'package:truenavo/features/cloud_sync/cloud_sync_editor.dart';
 import 'package:truenavo/features/cloud_sync/cloud_sync_page.dart';

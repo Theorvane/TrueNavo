@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/permissions_preview.dart';
+import 'package:truenavo/sample/permissions_preview.dart';
 import 'package:truenavo/features/permissions/permissions_acl_editor.dart';
 import 'package:truenavo/features/permissions/permissions_controller.dart';
 import 'package:truenavo/features/permissions/permissions_page.dart';

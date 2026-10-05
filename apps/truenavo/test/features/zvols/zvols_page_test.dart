@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/zvols_preview.dart';
+import 'package:truenavo/sample/zvols_preview.dart';
 import 'package:truenavo/features/zvols/zvols_page.dart';
 import 'package:truenavo_design_system/truenavo_design_system.dart';
 import 'package:truenas_api/truenas_api.dart';

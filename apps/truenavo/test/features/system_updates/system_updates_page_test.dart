@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/system_updates_preview.dart';
+import 'package:truenavo/sample/system_updates_preview.dart';
 import 'package:truenavo/features/system_updates/system_update_review.dart';
 import 'package:truenavo/features/system_updates/system_updates_controller.dart';
 import 'package:truenavo/features/system_updates/system_updates_page.dart';
