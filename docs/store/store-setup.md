@@ -1,6 +1,6 @@
 # TrueNavo store setup
 
-The app display name is **TrueNavo**; the listing title is **TrueNavo For TrueNas**. Both Android and iOS use `com.truenavo.truenavo`. These registrations are separate from the former TrueRAID/TrueDash identifiers.
+The app display name is **TrueNavo**; the listing title is **TrueNavo For TrueNas**. Both Android and iOS use `com.sloki9637.truenavo`. These registrations are separate from the former TrueRAID/TrueDash identifiers.
 
 ## Google Play
 
@@ -10,13 +10,13 @@ The automated job uploads a signed AAB and reviewed English/Korean notes to **in
 
 ## Apple
 
-Register the explicit bundle ID `com.truenavo.truenavo` in the selected Apple developer team, create its App Store Connect app record, and create an **App Store distribution** provisioning profile. The profile must not be a development, ad hoc, enterprise, wildcard, expired, or LabFox profile. Provide the distribution `.p12` with its private key, profile, and an App Store Connect API `.p8` with permission to upload this app's builds.
+Register the explicit bundle ID `com.sloki9637.truenavo` in the selected Apple developer team, create its App Store Connect app record, and create an **App Store distribution** provisioning profile. The profile must not be a development, ad hoc, enterprise, wildcard, expired, or LabFox profile. Provide the distribution `.p12` with its private key, profile, and an App Store Connect API `.p8` with permission to upload this app's builds.
 
 The automated job uploads to App Store Connect; it does not submit review, create a public App Store listing, or configure external TestFlight testing. Wait for build processing, complete export compliance and TestFlight information, select the build, and then invite testers or submit review as appropriate.
 
 ## Listing assets and declarations
 
-Use [listing.md](listing.md) as initial copy and review it against the exact binary. Supply a TrueNavo app icon, Play's feature graphic, phone/tablet screenshots, a public privacy-policy URL, and developer/support contact details. The current launcher assets still use the Flutter placeholder and must be replaced before store submission.
+Use [listing.md](listing.md) as initial copy and review it against the exact binary. The approved TrueNavo icon is in [brand/truenavo-icon.png](../../brand/truenavo-icon.png); committed Android, iOS, macOS, Windows and web launcher assets are generated using `dart run tool/generate_brand_icons.dart` from `apps/truenavo`. The wrapper preserves Xcode project settings during icon generation. The developer-supplied privacy-policy URL is https://www.sloki9637.com/privacy (HTTP 200 verified on 2026-10-05). Its current mobile-specific notices concern other apps; confirm that the policy accurately covers TrueNavo's local credentials and user-selected server connections before public submission. Play's feature graphic, phone/tablet screenshots and developer/support contact details still need final review.
 
 The repository currently has no advertising, subscription, or analytics SDK in the app dependencies. Describe the implemented binary rather than the product plan: credentials are entered to connect to a user-chosen TrueNAS server, and inventory/management information comes from that server. Review the local-storage behavior, user-triggered exports, cloud/task operations, and installed dependencies when completing Data safety and App Privacy. Store declarations and legal policy require the developer's final review.
 
@@ -28,7 +28,7 @@ The current app has partial TrueNAS compatibility and management writes have not
 
 - Play app registration/initial upload status, upload `.jks`/`.keystore`, key alias and passwords, authorized service-account JSON.
 - Apple developer team ID, TrueNavo bundle/app registration, distribution `.p12` and password, TrueNavo App Store `.mobileprovision`, API `.p8`, key ID, and issuer ID.
-- TrueNavo icon, listing screenshots/feature graphic, public privacy-policy URL, support/developer contact, and store-review access.
+- Listing screenshots/feature graphic, confirmation of the supplied privacy policy, support/developer contact, and store-review access.
 
 Upload secrets directly to [TrueNavo environments](https://github.com/Theorvane/TrueNavo/settings/environments) or use the local configuration helper described in [RELEASING.md](../../RELEASING.md). Do not commit them or paste private keys into issues or pull requests.
 

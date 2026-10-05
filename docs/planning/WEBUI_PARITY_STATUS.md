@@ -4,7 +4,9 @@
 
 The Flutter app, design-system package, Android package/application ID,
 Apple bundle IDs, desktop identifiers and web app manifest now use
-**TrueNavo** / `truenavo` (`com.truenavo.truenavo` on Android and Apple).
+**TrueNavo** / `truenavo` (`com.sloki9637.truenavo` on Android and iOS; `com.truenavo.truenavo` retained on macOS/Linux).
+
+2026-10-05 store identity update: the maintainer approved the registered mobile ID above and the new storage/navigation icon. Older package IDs in the dated verification entries below are preserved as historical evidence; those runs do not validate the new mobile ID or store signing.
 Secure-storage keys, TLS-pin namespaces and local database names also use
 the new identifier; native platform channels and CI paths were updated
 together. The former TrueRAID installation does not automatically transfer

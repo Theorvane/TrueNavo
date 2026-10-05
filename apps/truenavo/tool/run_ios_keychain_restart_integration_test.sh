@@ -3,7 +3,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-readonly bundle_id='com.truenavo.truenavo'
+readonly bundle_id='com.sloki9637.truenavo'
 readonly test_file='integration_test/ios_keychain_restart_test.dart'
 readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly app_dir="$(cd -- "$script_dir/.." && pwd -P)"

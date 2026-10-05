@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 60
     environment: app-store
     env:
-      BUNDLE_ID: com.truenavo.truenavo
+      BUNDLE_ID: com.sloki9637.truenavo
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_BUILD: ${{ inputs.build }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}

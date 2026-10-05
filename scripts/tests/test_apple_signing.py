@@ -14,7 +14,7 @@ spec.loader.exec_module(apple)
 
 class AppleSigningTest(unittest.TestCase):
     team = "TESTTEAM01"
-    bundle = "com.truenavo.truenavo"
+    bundle = "com.sloki9637.truenavo"
     now = datetime.datetime(2026, 1, 1)
 
     def profile(self):

@@ -28,7 +28,7 @@ final class FlutterSecureRawPinStorage implements RawPinStorage {
       _storage = FlutterSecureStorage(
         aOptions: const AndroidOptions(
           resetOnError: false,
-          storageNamespace: 'com.truenavo.truenavo.tls-pin',
+          storageNamespace: 'com.sloki9637.truenavo.tls-pin',
         ),
         iOptions: const IOSOptions(
           accessibility: KeychainAccessibility.unlocked_this_device,

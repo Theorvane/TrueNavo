@@ -31,7 +31,7 @@ Release packaging uses pinned Action commit SHAs. Store environments allow deplo
 
 ## Credentials
 
-Register secrets in the named **TrueNavo** repository environments. GitHub does not allow reading back LabFox secrets. An Apple distribution certificate may belong to the same developer team, but the provisioning profile must specifically match `com.truenavo.truenavo`; do not reuse LabFox's profile.
+Register secrets in the named **TrueNavo** repository environments. GitHub does not allow reading back LabFox secrets. An Apple distribution certificate may belong to the same developer team, but the provisioning profile must specifically match `com.sloki9637.truenavo`; do not reuse LabFox's profile.
 
 | Environment | Secret | Required material |
 |---|---|---|

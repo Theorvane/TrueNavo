@@ -12,7 +12,7 @@ Compatibility is partial. Supported operations and restrictions are documented i
 
 Support: https://github.com/Theorvane/TrueNavo/issues
 
-Privacy-policy URL: required from the developer before submission.
+Privacy-policy URL: https://www.sloki9637.com/privacy
 
 ## 한국어
 
@@ -26,4 +26,4 @@ TrueNavo는 TrueNAS용 비공식 클라이언트입니다. 자신의 서버에 �
 
 지원: https://github.com/Theorvane/TrueNavo/issues
 
-개인정보 처리방침 URL: 스토어 제출 전에 개발자 제공 필요.
+개인정보 처리방침 URL: https://www.sloki9637.com/privacy

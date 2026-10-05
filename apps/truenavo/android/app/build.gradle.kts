@@ -35,7 +35,7 @@ if (releaseRequested) {
 }
 
 android {
-    namespace = "com.truenavo.truenavo"
+    namespace = "com.sloki9637.truenavo"
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
@@ -49,7 +49,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.truenavo.truenavo"
+        applicationId = "com.sloki9637.truenavo"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
