@@ -8,6 +8,8 @@ TrueNavo replaces the former TrueRAID identity. Android and iOS use the store-re
 
 Privacy policy: [www.sloki9637.com/privacy](https://www.sloki9637.com/privacy).
 
+To explore without a NAS, tap **Explore offline demo** on the connection screen (build 2 or later). The dashboard, sample charts and available management screens run locally without an account or internet. A persistent banner identifies synthetic data; management submissions are blocked and never contact a server. **Exit demo** discards the sample workspace without changing real saved profiles or credentials. The demo is available to everyone, not a hidden reviewer-only bypass. See [store review instructions](docs/store/store-setup.md#offline-demonstration-access-build-2-and-later).
+
 ## Documentation
 
 - [Contribution and dev/main branch flow](CONTRIBUTING.md)

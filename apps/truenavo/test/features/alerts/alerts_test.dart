@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/alerts_preview.dart';
+import 'package:truenavo/sample/alerts_preview.dart';
 import 'package:truenavo/features/alerts/alerts_controller.dart';
 import 'package:truenavo/features/alerts/alerts_dialog.dart';
 import 'package:truenavo/features/alerts/alerts_page.dart';

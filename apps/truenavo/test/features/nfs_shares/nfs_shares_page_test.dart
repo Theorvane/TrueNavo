@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/nfs_shares_preview.dart';
+import 'package:truenavo/sample/nfs_shares_preview.dart';
 import 'package:truenavo/features/nfs_shares/nfs_shares_controller.dart';
 import 'package:truenavo/features/nfs_shares/nfs_shares_page.dart';
 import 'package:truenavo_design_system/truenavo_design_system.dart';

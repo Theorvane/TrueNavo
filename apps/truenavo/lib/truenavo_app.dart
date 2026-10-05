@@ -8,12 +8,27 @@ import 'features/connection/connection_screen.dart';
 import 'features/connection/connection_state.dart';
 import 'features/server_profiles/server_profiles_controller.dart';
 import 'features/search/global_search.dart';
+import 'features/offline_demo/offline_demo_screen.dart';
 
-class TrueNavoApp extends ConsumerWidget {
+class TrueNavoApp extends ConsumerStatefulWidget {
   const TrueNavoApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TrueNavoApp> createState() => _TrueNavoAppState();
+}
+
+class _TrueNavoAppState extends ConsumerState<TrueNavoApp> {
+  bool _offlineDemo = false;
+
+  @override
+  Widget build(BuildContext context) {
+    // Replace, rather than nest, the live MaterialApp. A nested navigator's
+    // root dialogs could otherwise escape the isolated demo provider scope.
+    if (_offlineDemo) {
+      return OfflineDemoScreen(
+        onExit: () => setState(() => _offlineDemo = false),
+      );
+    }
     final connection = ref.watch(connectionControllerProvider);
     final selectedProfile = ref.watch(
       serverProfilesControllerProvider.select((state) => state.selectedProfile),
@@ -50,7 +65,9 @@ class TrueNavoApp extends ConsumerWidget {
         ),
         home: connection is ConnectionSucceeded && selectedProfile != null
             ? const AdaptiveShell()
-            : const ConnectionScreen(),
+            : ConnectionScreen(
+                onExploreDemo: () => setState(() => _offlineDemo = true),
+              ),
       ),
     );
   }

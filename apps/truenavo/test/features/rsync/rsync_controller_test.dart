@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/rsync_preview.dart';
+import 'package:truenavo/sample/rsync_preview.dart';
 import 'package:truenavo/features/management/server_operation_lock.dart';
 import 'package:truenavo/features/rsync/rsync_controller.dart';
 import 'package:truenas_api/truenas_api.dart';

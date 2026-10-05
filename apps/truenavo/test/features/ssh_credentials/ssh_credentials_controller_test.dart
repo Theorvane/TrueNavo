@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/ssh_credentials_preview.dart';
+import 'package:truenavo/sample/ssh_credentials_preview.dart';
 import 'package:truenavo/features/management/server_operation_lock.dart';
 import 'package:truenavo/features/ssh_credentials/ssh_credentials_controller.dart';
 import 'package:truenas_api/truenas_api.dart';

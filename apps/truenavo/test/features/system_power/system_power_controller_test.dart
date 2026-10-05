@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/system_power_preview.dart';
+import 'package:truenavo/sample/system_power_preview.dart';
 import 'package:truenavo/features/management/server_operation_lock.dart';
 import 'package:truenavo/features/system_power/system_power_controller.dart';
 import 'package:truenas_api/truenas_api.dart';

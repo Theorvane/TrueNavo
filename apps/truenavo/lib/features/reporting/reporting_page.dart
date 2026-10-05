@@ -5,6 +5,7 @@ import 'package:truenas_api/truenas_api.dart';
 
 import '../connection/connection_controller.dart';
 import '../dashboard/dashboard_controller.dart';
+import '../offline_demo/offline_demo_mode.dart';
 import 'reporting_chart.dart';
 import 'reporting_controller.dart';
 
@@ -15,6 +16,7 @@ class ReportingPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(dashboardActiveSessionProvider);
+    final demo = ref.watch(offlineDemoModeProvider);
     final capabilities = ref
         .watch(reportingSessionProvider)
         ?.reportingCapabilities;
@@ -62,9 +64,11 @@ class ReportingPage extends ConsumerWidget {
                   ),
                 const SizedBox(height: TdSpacing.component),
                 Text(
-                  'History is a snapshot. Refresh to load newer samples. '
-                  'Available CPU, memory, disk, network, temperature, ARC and UPS '
-                  'graphs are discovered from this server. Only measured values are shown.',
+                  demo
+                      ? 'Offline demonstration: generated CPU, memory, disk and network histories. These values are not measurements from a server.'
+                      : 'History is a snapshot. Refresh to load newer samples. '
+                            'Available CPU, memory, disk, network, temperature, ARC and UPS '
+                            'graphs are discovered from this server. Only measured values are shown.',
                   style: TdTypography.metadata.copyWith(
                     color: td.textSecondary,
                   ),

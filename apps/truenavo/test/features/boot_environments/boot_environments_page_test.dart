@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/boot_environments_preview.dart';
+import 'package:truenavo/sample/boot_environments_preview.dart';
 import 'package:truenavo/features/boot_environments/boot_environment_review_dialog.dart';
 import 'package:truenavo/features/boot_environments/boot_environments_controller.dart';
 import 'package:truenavo/features/boot_environments/boot_environments_page.dart';

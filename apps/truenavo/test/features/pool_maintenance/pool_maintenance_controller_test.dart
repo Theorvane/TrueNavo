@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:truenavo/dev/pool_maintenance_preview.dart';
+import 'package:truenavo/sample/pool_maintenance_preview.dart';
 import 'package:truenavo/features/management/server_operation_lock.dart';
 import 'package:truenavo/features/pool_maintenance/pool_maintenance_controller.dart';
 import 'package:truenas_api/truenas_api.dart';
